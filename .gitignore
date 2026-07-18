@@ -1,0 +1,28 @@
+# IDE
+*.iml
+.idea
+.vscode/
+
+# Build output
+target/
+build/
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local env / secrets
+.env
+.env.*
+application-local.yml
+
+# Gradle (kept for parity; this project uses Maven)
+.gradle
+.mvn/.gradle-enterprise/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
