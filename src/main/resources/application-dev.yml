@@ -11,3 +11,10 @@ logging:
   level:
     org.hibernate.SQL: DEBUG
     org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+
+# Dev: force the stub OCR so the flow runs with no cloud credentials,
+# and log OTPs to the console instead of sending mail.
+app:
+  registration:
+    ocr:
+      provider: stub

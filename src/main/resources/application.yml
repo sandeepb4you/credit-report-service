@@ -3,9 +3,9 @@ spring:
     name: credit-report-service
 
   datasource:
-    url: ${DB_URL:jdbc:postgresql://localhost:5432/credit_report}
-    username: ${DB_USERNAME:postgres}
-    password: ${DB_PASSWORD:postgres}
+    url: ${DB_URL:jdbc:postgresql://35.200.255.84/serpdb?currentSchema=credit_report}
+    username: ${DB_USERNAME:serpapp}
+    password: ${DB_PASSWORD:serp1234}
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 10
@@ -27,6 +27,23 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: true
 
+  mail:
+    host: ${SMTP_HOST:}
+    port: ${SMTP_PORT:587}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 10MB
+
 server:
   port: ${PORT:8080}
   error:
@@ -45,3 +62,22 @@ logging:
   level:
     com.example.creditreportservice: INFO
     org.hibernate.SQL: INFO
+
+# ---------------------------------------------------------------------------
+# Registration flow
+# ---------------------------------------------------------------------------
+app:
+  registration:
+    pan-image-dir: ${PAN_IMAGE_DIR:./data/pan-images}
+    otp:
+      length: 6
+      ttl-seconds: 300
+      resend-cooldown-seconds: 60
+      max-attempts: 5
+      max-sends: 5
+    pan:
+      name-match-distance: 2
+    ocr:
+      # "stub" (default, no cloud creds needed) | "google-vision"
+      provider: ${OCR_PROVIDER:stub}
+      min-confidence: 0.8
