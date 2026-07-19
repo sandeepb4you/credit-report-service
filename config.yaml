@@ -1,0 +1,39 @@
+# Default service configuration. Override per-environment with config.<profile>.yaml
+# (loaded when APP_PROFILE=<profile>) or environment variables; env keys are
+# uppercased with dots/dashes flattened to underscores, e.g.
+#   REGISTRATION_OTP_LENGTH=8
+#   DB_URL=postgres://...
+
+server:
+  port: 8080
+
+db:
+  # Postgres URL (pgx-native). Override via DB_URL env var.
+  url: postgres://serpapp:serp1234@35.200.255.84/serpdb?currentSchema=credit_report
+  max-pool-size: 10
+  min-idle: 2
+
+mail:
+  host: ""        # empty -> log-only stub (OTP printed to stdout)
+  port: 587
+  username: ""
+  password: ""
+  from: "noreply@credit-report.local"
+
+multipart:
+  max-file-size: 5MB
+  max-request-size: 10MB
+
+registration:
+  pan-image-dir: ./data/pan-images
+  otp:
+    length: 6
+    ttl: 5m
+    resend-cooldown: 60s
+    max-attempts: 5
+    max-sends: 5
+  pan:
+    name-match-distance: 2
+  ocr:
+    provider: stub          # stub | google-vision
+    min-confidence: 0.8

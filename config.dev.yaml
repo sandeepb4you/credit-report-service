@@ -1,0 +1,9 @@
+# Dev profile overlay — set APP_PROFILE=dev to apply.
+# Only the keys present here are overridden; everything else comes from config.yaml.
+
+db:
+  url: postgres://serpapp:serp1234@localhost:5432/credit_report?currentSchema=credit_report
+
+registration:
+  ocr:
+    provider: stub

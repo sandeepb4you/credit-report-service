@@ -1,15 +1,16 @@
-# IDE
+# Go binaries
+/bin/
+*.exe
+*.test
+*.out
+
+# Local data (PAN image uploads)
+/data/
+
+# Editor / IDE
+/.idea/
+/.vscode/
 *.iml
-.idea
-.vscode/
-
-# Build output
-target/
-build/
-
-# Logs
-*.log
-logs/
 
 # OS files
 .DS_Store
@@ -18,11 +19,7 @@ Thumbs.db
 # Local env / secrets
 .env
 .env.*
-application-local.yml
+config.local.yaml
 
-# Gradle (kept for parity; this project uses Maven)
-.gradle
-.mvn/.gradle-enterprise/
-!gradle/wrapper/gradle-wrapper.jar
-!**/src/main/**/build/
-!**/src/test/**/build/
+# Build cache
+*.prof
