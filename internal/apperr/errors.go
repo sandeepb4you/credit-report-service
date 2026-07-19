@@ -42,6 +42,11 @@ type Conflict struct{ Msg string }
 
 func (e *Conflict) Error() string { return e.Msg }
 
+// Unauthorized maps to HTTP 401 (missing / invalid / expired credentials).
+type Unauthorized struct{ Msg string }
+
+func (e *Unauthorized) Error() string { return e.Msg }
+
 // PanFailure maps to HTTP 422 (PAN format / OCR mismatch).
 type PanFailure struct{ Msg string }
 
@@ -61,6 +66,7 @@ func NewValidationWith(msg string, d map[string]string) error {
 }
 func NewOtpFailure(msg string) error                  { return &OtpFailure{Msg: msg} }
 func NewConflict(msg string) error                    { return &Conflict{Msg: msg} }
+func NewUnauthorized(msg string) error                { return &Unauthorized{Msg: msg} }
 func NewPanFailure(msg string) error                  { return &PanFailure{Msg: msg} }
 func NewPayloadTooLarge(msg string) error             { return &PayloadTooLarge{Msg: msg} }
 
@@ -78,6 +84,7 @@ func ErrorHandler(c *fiber.Ctx, err error) error {
 		v   *Validation
 		of  *OtpFailure
 		cf  *Conflict
+		ua  *Unauthorized
 		pf  *PanFailure
 		ptl *PayloadTooLarge
 	)
@@ -91,6 +98,8 @@ func ErrorHandler(c *fiber.Ctx, err error) error {
 		return writeError(c, 400, "Bad Request", of.Msg, nil)
 	case errors.As(err, &cf):
 		return writeError(c, 409, "Conflict", cf.Msg, nil)
+	case errors.As(err, &ua):
+		return writeError(c, 401, "Unauthorized", ua.Msg, nil)
 	case errors.As(err, &pf):
 		return writeError(c, 422, "Unprocessable Entity", pf.Msg, nil)
 	case errors.As(err, &ptl):

@@ -18,3 +18,12 @@ func classifyPgErr(err error) error {
 	}
 	return err
 }
+
+// nilString returns nil for an empty string so INSERTs can fall back to a
+// column DEFAULT via COALESCE, and non-empty values pass through as a pointer.
+func nilString(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}

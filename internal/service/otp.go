@@ -12,9 +12,8 @@ import (
 	"credit-report-service/internal/models"
 )
 
-// OTPService handles OTP generation, hashing, expiry, and rate-limit checks.
-// It operates on a *models.RegistrationAttempt passed in by the orchestrator;
-// persistence is the caller's responsibility.
+// OTPService handles OTP generation, hashing, expiry, and rate-limit checks on
+// an *models.OtpChallenge. Persistence is the caller's responsibility.
 type OTPService struct {
 	cfg config.OTPConfig
 }
@@ -22,17 +21,21 @@ type OTPService struct {
 func NewOTPService(cfg config.OTPConfig) *OTPService { return &OTPService{cfg: cfg} }
 
 // Issue generates a fresh OTP, stamps its hash + expiry + counters on the
-// attempt, and returns the plaintext code (to be emailed by the caller).
-func (s *OTPService) Issue(a *models.RegistrationAttempt) (string, error) {
+// challenge, and returns the plaintext code (to be delivered by the caller).
+func (s *OTPService) Issue(c *models.OtpChallenge) (string, error) {
 	now := time.Now().UTC()
 
-	if a.OTPSendCount >= s.cfg.MaxSends {
-		return "", apperr.NewConflict("OTP resend limit reached; please restart registration")
+	if c.ConsumedAt != nil {
+		return "", apperr.NewConflict("This verification is already complete")
 	}
-	if a.LastOTPSentAt != nil && a.Status == models.StatusStarted {
-		elapsed := now.Sub(*a.LastOTPSentAt)
+	if c.SendCount >= s.cfg.MaxSends {
+		return "", apperr.NewConflict("OTP resend limit reached; please start over")
+	}
+	if c.LastSentAt != nil {
+		elapsed := now.Sub(*c.LastSentAt)
 		if elapsed < s.cfg.ResendCooldown {
-			remaining := int(s.cfg.ResendCooldown.Round(time.Second).Seconds() - elapsed.Round(time.Second).Seconds())
+			remaining := int(s.cfg.ResendCooldown.Round(time.Second).Seconds() -
+				elapsed.Round(time.Second).Seconds())
 			if remaining < 0 {
 				remaining = 0
 			}
@@ -52,42 +55,39 @@ func (s *OTPService) Issue(a *models.RegistrationAttempt) (string, error) {
 
 	hashStr := string(hash)
 	exp := now.Add(s.cfg.TTL)
-	a.OTPHash = &hashStr
-	a.OTPExpiresAt = &exp
-	a.LastOTPSentAt = &now
-	a.OTPSendCount++
-	a.OTPAttempts = 0
+	c.OTPHash = &hashStr
+	c.ExpiresAt = &exp
+	c.LastSentAt = &now
+	c.SendCount++
+	c.Attempts = 0
 	return plain, nil
 }
 
-// Verify checks the supplied OTP against the attempt. On success, OTP fields
-// are cleared and Status advances to OTP_VERIFIED. On failure, OTPAttempts is
-// incremented and a typed apperr is returned.
-func (s *OTPService) Verify(a *models.RegistrationAttempt, supplied string) error {
-	if a.Status != models.StatusStarted {
-		return apperr.NewConflict("OTP already consumed or attempt is not in OTP stage")
+// Verify checks the supplied OTP against the challenge. On success the challenge
+// is marked consumed. On failure Attempts is incremented and a typed apperr is
+// returned.
+func (s *OTPService) Verify(c *models.OtpChallenge, supplied string) error {
+	if c.ConsumedAt != nil {
+		return apperr.NewConflict("This code was already used")
 	}
-	if a.OTPHash == nil {
-		return apperr.NewConflict("No OTP was issued for this attempt")
+	if c.OTPHash == nil {
+		return apperr.NewConflict("No OTP was issued")
 	}
-	if a.OTPExpiresAt == nil || a.OTPExpiresAt.Before(time.Now().UTC()) {
+	if c.ExpiresAt == nil || c.ExpiresAt.Before(time.Now().UTC()) {
 		return apperr.NewOtpFailure("OTP expired; please request a new one")
 	}
 
-	a.OTPAttempts++
-	if a.OTPAttempts > s.cfg.MaxAttempts {
+	c.Attempts++
+	if c.Attempts > s.cfg.MaxAttempts {
 		return apperr.NewOtpFailure("Too many wrong attempts; request a new OTP")
 	}
-
-	if bcrypt.CompareHashAndPassword([]byte(*a.OTPHash), []byte(supplied)) != nil {
+	if bcrypt.CompareHashAndPassword([]byte(*c.OTPHash), []byte(supplied)) != nil {
 		return apperr.NewOtpFailure("Invalid OTP")
 	}
 
-	// Success — clear OTP fields and advance state.
-	a.OTPHash = nil
-	a.OTPExpiresAt = nil
-	a.OTPAttempts = 0
-	a.Status = models.StatusOTPVerified
+	now := time.Now().UTC()
+	c.ConsumedAt = &now
+	c.OTPHash = nil
 	return nil
 }
 

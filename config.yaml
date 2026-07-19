@@ -18,7 +18,18 @@ mail:
   port: 587
   username: ""
   password: ""
-  from: "noreply@credit-report.local"
+  from: "Scorr.club <noreply@scorr.club>"
+
+auth:
+  # HS256 signing secret for login JWTs. OVERRIDE in prod via AUTH_JWT_SECRET.
+  jwt-secret: "dev-insecure-change-me"
+  jwt-ttl: 720h   # 30 days
+  otp:
+    length: 6
+    ttl: 10m
+    resend-cooldown: 60s
+    max-attempts: 5
+    max-sends: 5
 
 multipart:
   max-file-size: 5MB

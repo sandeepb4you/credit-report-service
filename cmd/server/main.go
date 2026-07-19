@@ -14,7 +14,6 @@ import (
 	"credit-report-service/internal/config"
 	"credit-report-service/internal/db"
 	"credit-report-service/internal/handler"
-	"credit-report-service/internal/ocr"
 	"credit-report-service/internal/repository"
 	"credit-report-service/internal/server"
 	"credit-report-service/internal/service"
@@ -45,34 +44,21 @@ func main() {
 
 	// Repositories.
 	creditRepo := repository.NewCreditReportRepo(pool)
-	userRepo := repository.NewUserRepo(pool)
-	attemptRepo := repository.NewRegistrationRepo(pool)
+	accountRepo := repository.NewAccountRepo(pool)
 
 	// Services.
 	creditSvc := service.NewCreditReportService(creditRepo)
-	otpSvc := service.NewOTPService(cfg.Registration.OTP)
-	mailSvc := service.NewMailService(cfg.Mail)
-	var ocrProvider ocr.Provider
-	if cfg.Registration.OCR.Provider == "google-vision" {
-		// Lazy: only attempt to construct when explicitly requested. The
-		// GoogleVision type is gated behind the "googlevision" build tag, so
-		// when not built with -tags googlevision we fall back to stub.
-		log.Printf("google-vision requested but this binary was built without " +
-			"the 'googlevision' tag; falling back to stub OCR")
-		ocrProvider = ocr.NewStub()
-	} else {
-		ocrProvider = ocr.NewStub()
-	}
-	panSvc := service.NewPanValidator(cfg.Registration.PAN)
-	regSvc := service.NewRegistrationService(
-		attemptRepo, userRepo, otpSvc, mailSvc, ocrProvider, panSvc, cfg.Registration)
+	otpSvc := service.NewOTPService(cfg.Auth.OTP)
+	mailSvc := service.NewMailService(cfg.Mail, cfg.Auth.OTP.TTL)
+	tokenSvc := service.NewTokenService(cfg.Auth)
+	authSvc := service.NewAuthService(accountRepo, otpSvc, mailSvc, tokenSvc)
 
 	// Handlers.
 	healthH := handler.NewHealthHandler()
 	creditH := handler.NewCreditReportHandler(creditSvc)
-	regH := handler.NewRegistrationHandler(regSvc)
+	authH := handler.NewAuthHandler(authSvc)
 
-	app := server.New(cfg, healthH, creditH, regH)
+	app := server.New(cfg, healthH, creditH, authH, tokenSvc)
 
 	go func() {
 		addr := ":" + itoa(cfg.Server.Port)

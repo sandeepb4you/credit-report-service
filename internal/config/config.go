@@ -19,8 +19,16 @@ type Config struct {
 	Server   ServerConfig   `mapstructure:"server"`
 	DB       DBConfig       `mapstructure:"db"`
 	Mail     MailConfig     `mapstructure:"mail"`
+	Auth     AuthConfig     `mapstructure:"auth"`
 	Multipart MultipartConfig `mapstructure:"multipart"`
 	Registration RegistrationConfig `mapstructure:"registration"`
+}
+
+// AuthConfig holds JWT signing settings for the email/password auth flow.
+type AuthConfig struct {
+	JWTSecret string        `mapstructure:"jwt-secret"`
+	JWTTTL    time.Duration `mapstructure:"jwt-ttl"`
+	OTP       OTPConfig     `mapstructure:"otp"`
 }
 
 type ServerConfig struct {
@@ -128,7 +136,15 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("db.min-idle", 2)
 
 	v.SetDefault("mail.port", 587)
-	v.SetDefault("mail.from", "noreply@credit-report.local")
+	v.SetDefault("mail.from", "Scorr.club <noreply@scorr.club>")
+
+	v.SetDefault("auth.jwt-secret", "dev-insecure-change-me")
+	v.SetDefault("auth.jwt-ttl", "720h") // 30 days
+	v.SetDefault("auth.otp.length", 6)
+	v.SetDefault("auth.otp.ttl", "10m")
+	v.SetDefault("auth.otp.resend-cooldown", "60s")
+	v.SetDefault("auth.otp.max-attempts", 5)
+	v.SetDefault("auth.otp.max-sends", 5)
 
 	v.SetDefault("multipart.max-file-size", "5MB")
 	v.SetDefault("multipart.max-request-size", "10MB")
@@ -149,6 +165,9 @@ func allKeys() []string {
 		"server.port", "server.max-request-body",
 		"db.url", "db.username", "db.password", "db.dsn", "db.max-pool-size", "db.min-idle",
 		"mail.host", "mail.port", "mail.username", "mail.password", "mail.from",
+		"auth.jwt-secret", "auth.jwt-ttl",
+		"auth.otp.length", "auth.otp.ttl", "auth.otp.resend-cooldown",
+		"auth.otp.max-attempts", "auth.otp.max-sends",
 		"multipart.max-file-size", "multipart.max-request-size",
 		"registration.pan-image-dir",
 		"registration.otp.length", "registration.otp.ttl",
