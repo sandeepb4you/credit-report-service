@@ -55,7 +55,7 @@ Defaults live in `config.yaml`. Override:
 
 - **Profile overlay** — set `APP_PROFILE=dev` to merge `config.dev.yaml` on top.
 - **Env vars** — uppercased, dot/dash to underscore. Examples:
-  - `DB_URL=postgres://user:pass@host:5432/db?currentSchema=credit_report`
+  - `DB_URL=postgres://user:pass@host:5432/db?search_path=credit_report`
   - `REGISTRATION_OTP_LENGTH=8`
   - `MAIL_HOST=smtp.gmail.com MAIL_USERNAME=... MAIL_PASSWORD=...`
 

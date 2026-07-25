@@ -1,9 +1,60 @@
-# Dev profile overlay — set APP_PROFILE=dev to apply.
-# Only the keys present here are overridden; everything else comes from config.yaml.
+# Default service configuration. Override per-environment with config.<profile>.yaml
+# (loaded when APP_PROFILE=<profile>) or environment variables; env keys are
+# uppercased with dots/dashes flattened to underscores, e.g.
+#   REGISTRATION_OTP_LENGTH=8
+#   DB_URL=postgres://...
+
+server:
+  port: 8080
 
 db:
-  url: postgres://serpapp:serp1234@localhost:5432/credit_report?currentSchema=credit_report
+  # Postgres URL (pgx-native). Override via DB_URL env var.
+  url: postgres://serpapp:serp1234@35.200.255.84:5432/credit?sslmode=disable&search_path=report
+  max-pool-size: 10
+  min-idle: 2
+
+mail:
+  host: ""        # empty -> log-only stub (OTP printed to stdout)
+  port: 587
+  username: ""
+  password: ""
+  from: "Scorr.club <noreply@scorr.club>"
+
+auth:
+  # HS256 signing secret for login JWTs. OVERRIDE in prod via AUTH_JWT_SECRET.
+  jwt-secret: "dev-insecure-change-me"
+  jwt-ttl: 720h   # 30 days
+  otp:
+    length: 6
+    ttl: 10m
+    resend-cooldown: 60s
+    max-attempts: 5
+    max-sends: 5
+
+multipart:
+  max-file-size: 5MB
+  max-request-size: 10MB
 
 registration:
+  pan-image-dir: ./data/pan-images
+  otp:
+    length: 6
+    ttl: 5m
+    resend-cooldown: 60s
+    max-attempts: 5
+    max-sends: 5
+  pan:
+    name-match-distance: 2
   ocr:
-    provider: stub
+    provider: stub          # stub | google-vision
+    min-confidence: 0.8
+
+digitap:
+  # Digitap Credit Analytics API (spec V2.7). Override credentials via env:
+  #   DIGITAP_CLIENT_ID, DIGITAP_CLIENT_SECRET
+  # When client-id is empty, the service runs the upstream client in an offline
+  # stub mode (no outbound HTTP) so the build/tests work without credentials.
+  base-url: https://apidemo.digitap.work/
+  client-id: "43398827"
+  client-secret: "UwSufO5A0L7gZxABIsLjR9PILm9H2OQ5"
+  timeout: 30s

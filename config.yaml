@@ -9,7 +9,7 @@ server:
 
 db:
   # Postgres URL (pgx-native). Override via DB_URL env var.
-  url: postgres://serpapp:serp1234@35.200.255.84/serpdb?currentSchema=credit_report
+  url: postgres://serpapp:serp1234@35.200.255.84:5432/credit?sslmode=disable&search_path=report
   max-pool-size: 10
   min-idle: 2
 

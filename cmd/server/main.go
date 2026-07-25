@@ -59,7 +59,6 @@ func main() {
 	defer pool.Close()
 
 	// Repositories.
-	creditRepo := repository.NewCreditReportRepo(pool)
 	accountRepo := repository.NewAccountRepo(pool)
 	analyticsRepo := repository.NewCreditAnalyticsRepo(pool)
 
@@ -72,20 +71,20 @@ func main() {
 	})
 
 	// Services.
-	creditSvc := service.NewCreditReportService(creditRepo)
 	otpSvc := service.NewOTPService(cfg.Auth.OTP)
 	mailSvc := service.NewMailService(cfg.Mail, cfg.Auth.OTP.TTL)
 	tokenSvc := service.NewTokenService(cfg.Auth)
 	authSvc := service.NewAuthService(accountRepo, otpSvc, mailSvc, tokenSvc)
 	analyticsSvc := service.NewCreditAnalyticsService(digitapClient, analyticsRepo)
+	kycSvc := service.NewKycService(accountRepo)
 
 	// Handlers.
 	healthH := handler.NewHealthHandler()
-	creditH := handler.NewCreditReportHandler(creditSvc)
 	authH := handler.NewAuthHandler(authSvc)
 	analyticsH := handler.NewCreditAnalyticsHandler(analyticsSvc)
+	kycH := handler.NewKycHandler(kycSvc)
 
-	app := server.New(cfg, healthH, creditH, authH, analyticsH, tokenSvc)
+	app := server.New(cfg, healthH, authH, analyticsH, kycH, tokenSvc)
 
 	go func() {
 		addr := ":" + itoa(cfg.Server.Port)

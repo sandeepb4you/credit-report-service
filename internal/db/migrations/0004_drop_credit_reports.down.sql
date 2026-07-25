@@ -1,8 +1,5 @@
--- Initial schema for credit_report_service.
--- Schema is selected via the `search_path=report` query param on the DSN.
--- golang-migrate runs each statement in order; no IF NOT EXISTS guard needed
--- because migrate tracks applied versions in its own table.
-
+-- Recreates the credit_reports table as it existed in 0001_init.up.sql.
+-- Data dropped by the up migration is NOT restored.
 CREATE TABLE credit_reports (
     id          BIGSERIAL PRIMARY KEY,
     subject_id  VARCHAR(255) NOT NULL UNIQUE,

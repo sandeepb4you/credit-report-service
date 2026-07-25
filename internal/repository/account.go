@@ -166,3 +166,41 @@ func (r *AccountRepo) UpdateChallenge(ctx context.Context, tx pgx.Tx, c *models.
 	)
 	return err
 }
+
+// ---- kyc_records --------------------------------------------------------
+
+const kycCols = `id, account_id, pan_number, pan_name, pan_verified,
+    aadhaar_last4, aadhaar_reference, aadhaar_pan_linked, status, provider,
+    verified_at, created_at, updated_at`
+
+// UpsertPAN inserts a PENDING kyc_records row for the account, or — if one
+// already exists for this account — replaces the PAN and resets verification
+// (the new PAN isn't trusted until re-verified). A PAN already claimed by
+// another account surfaces as ErrConflict via the UNIQUE(pan_number) index.
+func (r *AccountRepo) UpsertPAN(ctx context.Context, accountID int64, panNumber string) (*models.KYCRecord, error) {
+	var k models.KYCRecord
+	err := pgxscan.Get(ctx, r.pool, &k,
+		`INSERT INTO kyc_records (account_id, pan_number, pan_verified, status)
+		 VALUES ($1, $2, false, 'PENDING')
+		 ON CONFLICT (account_id) DO UPDATE
+		    SET pan_number        = EXCLUDED.pan_number,
+		        pan_name          = NULL,
+		        pan_verified      = false,
+		        aadhaar_last4     = NULL,
+		        aadhaar_reference = NULL,
+		        aadhaar_pan_linked= NULL,
+		        status            = 'PENDING',
+		        provider          = NULL,
+		        verified_at       = NULL,
+		        updated_at        = now()
+		 RETURNING `+kycCols,
+		accountID, panNumber,
+	)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, classifyPgErr(err)
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &k, nil
+}

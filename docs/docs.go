@@ -208,45 +208,14 @@ const docTemplate = `{
                 }
             }
         },
-        "/credit-reports": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Returns every credit report row.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "credit-reports"
-                ],
-                "summary": "List all credit reports",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/credit-report-service_internal_models.CreditReport"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Not authenticated",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    }
-                }
-            },
+        "/credit-analytics/request": {
             "post": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
+                "description": "Proxies the request body to the Digitap /credit_analytics/request API (spec V2.7 §1.4.1), persists the request and full upstream response against the authenticated account, and returns the stored row.",
                 "consumes": [
                     "application/json"
                 ],
@@ -254,17 +223,17 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "credit-reports"
+                    "credit-analytics"
                 ],
-                "summary": "Create a credit report",
+                "summary": "Request a credit analysis from Digitap",
                 "parameters": [
                     {
-                        "description": "Report fields",
+                        "description": "Credit-analytics request payload (Digitap §1.4.1)",
                         "name": "request",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/internal_handler.creditReportCreateReq"
+                            "$ref": "#/definitions/credit-report-service_internal_service.CreditAnalyticsInput"
                         }
                     }
                 ],
@@ -272,17 +241,23 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_models.CreditReport"
+                            "$ref": "#/definitions/credit-report-service_internal_models.CreditAnalyticsRequest"
                         }
                     },
                     "400": {
-                        "description": "Invalid JSON body",
+                        "description": "Invalid request body / validation failure / upstream 400",
                         "schema": {
                             "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
                     },
                     "401": {
-                        "description": "Not authenticated",
+                        "description": "Not authenticated / upstream 401",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "Upstream tradeline limit exceeded",
                         "schema": {
                             "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
@@ -290,83 +265,44 @@ const docTemplate = `{
                 }
             }
         },
-        "/credit-reports/by-subject/{subjectId}": {
-            "get": {
+        "/kyc/pan": {
+            "post": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
+                ],
+                "description": "Accepts a PAN (Permanent Account Number), validates the format, and upserts it against the account's KYC record. A re-submission overwrites any existing PAN and resets verification to PENDING.",
+                "consumes": [
+                    "application/json"
                 ],
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "credit-reports"
+                    "kyc"
                 ],
-                "summary": "Get a credit report by subject id",
+                "summary": "Submit the authenticated account's PAN",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Subject id",
-                        "name": "subjectId",
-                        "in": "path",
-                        "required": true
+                        "description": "PAN to store",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.submitPanReq"
+                        }
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK",
+                    "201": {
+                        "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_models.CreditReport"
-                        }
-                    },
-                    "401": {
-                        "description": "Not authenticated",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    },
-                    "404": {
-                        "description": "Not found",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    }
-                }
-            }
-        },
-        "/credit-reports/{id}": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "credit-reports"
-                ],
-                "summary": "Get a credit report by id",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "Report id",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_models.CreditReport"
+                            "$ref": "#/definitions/credit-report-service_internal_models.KYCRecord"
                         }
                     },
                     "400": {
-                        "description": "id must be an integer",
+                        "description": "Invalid JSON body / PAN format",
                         "schema": {
                             "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
@@ -377,51 +313,8 @@ const docTemplate = `{
                             "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
                     },
-                    "404": {
-                        "description": "Not found",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    }
-                }
-            },
-            "delete": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "tags": [
-                    "credit-reports"
-                ],
-                "summary": "Delete a credit report by id",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "Report id",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "204": {
-                        "description": "No Content"
-                    },
-                    "400": {
-                        "description": "id must be an integer",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    },
-                    "401": {
-                        "description": "Not authenticated",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    },
-                    "404": {
-                        "description": "Not found",
+                    "409": {
+                        "description": "PAN already linked to another account",
                         "schema": {
                             "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
@@ -599,25 +492,90 @@ const docTemplate = `{
                 }
             }
         },
-        "credit-report-service_internal_models.CreditReport": {
+        "credit-report-service_internal_models.CreditAnalyticsRequest": {
             "type": "object",
             "properties": {
+                "accountId": {
+                    "type": "integer"
+                },
+                "clientRefNum": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "httpStatus": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "mobileNo": {
+                    "type": "string"
+                },
+                "requestBody": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "requestId": {
+                    "type": "string"
+                },
+                "responseBody": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "resultCode": {
+                    "type": "integer"
+                }
+            }
+        },
+        "credit-report-service_internal_models.KYCRecord": {
+            "type": "object",
+            "properties": {
+                "aadhaarLast4": {
+                    "type": "string"
+                },
+                "aadhaarPanLinked": {
+                    "type": "boolean"
+                },
+                "aadhaarReference": {
+                    "type": "string"
+                },
+                "accountId": {
+                    "type": "integer"
+                },
                 "createdAt": {
                     "type": "string"
                 },
                 "id": {
                     "type": "integer"
                 },
-                "score": {
-                    "type": "integer"
+                "pan": {
+                    "type": "string"
+                },
+                "panName": {
+                    "type": "string"
+                },
+                "panVerified": {
+                    "type": "boolean"
+                },
+                "provider": {
+                    "type": "string"
                 },
                 "status": {
                     "type": "string"
                 },
-                "subjectId": {
+                "updatedAt": {
                     "type": "string"
                 },
-                "updatedAt": {
+                "verifiedAt": {
                     "type": "string"
                 }
             }
@@ -636,6 +594,59 @@ const docTemplate = `{
                 }
             }
         },
+        "credit-report-service_internal_service.CreditAnalyticsInput": {
+            "type": "object",
+            "properties": {
+                "client_ref_num": {
+                    "type": "string"
+                },
+                "consent_acceptance": {
+                    "type": "string"
+                },
+                "consent_message": {
+                    "type": "string"
+                },
+                "date_of_birth": {
+                    "type": "string"
+                },
+                "device_id": {
+                    "type": "string"
+                },
+                "device_ip": {
+                    "type": "string"
+                },
+                "device_type": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "first_name": {
+                    "type": "string"
+                },
+                "last_name": {
+                    "type": "string"
+                },
+                "mobile_no": {
+                    "type": "string"
+                },
+                "name_lookup": {
+                    "type": "integer"
+                },
+                "otp": {
+                    "type": "string"
+                },
+                "pan": {
+                    "type": "string"
+                },
+                "report_type": {
+                    "type": "integer"
+                },
+                "timestamp": {
+                    "type": "string"
+                }
+            }
+        },
         "credit-report-service_internal_service.SignupResult": {
             "type": "object",
             "properties": {
@@ -647,23 +658,6 @@ const docTemplate = `{
                 },
                 "message": {
                     "type": "string"
-                }
-            }
-        },
-        "internal_handler.creditReportCreateReq": {
-            "type": "object",
-            "properties": {
-                "score": {
-                    "type": "integer",
-                    "example": 780
-                },
-                "status": {
-                    "type": "string",
-                    "example": "HEALTHY"
-                },
-                "subjectId": {
-                    "type": "string",
-                    "example": "PAN-ABCDE1234F"
                 }
             }
         },
@@ -699,6 +693,15 @@ const docTemplate = `{
                 "password": {
                     "type": "string",
                     "example": "hunter2pass"
+                }
+            }
+        },
+        "internal_handler.submitPanReq": {
+            "type": "object",
+            "properties": {
+                "pan": {
+                    "type": "string",
+                    "example": "ABCDE1234F"
                 }
             }
         },

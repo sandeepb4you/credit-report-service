@@ -35,19 +35,62 @@ definitions:
       updatedAt:
         type: string
     type: object
-  credit-report-service_internal_models.CreditReport:
+  credit-report-service_internal_models.CreditAnalyticsRequest:
     properties:
+      accountId:
+        type: integer
+      clientRefNum:
+        type: string
+      createdAt:
+        type: string
+      httpStatus:
+        type: integer
+      id:
+        type: integer
+      message:
+        type: string
+      mobileNo:
+        type: string
+      requestBody:
+        items:
+          type: integer
+        type: array
+      requestId:
+        type: string
+      responseBody:
+        items:
+          type: integer
+        type: array
+      resultCode:
+        type: integer
+    type: object
+  credit-report-service_internal_models.KYCRecord:
+    properties:
+      aadhaarLast4:
+        type: string
+      aadhaarPanLinked:
+        type: boolean
+      aadhaarReference:
+        type: string
+      accountId:
+        type: integer
       createdAt:
         type: string
       id:
         type: integer
-      score:
-        type: integer
+      pan:
+        type: string
+      panName:
+        type: string
+      panVerified:
+        type: boolean
+      provider:
+        type: string
       status:
         type: string
-      subjectId:
-        type: string
       updatedAt:
+        type: string
+      verifiedAt:
         type: string
     type: object
   credit-report-service_internal_service.AuthResult:
@@ -59,6 +102,41 @@ definitions:
       token:
         type: string
     type: object
+  credit-report-service_internal_service.CreditAnalyticsInput:
+    properties:
+      client_ref_num:
+        type: string
+      consent_acceptance:
+        type: string
+      consent_message:
+        type: string
+      date_of_birth:
+        type: string
+      device_id:
+        type: string
+      device_ip:
+        type: string
+      device_type:
+        type: string
+      email:
+        type: string
+      first_name:
+        type: string
+      last_name:
+        type: string
+      mobile_no:
+        type: string
+      name_lookup:
+        type: integer
+      otp:
+        type: string
+      pan:
+        type: string
+      report_type:
+        type: integer
+      timestamp:
+        type: string
+    type: object
   credit-report-service_internal_service.SignupResult:
     properties:
       accountId:
@@ -66,18 +144,6 @@ definitions:
       email:
         type: string
       message:
-        type: string
-    type: object
-  internal_handler.creditReportCreateReq:
-    properties:
-      score:
-        example: 780
-        type: integer
-      status:
-        example: HEALTHY
-        type: string
-      subjectId:
-        example: PAN-ABCDE1234F
         type: string
     type: object
   internal_handler.loginReq:
@@ -102,6 +168,12 @@ definitions:
         type: string
       password:
         example: hunter2pass
+        type: string
+    type: object
+  internal_handler.submitPanReq:
+    properties:
+      pan:
+        example: ABCDE1234F
         type: string
     type: object
   internal_handler.updateProfileReq:
@@ -266,144 +338,82 @@ paths:
       summary: Verify email with OTP
       tags:
       - auth
-  /credit-reports:
-    get:
-      description: Returns every credit report row.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              $ref: '#/definitions/credit-report-service_internal_models.CreditReport'
-            type: array
-        "401":
-          description: Not authenticated
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-      security:
-      - BearerAuth: []
-      summary: List all credit reports
-      tags:
-      - credit-reports
+  /credit-analytics/request:
     post:
       consumes:
       - application/json
+      description: Proxies the request body to the Digitap /credit_analytics/request
+        API (spec V2.7 §1.4.1), persists the request and full upstream response against
+        the authenticated account, and returns the stored row.
       parameters:
-      - description: Report fields
+      - description: Credit-analytics request payload (Digitap §1.4.1)
         in: body
         name: request
         required: true
         schema:
-          $ref: '#/definitions/internal_handler.creditReportCreateReq'
+          $ref: '#/definitions/credit-report-service_internal_service.CreditAnalyticsInput'
       produces:
       - application/json
       responses:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/credit-report-service_internal_models.CreditReport'
+            $ref: '#/definitions/credit-report-service_internal_models.CreditAnalyticsRequest'
         "400":
-          description: Invalid JSON body
+          description: Invalid request body / validation failure / upstream 400
           schema:
             $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
         "401":
-          description: Not authenticated
+          description: Not authenticated / upstream 401
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "422":
+          description: Upstream tradeline limit exceeded
           schema:
             $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
       security:
       - BearerAuth: []
-      summary: Create a credit report
+      summary: Request a credit analysis from Digitap
       tags:
-      - credit-reports
-  /credit-reports/{id}:
-    delete:
+      - credit-analytics
+  /kyc/pan:
+    post:
+      consumes:
+      - application/json
+      description: Accepts a PAN (Permanent Account Number), validates the format,
+        and upserts it against the account's KYC record. A re-submission overwrites
+        any existing PAN and resets verification to PENDING.
       parameters:
-      - description: Report id
-        in: path
-        name: id
+      - description: PAN to store
+        in: body
+        name: request
         required: true
-        type: integer
-      responses:
-        "204":
-          description: No Content
-        "400":
-          description: id must be an integer
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-        "401":
-          description: Not authenticated
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-        "404":
-          description: Not found
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-      security:
-      - BearerAuth: []
-      summary: Delete a credit report by id
-      tags:
-      - credit-reports
-    get:
-      parameters:
-      - description: Report id
-        in: path
-        name: id
-        required: true
-        type: integer
+        schema:
+          $ref: '#/definitions/internal_handler.submitPanReq'
       produces:
       - application/json
       responses:
-        "200":
-          description: OK
+        "201":
+          description: Created
           schema:
-            $ref: '#/definitions/credit-report-service_internal_models.CreditReport'
+            $ref: '#/definitions/credit-report-service_internal_models.KYCRecord'
         "400":
-          description: id must be an integer
+          description: Invalid JSON body / PAN format
           schema:
             $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
         "401":
           description: Not authenticated
           schema:
             $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-        "404":
-          description: Not found
+        "409":
+          description: PAN already linked to another account
           schema:
             $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
       security:
       - BearerAuth: []
-      summary: Get a credit report by id
+      summary: Submit the authenticated account's PAN
       tags:
-      - credit-reports
-  /credit-reports/by-subject/{subjectId}:
-    get:
-      parameters:
-      - description: Subject id
-        in: path
-        name: subjectId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_models.CreditReport'
-        "401":
-          description: Not authenticated
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-        "404":
-          description: Not found
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-      security:
-      - BearerAuth: []
-      summary: Get a credit report by subject id
-      tags:
-      - credit-reports
+      - kyc
   /ping:
     get:
       description: Reports whether the service is up.

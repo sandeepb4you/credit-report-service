@@ -57,6 +57,32 @@ type AuthIdentity struct {
 	UpdatedAt       time.Time  `json:"updatedAt"       db:"updated_at"`
 }
 
+// KYC lifecycle status, mirroring kyc_records.status.
+const (
+	KycPending  = "PENDING"  // PAN accepted, awaiting verification
+	KycVerified = "VERIFIED" // KYC complete; gates the analysis products
+	KycRejected = "REJECTED"
+)
+
+// KYCRecord is the row model for the kyc_records table: Aadhaar + PAN
+// verification. Only PAN is accepted via the public API; the Aadhaar fields
+// are populated by a separate KYC-provider flow. PAN is sensitive PII.
+type KYCRecord struct {
+	ID               int64      `json:"id"                db:"id"`
+	AccountID        int64      `json:"accountId"         db:"account_id"`
+	PANNumber        string     `json:"pan"               db:"pan_number"`
+	PANName          *string    `json:"panName,omitempty" db:"pan_name"`
+	PANVerified      bool       `json:"panVerified"       db:"pan_verified"`
+	AadhaarLast4     *string    `json:"aadhaarLast4,omitempty" db:"aadhaar_last4"`
+	AadhaarReference *string    `json:"aadhaarReference,omitempty" db:"aadhaar_reference"`
+	AadhaarPanLinked *bool      `json:"aadhaarPanLinked,omitempty" db:"aadhaar_pan_linked"`
+	Status           string     `json:"status"            db:"status"`
+	Provider         *string    `json:"provider,omitempty" db:"provider"`
+	VerifiedAt       *time.Time `json:"verifiedAt,omitempty" db:"verified_at"`
+	CreatedAt        time.Time  `json:"createdAt"         db:"created_at"`
+	UpdatedAt        time.Time  `json:"updatedAt"         db:"updated_at"`
+}
+
 // OtpChallenge is the row model for the otp_challenges table: a transient
 // one-time-password verification for an email or phone destination.
 type OtpChallenge struct {
