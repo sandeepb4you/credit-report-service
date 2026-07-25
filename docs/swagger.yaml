@@ -30,6 +30,8 @@ definitions:
         type: string
       profileCompleted:
         type: boolean
+      role:
+        type: string
       status:
         type: string
       updatedAt:
@@ -104,38 +106,28 @@ definitions:
     type: object
   credit-report-service_internal_service.CreditAnalyticsInput:
     properties:
-      client_ref_num:
-        type: string
-      consent_acceptance:
-        type: string
-      consent_message:
-        type: string
-      date_of_birth:
-        type: string
-      device_id:
-        type: string
       device_ip:
         type: string
-      device_type:
-        type: string
-      email:
-        type: string
-      first_name:
-        type: string
-      last_name:
-        type: string
-      mobile_no:
-        type: string
-      name_lookup:
+    type: object
+  credit-report-service_internal_service.ReportPage:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/credit-report-service_internal_service.ReportSummary'
+        type: array
+      page:
         type: integer
-      otp:
-        type: string
-      pan:
-        type: string
-      report_type:
+      size:
         type: integer
-      timestamp:
+      total:
+        type: integer
+    type: object
+  credit-report-service_internal_service.ReportSummary:
+    properties:
+      createdAt:
         type: string
+      id:
+        type: integer
     type: object
   credit-report-service_internal_service.SignupResult:
     properties:
@@ -207,6 +199,44 @@ info:
   title: Credit Report Service API
   version: "1.0"
 paths:
+  /admin/kyc/pan/{accountId}/verify:
+    post:
+      description: Marks the named account's KYC row as PAN-verified. Required before
+        that account can request credit analytics. The caller must be an admin.
+      parameters:
+      - description: Account id whose PAN is being verified
+        in: path
+        name: accountId
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.KYCRecord'
+        "400":
+          description: accountId must be an integer
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Not an admin
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: No PAN on file for this account
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Verify an account's PAN (admin only)
+      tags:
+      - kyc
   /auth/login:
     post:
       consumes:
@@ -338,18 +368,85 @@ paths:
       summary: Verify email with OTP
       tags:
       - auth
+  /credit-analytics/reports:
+    get:
+      description: Returns a paginated list of the caller's reports, newest first.
+        Each item carries only the report id (unique identifier) and generation date.
+      parameters:
+      - default: 1
+        description: 1-indexed page number (default 1)
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: page size (default 20, max 100)
+        in: query
+        name: size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_service.ReportPage'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List the authenticated account's credit-analytics reports
+      tags:
+      - credit-analytics
+  /credit-analytics/reports/{id}:
+    get:
+      description: Returns the full report row (including the persisted upstream response
+        body) for one of the caller's own reports.
+      parameters:
+      - description: Report id
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.CreditAnalyticsRequest'
+        "400":
+          description: id must be an integer
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: Report not found (or belongs to another account)
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Fetch a credit-analytics report by id
+      tags:
+      - credit-analytics
   /credit-analytics/request:
     post:
       consumes:
       - application/json
-      description: Proxies the request body to the Digitap /credit_analytics/request
-        API (spec V2.7 §1.4.1), persists the request and full upstream response against
-        the authenticated account, and returns the stored row.
+      description: Builds the Digitap /credit_analytics/request payload from the authenticated
+        account's profile and KYC record (mobile, name, PAN), plus server-generated
+        values (client_ref_num, otp, timestamp), then persists the request and full
+        upstream response and returns the stored row. Only device_ip is taken from
+        the request body; if omitted it falls back to the detected remote IP.
       parameters:
-      - description: Credit-analytics request payload (Digitap §1.4.1)
+      - description: Credit-analytics request (device_ip optional; defaults to the
+          caller's IP)
         in: body
         name: request
-        required: true
         schema:
           $ref: '#/definitions/credit-report-service_internal_service.CreditAnalyticsInput'
       produces:
@@ -360,7 +457,7 @@ paths:
           schema:
             $ref: '#/definitions/credit-report-service_internal_models.CreditAnalyticsRequest'
         "400":
-          description: Invalid request body / validation failure / upstream 400
+          description: Invalid request body / missing profile or PAN / upstream 400
           schema:
             $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
         "401":

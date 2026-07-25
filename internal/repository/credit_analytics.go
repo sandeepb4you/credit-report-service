@@ -50,11 +50,23 @@ func (r *CreditAnalyticsRepo) FindByID(ctx context.Context, id int64) (*models.C
 	return &req, nil
 }
 
-// FindByAccount returns all rows for an account, newest first.
-func (r *CreditAnalyticsRepo) FindByAccount(ctx context.Context, accountID int64) ([]models.CreditAnalyticsRequest, error) {
+// FindByAccountPaged returns one page of an account's rows, newest first.
+// limit is the page size; offset is the zero-based row offset.
+func (r *CreditAnalyticsRepo) FindByAccountPaged(ctx context.Context, accountID int64, limit, offset int) ([]models.CreditAnalyticsRequest, error) {
 	var rs []models.CreditAnalyticsRequest
 	err := pgxscan.Select(ctx, r.pool, &rs,
 		`SELECT `+creditAnalyticsCols+` FROM credit_analytics_requests
-		 WHERE account_id = $1 ORDER BY id DESC`, accountID)
+		 WHERE account_id = $1
+		 ORDER BY id DESC
+		 LIMIT $2 OFFSET $3`, accountID, limit, offset)
 	return rs, err
+}
+
+// CountByAccount returns the total number of rows for an account (for the
+// pagination total field).
+func (r *CreditAnalyticsRepo) CountByAccount(ctx context.Context, accountID int64) (int64, error) {
+	var n int64
+	err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM credit_analytics_requests WHERE account_id = $1`, accountID).Scan(&n)
+	return n, err
 }

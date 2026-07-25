@@ -8,6 +8,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -37,9 +38,10 @@ type DigitapConfig struct {
 
 // AuthConfig holds JWT signing settings for the email/password auth flow.
 type AuthConfig struct {
-	JWTSecret string        `mapstructure:"jwt-secret"`
-	JWTTTL    time.Duration `mapstructure:"jwt-ttl"`
-	OTP       OTPConfig     `mapstructure:"otp"`
+	JWTSecret   string        `mapstructure:"jwt-secret"`
+	JWTTTL      time.Duration `mapstructure:"jwt-ttl"`
+	OTP         OTPConfig     `mapstructure:"otp"`
+	AdminEmails []string      `mapstructure:"admin-emails"`
 }
 
 type ServerConfig struct {
@@ -136,6 +138,20 @@ func Load(profile string) (*Config, error) {
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
+
+	// Viper won't split a comma-separated env value into a slice, so handle
+	// AUTH_ADMIN_EMAILS explicitly. The file form is already a YAML list.
+	if raw := os.Getenv("AUTH_ADMIN_EMAILS"); raw != "" {
+		parts := strings.Split(raw, ",")
+		out := make([]string, 0, len(parts))
+		for _, p := range parts {
+			if t := strings.TrimSpace(p); t != "" {
+				out = append(out, t)
+			}
+		}
+		cfg.Auth.AdminEmails = out
+	}
+
 	return &cfg, nil
 }
 
@@ -156,6 +172,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("auth.otp.resend-cooldown", "60s")
 	v.SetDefault("auth.otp.max-attempts", 5)
 	v.SetDefault("auth.otp.max-sends", 5)
+	// Admin allowlist: accounts whose email matches get role=admin at verify/login.
+	// Defaults to empty (no admins). Set via AUTH_ADMIN_EMAILS=a@x.com,b@y.com.
+	v.SetDefault("auth.admin-emails", []string{})
 
 	v.SetDefault("multipart.max-file-size", "5MB")
 	v.SetDefault("multipart.max-request-size", "10MB")
@@ -185,6 +204,7 @@ func allKeys() []string {
 		"auth.jwt-secret", "auth.jwt-ttl",
 		"auth.otp.length", "auth.otp.ttl", "auth.otp.resend-cooldown",
 		"auth.otp.max-attempts", "auth.otp.max-sends",
+		"auth.admin-emails",
 		"multipart.max-file-size", "multipart.max-request-size",
 		"registration.pan-image-dir",
 		"registration.otp.length", "registration.otp.ttl",

@@ -10,6 +10,7 @@ import (
 	"credit-report-service/internal/apperr"
 	"credit-report-service/internal/config"
 	"credit-report-service/internal/handler"
+	"credit-report-service/internal/models"
 	"credit-report-service/internal/server/middleware"
 	"credit-report-service/internal/service"
 )
@@ -69,10 +70,16 @@ func New(
 	// ---- Credit analytics (Digitap proxy) -------------------------------
 	ca := api.Group("/credit-analytics", requireAuth)
 	ca.Post("/request", analytics.Request)
+	ca.Get("/reports", analytics.ListReports)
+	ca.Get("/reports/:id<int>", analytics.GetReport)
 
 	// ---- KYC (PAN submission) -------------------------------------------
 	k := api.Group("/kyc", requireAuth)
 	k.Post("/pan", kyc.SubmitPAN)
+
+	// ---- Admin (role-gated) ---------------------------------------------
+	admin := api.Group("/admin", middleware.RequireRole(tokens, models.RoleAdmin))
+	admin.Post("/kyc/pan/:accountId<int>/verify", kyc.VerifyPAN)
 
 	return app
 }

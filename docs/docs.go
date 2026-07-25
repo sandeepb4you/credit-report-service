@@ -15,6 +15,64 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/admin/kyc/pan/{accountId}/verify": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Marks the named account's KYC row as PAN-verified. Required before that account can request credit analytics. The caller must be an admin.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "kyc"
+                ],
+                "summary": "Verify an account's PAN (admin only)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Account id whose PAN is being verified",
+                        "name": "accountId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.KYCRecord"
+                        }
+                    },
+                    "400": {
+                        "description": "accountId must be an integer",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an admin",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No PAN on file for this account",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/login": {
             "post": {
                 "description": "Verifies email + password and returns a session JWT. Requires the email to be verified.",
@@ -208,6 +266,105 @@ const docTemplate = `{
                 }
             }
         },
+        "/credit-analytics/reports": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns a paginated list of the caller's reports, newest first. Each item carries only the report id (unique identifier) and generation date.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "credit-analytics"
+                ],
+                "summary": "List the authenticated account's credit-analytics reports",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "1-indexed page number (default 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "page size (default 20, max 100)",
+                        "name": "size",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_service.ReportPage"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/credit-analytics/reports/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the full report row (including the persisted upstream response body) for one of the caller's own reports.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "credit-analytics"
+                ],
+                "summary": "Fetch a credit-analytics report by id",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Report id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.CreditAnalyticsRequest"
+                        }
+                    },
+                    "400": {
+                        "description": "id must be an integer",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Report not found (or belongs to another account)",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/credit-analytics/request": {
             "post": {
                 "security": [
@@ -215,7 +372,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Proxies the request body to the Digitap /credit_analytics/request API (spec V2.7 §1.4.1), persists the request and full upstream response against the authenticated account, and returns the stored row.",
+                "description": "Builds the Digitap /credit_analytics/request payload from the authenticated account's profile and KYC record (mobile, name, PAN), plus server-generated values (client_ref_num, otp, timestamp), then persists the request and full upstream response and returns the stored row. Only device_ip is taken from the request body; if omitted it falls back to the detected remote IP.",
                 "consumes": [
                     "application/json"
                 ],
@@ -228,10 +385,9 @@ const docTemplate = `{
                 "summary": "Request a credit analysis from Digitap",
                 "parameters": [
                     {
-                        "description": "Credit-analytics request payload (Digitap §1.4.1)",
+                        "description": "Credit-analytics request (device_ip optional; defaults to the caller's IP)",
                         "name": "request",
                         "in": "body",
-                        "required": true,
                         "schema": {
                             "$ref": "#/definitions/credit-report-service_internal_service.CreditAnalyticsInput"
                         }
@@ -245,7 +401,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Invalid request body / validation failure / upstream 400",
+                        "description": "Invalid request body / missing profile or PAN / upstream 400",
                         "schema": {
                             "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
@@ -484,6 +640,9 @@ const docTemplate = `{
                 "profileCompleted": {
                     "type": "boolean"
                 },
+                "role": {
+                    "type": "string"
+                },
                 "status": {
                     "type": "string"
                 },
@@ -597,53 +756,39 @@ const docTemplate = `{
         "credit-report-service_internal_service.CreditAnalyticsInput": {
             "type": "object",
             "properties": {
-                "client_ref_num": {
-                    "type": "string"
-                },
-                "consent_acceptance": {
-                    "type": "string"
-                },
-                "consent_message": {
-                    "type": "string"
-                },
-                "date_of_birth": {
-                    "type": "string"
-                },
-                "device_id": {
-                    "type": "string"
-                },
                 "device_ip": {
                     "type": "string"
+                }
+            }
+        },
+        "credit-report-service_internal_service.ReportPage": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/credit-report-service_internal_service.ReportSummary"
+                    }
                 },
-                "device_type": {
-                    "type": "string"
-                },
-                "email": {
-                    "type": "string"
-                },
-                "first_name": {
-                    "type": "string"
-                },
-                "last_name": {
-                    "type": "string"
-                },
-                "mobile_no": {
-                    "type": "string"
-                },
-                "name_lookup": {
+                "page": {
                     "type": "integer"
                 },
-                "otp": {
-                    "type": "string"
-                },
-                "pan": {
-                    "type": "string"
-                },
-                "report_type": {
+                "size": {
                     "type": "integer"
                 },
-                "timestamp": {
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "credit-report-service_internal_service.ReportSummary": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
                     "type": "string"
+                },
+                "id": {
+                    "type": "integer"
                 }
             }
         },

@@ -9,6 +9,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"credit-report-service/internal/apperr"
+	"credit-report-service/internal/config"
 	"credit-report-service/internal/models"
 	"credit-report-service/internal/repository"
 )
@@ -24,6 +25,7 @@ type AuthService struct {
 	otp      *OTPService
 	mailer   Mailer
 	tokens   *TokenService
+	admins   []string // auth.admin-emails allowlist; lowercase
 }
 
 func NewAuthService(
@@ -31,8 +33,15 @@ func NewAuthService(
 	otp *OTPService,
 	mailer Mailer,
 	tokens *TokenService,
+	authCfg config.AuthConfig,
 ) *AuthService {
-	return &AuthService{accounts: accounts, otp: otp, mailer: mailer, tokens: tokens}
+	admins := make([]string, 0, len(authCfg.AdminEmails))
+	for _, e := range authCfg.AdminEmails {
+		if t := strings.ToLower(strings.TrimSpace(e)); t != "" {
+			admins = append(admins, t)
+		}
+	}
+	return &AuthService{accounts: accounts, otp: otp, mailer: mailer, tokens: tokens, admins: admins}
 }
 
 // SignupResult is returned after signup; the client must verify the email next.
@@ -198,6 +207,11 @@ func (s *AuthService) VerifyEmail(ctx context.Context, email, otp string) (*Auth
 		return nil, err
 	}
 
+	// Auto-promote to admin if the (now verified) email is on the allowlist.
+	// Done outside the tx on purpose: SetRole is idempotent and a failure here
+	// must not unwind a successful verification — the account is already active.
+	s.applyAdminRole(ctx, acc)
+
 	return s.issueToken(acc)
 }
 
@@ -224,6 +238,7 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*AuthR
 	if err != nil {
 		return nil, err
 	}
+	s.applyAdminRole(ctx, acc)
 	return s.issueToken(acc)
 }
 
@@ -315,11 +330,44 @@ func (s *AuthService) issueAndSend(ctx context.Context, accountID *int64, destin
 }
 
 func (s *AuthService) issueToken(acc *models.Account) (*AuthResult, error) {
-	tok, err := s.tokens.Issue(acc.ID)
+	tok, err := s.tokens.Issue(acc.ID, acc.Role)
 	if err != nil {
 		return nil, err
 	}
 	return &AuthResult{Token: tok.Token, ExpiresAt: tok.ExpiresAt, Account: acc}, nil
+}
+
+// applyAdminRole promotes the account to admin if its primary email is on the
+// config allowlist and it isn't already. Best-effort: errors are swallowed
+// (logged via the central handler only on truly unexpected DB failures) so a
+// flaky promote never blocks a successful auth. The account's Role field is
+// updated in place so the immediately-following issueToken picks it up.
+func (s *AuthService) applyAdminRole(ctx context.Context, acc *models.Account) {
+	if acc.PrimaryEmail == nil || acc.Role == models.RoleAdmin {
+		return
+	}
+	if !s.isAdminEmail(*acc.PrimaryEmail) {
+		return
+	}
+	if err := s.accounts.SetRole(ctx, acc.ID, models.RoleAdmin); err != nil {
+		// Don't fail the auth flow; the next login will retry the promotion.
+		return
+	}
+	acc.Role = models.RoleAdmin
+}
+
+// isAdminEmail reports whether email matches the allowlist (case-insensitive).
+func (s *AuthService) isAdminEmail(email string) bool {
+	if len(s.admins) == 0 {
+		return false
+	}
+	e := strings.ToLower(strings.TrimSpace(email))
+	for _, a := range s.admins {
+		if a == e {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeEmail(email string) string {

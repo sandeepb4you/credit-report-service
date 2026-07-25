@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -58,4 +59,35 @@ func (h *KycHandler) SubmitPAN(c *fiber.Ctx) error {
 		return err
 	}
 	return c.Status(fiber.StatusCreated).JSON(rec)
+}
+
+// VerifyPAN godoc
+//
+// @Summary      Verify an account's PAN (admin only)
+// @Description  Marks the named account's KYC row as PAN-verified. Required before that account can request credit analytics. The caller must be an admin.
+// @Tags         kyc
+// @Produce      json
+// @Security     BearerAuth
+// @Param        accountId  path      int  true  "Account id whose PAN is being verified"
+// @Success      200        {object}  models.KYCRecord
+// @Failure      400        {object}  apperr.ErrorBody  "accountId must be an integer"
+// @Failure      401        {object}  apperr.ErrorBody  "Not authenticated"
+// @Failure      403        {object}  apperr.ErrorBody  "Not an admin"
+// @Failure      404        {object}  apperr.ErrorBody  "No PAN on file for this account"
+// @Router       /admin/kyc/pan/{accountId}/verify [post]
+func (h *KycHandler) VerifyPAN(c *fiber.Ctx) error {
+	// RequireRole(admin) on the route guarantees the caller is an admin; the
+	// account being verified comes from the path.
+	if _, ok := middleware.AccountRole(c); !ok {
+		return apperr.NewUnauthorized("Not authenticated")
+	}
+	accountID, err := strconv.ParseInt(c.Params("accountId"), 10, 64)
+	if err != nil {
+		return apperr.NewValidation("accountId must be an integer")
+	}
+	rec, err := h.svc.VerifyPAN(c.Context(), accountID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(rec)
 }

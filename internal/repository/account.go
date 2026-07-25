@@ -25,7 +25,7 @@ func (r *AccountRepo) BeginTx(ctx context.Context) (pgx.Tx, error) {
 
 // ---- accounts -----------------------------------------------------------
 
-const accountCols = `id, status, primary_email, primary_phone,
+const accountCols = `id, status, role, primary_email, primary_phone,
     first_name, last_name, date_of_birth, profile_completed, created_at, updated_at`
 
 func (r *AccountRepo) FindByID(ctx context.Context, id int64) (*models.Account, error) {
@@ -46,6 +46,15 @@ func (r *AccountRepo) FindByEmail(ctx context.Context, email string) (*models.Ac
 		return nil, ErrNotFound
 	}
 	return &a, err
+}
+
+// SetRole updates an account's role. Used by the admin-emails allowlist path
+// to promote a verified account to 'admin'.
+func (r *AccountRepo) SetRole(ctx context.Context, accountID int64, role string) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE accounts SET role = $2, updated_at = now() WHERE id = $1`,
+		accountID, role)
+	return err
 }
 
 // CreateAccount inserts a new account within a transaction.
@@ -201,6 +210,43 @@ func (r *AccountRepo) UpsertPAN(ctx context.Context, accountID int64, panNumber 
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
+	}
+	return &k, nil
+}
+
+// FindKYCByAccount returns the account's KYC row, or ErrNotFound if none exists.
+func (r *AccountRepo) FindKYCByAccount(ctx context.Context, accountID int64) (*models.KYCRecord, error) {
+	var k models.KYCRecord
+	err := pgxscan.Get(ctx, r.pool, &k,
+		`SELECT `+kycCols+` FROM kyc_records WHERE account_id = $1`, accountID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &k, nil
+}
+
+// VerifyPAN marks the account's KYC row as PAN-verified. Returns the updated
+// row, or ErrNotFound if the account has no KYC row to verify.
+func (r *AccountRepo) VerifyPAN(ctx context.Context, accountID int64) (*models.KYCRecord, error) {
+	var k models.KYCRecord
+	err := pgxscan.Get(ctx, r.pool, &k,
+		`UPDATE kyc_records
+		    SET pan_verified = true,
+		        status       = 'VERIFIED',
+		        verified_at  = now(),
+		        updated_at   = now()
+		  WHERE account_id = $1
+		 RETURNING `+kycCols,
+		accountID,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
 	}
 	return &k, nil
 }

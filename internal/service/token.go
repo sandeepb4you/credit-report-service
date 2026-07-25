@@ -11,7 +11,8 @@ import (
 )
 
 // TokenService issues and validates HS256 JWTs for authenticated sessions.
-// The subject claim (`sub`) carries the account id.
+// The subject claim (`sub`) carries the account id; a custom `role` claim
+// carries the account role ("" / RoleUser / RoleAdmin).
 type TokenService struct {
 	secret []byte
 	ttl    time.Duration
@@ -25,20 +26,31 @@ func NewTokenService(cfg config.AuthConfig) *TokenService {
 	return &TokenService{secret: []byte(cfg.JWTSecret), ttl: ttl}
 }
 
+// sessionClaims embeds the standard registered claims and adds a role.
+// Embedding RegisteredClaims means tokens issued before the role claim
+// existed still parse (Role just unmarshals to "").
+type sessionClaims struct {
+	Role string `json:"role,omitempty"`
+	jwt.RegisteredClaims
+}
+
 // IssuedToken is the login/verify response payload.
 type IssuedToken struct {
 	Token     string    `json:"token"`
 	ExpiresAt time.Time `json:"expiresAt"`
 }
 
-// Issue mints a signed JWT for the given account id.
-func (s *TokenService) Issue(accountID int64) (*IssuedToken, error) {
+// Issue mints a signed JWT for the given account id + role.
+func (s *TokenService) Issue(accountID int64, role string) (*IssuedToken, error) {
 	now := time.Now().UTC()
 	exp := now.Add(s.ttl)
-	claims := jwt.RegisteredClaims{
-		Subject:   fmt.Sprintf("%d", accountID),
-		IssuedAt:  jwt.NewNumericDate(now),
-		ExpiresAt: jwt.NewNumericDate(exp),
+	claims := sessionClaims{
+		Role: role,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   fmt.Sprintf("%d", accountID),
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(exp),
+		},
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	signed, err := tok.SignedString(s.secret)
@@ -48,10 +60,10 @@ func (s *TokenService) Issue(accountID int64) (*IssuedToken, error) {
 	return &IssuedToken{Token: signed, ExpiresAt: exp}, nil
 }
 
-// Parse validates a token string and returns the account id from its subject.
-// Any failure maps to a 401-style OtpFailure-free unauthorized error.
-func (s *TokenService) Parse(tokenStr string) (int64, error) {
-	claims := &jwt.RegisteredClaims{}
+// Parse validates a token string and returns the account id and role from its
+// claims. Any failure maps to a 401-style unauthorized error.
+func (s *TokenService) Parse(tokenStr string) (int64, string, error) {
+	claims := &sessionClaims{}
 	_, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
@@ -59,11 +71,11 @@ func (s *TokenService) Parse(tokenStr string) (int64, error) {
 		return s.secret, nil
 	})
 	if err != nil {
-		return 0, apperr.NewUnauthorized("Invalid or expired session")
+		return 0, "", apperr.NewUnauthorized("Invalid or expired session")
 	}
 	var accountID int64
 	if _, err := fmt.Sscanf(claims.Subject, "%d", &accountID); err != nil || accountID <= 0 {
-		return 0, apperr.NewUnauthorized("Invalid session subject")
+		return 0, "", apperr.NewUnauthorized("Invalid session subject")
 	}
-	return accountID, nil
+	return accountID, claims.Role, nil
 }

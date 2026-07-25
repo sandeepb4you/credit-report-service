@@ -41,3 +41,16 @@ func (s *KycService) SubmitPAN(ctx context.Context, accountID int64, pan string)
 	}
 	return rec, nil
 }
+
+// VerifyPAN marks the given account's PAN as verified (admin action). The
+// account must already have a KYC row (created via SubmitPAN).
+func (s *KycService) VerifyPAN(ctx context.Context, accountID int64) (*models.KYCRecord, error) {
+	rec, err := s.accounts.VerifyPAN(ctx, accountID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, apperr.NewNotFound("No PAN on file for this account")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return rec, nil
+}

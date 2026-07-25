@@ -74,8 +74,8 @@ func main() {
 	otpSvc := service.NewOTPService(cfg.Auth.OTP)
 	mailSvc := service.NewMailService(cfg.Mail, cfg.Auth.OTP.TTL)
 	tokenSvc := service.NewTokenService(cfg.Auth)
-	authSvc := service.NewAuthService(accountRepo, otpSvc, mailSvc, tokenSvc)
-	analyticsSvc := service.NewCreditAnalyticsService(digitapClient, analyticsRepo)
+	authSvc := service.NewAuthService(accountRepo, otpSvc, mailSvc, tokenSvc, cfg.Auth)
+	analyticsSvc := service.NewCreditAnalyticsService(digitapClient, analyticsRepo, accountRepo)
 	kycSvc := service.NewKycService(accountRepo)
 
 	// Handlers.
