@@ -8,6 +8,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"credit-report-service/internal/apperr"
+	_ "credit-report-service/internal/models" // referenced by swag annotations (models.Account)
 	"credit-report-service/internal/server/middleware"
 	"credit-report-service/internal/service"
 )
@@ -26,10 +27,22 @@ var otpCodeRE = regexp.MustCompile(`^\d{4,8}$`)
 // ---- POST /api/auth/signup ----------------------------------------------
 
 type signupReq struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email    string `json:"email"    example:"user@example.com"`
+	Password string `json:"password" example:"hunter2pass"`
 }
 
+// Signup godoc
+//
+// @Summary      Sign up with email + password
+// @Description  Creates a PENDING account with an unverified password identity and emails a verification OTP. Re-signing up for an unverified email updates the password and re-issues the OTP.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        request  body      signupReq  true  "Signup credentials"
+// @Success      201      {object}  service.SignupResult
+// @Failure      400      {object}  apperr.ErrorBody  "Validation failed"
+// @Failure      409      {object}  apperr.ErrorBody  "Email already registered"
+// @Router       /auth/signup [post]
 func (h *AuthHandler) Signup(c *fiber.Ctx) error {
 	var req signupReq
 	if err := c.BodyParser(&req); err != nil {
@@ -50,10 +63,22 @@ func (h *AuthHandler) Signup(c *fiber.Ctx) error {
 // ---- POST /api/auth/verify-email ----------------------------------------
 
 type verifyEmailReq struct {
-	Email string `json:"email"`
-	OTP   string `json:"otp"`
+	Email string `json:"email" example:"user@example.com"`
+	OTP   string `json:"otp"   example:"123456"`
 }
 
+// VerifyEmail godoc
+//
+// @Summary      Verify email with OTP
+// @Description  Checks the signup OTP; on success verifies the identity, activates the account, and returns a session JWT.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        request  body      verifyEmailReq  true  "Email + OTP"
+// @Success      200      {object}  service.AuthResult
+// @Failure      400      {object}  apperr.ErrorBody  "Wrong / expired / locked OTP"
+// @Failure      409      {object}  apperr.ErrorBody  "Email already registered"
+// @Router       /auth/verify-email [post]
 func (h *AuthHandler) VerifyEmail(c *fiber.Ctx) error {
 	var req verifyEmailReq
 	if err := c.BodyParser(&req); err != nil {
@@ -83,9 +108,22 @@ func (h *AuthHandler) VerifyEmail(c *fiber.Ctx) error {
 // ---- POST /api/auth/otp/resend ------------------------------------------
 
 type resendReq struct {
-	Email string `json:"email"`
+	Email string `json:"email" example:"user@example.com"`
 }
 
+// ResendOTP godoc
+//
+// @Summary      Resend signup verification OTP
+// @Description  Re-issues the signup OTP for an unverified email, subject to cooldown / send limits.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        request  body      resendReq        true  "Email to resend to"
+// @Success      200      {object}  map[string]string  "{\"message\": \"Verification code re-sent\"}"
+// @Failure      400      {object}  apperr.ErrorBody  "Validation failed / cooldown / send limit"
+// @Failure      404      {object}  apperr.ErrorBody  "No signup found for this email"
+// @Failure      409      {object}  apperr.ErrorBody  "Email is already verified"
+// @Router       /auth/otp/resend [post]
 func (h *AuthHandler) ResendOTP(c *fiber.Ctx) error {
 	var req resendReq
 	if err := c.BodyParser(&req); err != nil {
@@ -105,10 +143,22 @@ func (h *AuthHandler) ResendOTP(c *fiber.Ctx) error {
 // ---- POST /api/auth/login -----------------------------------------------
 
 type loginReq struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email    string `json:"email"    example:"user@example.com"`
+	Password string `json:"password" example:"hunter2pass"`
 }
 
+// Login godoc
+//
+// @Summary      Log in with email + password
+// @Description  Verifies email + password and returns a session JWT. Requires the email to be verified.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        request  body      loginReq  true  "Login credentials"
+// @Success      200      {object}  service.AuthResult
+// @Failure      400      {object}  apperr.ErrorBody  "Validation failed"
+// @Failure      401      {object}  apperr.ErrorBody  "Invalid email or password / email not verified"
+// @Router       /auth/login [post]
 func (h *AuthHandler) Login(c *fiber.Ctx) error {
 	var req loginReq
 	if err := c.BodyParser(&req); err != nil {
@@ -128,6 +178,17 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 
 // ---- GET /api/profile ----------------------------------------------------
 
+// GetProfile godoc
+//
+// @Summary      Get the authenticated account's profile
+// @Description  Returns the full account record for the current session.
+// @Tags         profile
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  models.Account
+// @Failure      401  {object}  apperr.ErrorBody  "Not authenticated"
+// @Failure      404  {object}  apperr.ErrorBody  "Account not found"
+// @Router       /profile [get]
 func (h *AuthHandler) GetProfile(c *fiber.Ctx) error {
 	accountID, ok := middleware.AccountID(c)
 	if !ok {
@@ -143,11 +204,25 @@ func (h *AuthHandler) GetProfile(c *fiber.Ctx) error {
 // ---- PUT /api/profile ----------------------------------------------------
 
 type updateProfileReq struct {
-	FirstName   string `json:"firstName"`
-	LastName    string `json:"lastName"`
-	DateOfBirth string `json:"dateOfBirth"`
+	FirstName   string `json:"firstName"   example:"Ada"`
+	LastName    string `json:"lastName"    example:"Lovelace"`
+	DateOfBirth string `json:"dateOfBirth" example:"1815-12-10"`
 }
 
+// UpdateProfile godoc
+//
+// @Summary      Update the authenticated account's profile
+// @Description  Sets first/last name (required) and optional date of birth (YYYY-MM-DD), marking the profile step complete.
+// @Tags         profile
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        request  body      updateProfileReq  true  "Profile fields"
+// @Success      200      {object}  models.Account
+// @Failure      400      {object}  apperr.ErrorBody  "Validation failed"
+// @Failure      401      {object}  apperr.ErrorBody  "Not authenticated"
+// @Failure      404      {object}  apperr.ErrorBody  "Account not found"
+// @Router       /profile [put]
 func (h *AuthHandler) UpdateProfile(c *fiber.Ctx) error {
 	accountID, ok := middleware.AccountID(c)
 	if !ok {

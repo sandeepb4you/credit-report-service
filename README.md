@@ -10,26 +10,29 @@ multi-step user registration flow with OTP verification and PAN-card OCR.
 - [pgx](https://github.com/jackc/pgx) + [scany](https://github.com/georgysavva/scany) — Postgres driver / row mapper, no ORM
 - [golang-migrate](https://github.com/golang-migrate/migrate) — embedded migrations
 - [Viper](https://github.com/spf13/viper) — config (config.yaml + env overrides)
-- [bcrypt](https://pkg.go.dev/golang.org/x/crypto/bcrypt) — OTP-at-rest hashing
+- [bcrypt](https://pkg.go.dev/golang.org/x/crypto/bcrypt) — password + OTP-at-rest hashing
+- [JWT](https://github.com/golang-jwt/jwt) — HS256 session tokens
+- [swaggo/swag](https://github.com/swaggo/swag) + [gofiber/swagger](https://github.com/gofiber/swagger) — OpenAPI docs & Swagger UI
 
 ## Project layout
 
 ```
 credit-report-service/
-├── cmd/server/main.go            entry point
+├── cmd/server/main.go            entry point (general API info for swag)
 ├── config.yaml                   default config
 ├── config.dev.yaml               dev profile overlay
+├── docs/                         generated OpenAPI spec (docs.go, swagger.json/yaml)
 └── internal/
     ├── apperr/                   typed errors + Fiber error handler
     ├── config/                   Viper loader + Config struct
     ├── db/                       pgxpool + embedded migrations
     │   └── migrations/           golang-migrate *.sql files
-    ├── handler/                  Fiber HTTP handlers
+    ├── handler/                  Fiber HTTP handlers (swag annotations)
     ├── models/                   plain row structs
     ├── ocr/                      OCR provider (Stub + Google Vision)
     ├── repository/               pgx + scany repositories
     ├── server/                   Fiber app wiring + routes
-    └── service/                  business logic (registration, OTP, mail, PAN)
+    └── service/                  business logic (auth, OTP, mail, credit reports)
 ```
 
 ## Run
@@ -58,30 +61,57 @@ Defaults live in `config.yaml`. Override:
 
 When `mail.host` is empty, OTPs are printed to stdout (dev stub).
 
+## API docs (Swagger)
+
+Interactive docs are served by Swagger UI once the app is running:
+
+```
+http://localhost:8080/swagger/index.html
+```
+
+Protected endpoints expose an **Authorize** button — paste a JWT obtained from
+`POST /api/auth/login` (or `/api/auth/verify-email`) and it will be sent as
+`Authorization: Bearer <jwt>`.
+
+The spec is generated from `// @...` annotations on each handler via
+[swaggo/swag](https://github.com/swaggo/swag). Regenerate after editing
+annotations:
+
+```bash
+go install github.com/swaggo/swag/cmd/swag@latest
+swag init -g cmd/server/main.go -o docs --parseDependency --parseInternal
+```
+
+The generated `docs/` package is committed; `cmd/server/main.go` blank-imports it
+and `internal/server/server.go` mounts the UI at `/swagger/*`.
+
 ## Endpoints
 
-| Method | Path                                       | Description                       |
-|--------|--------------------------------------------|-----------------------------------|
-| GET    | `/api/ping`                                | Liveness                          |
-| GET    | `/api/credit-reports`                      | List all                          |
-| GET    | `/api/credit-reports/:id`                  | Get by id                         |
-| GET    | `/api/credit-reports/by-subject/:subjectId`| Get by subject id                 |
-| POST   | `/api/credit-reports`                      | Create (body: `subjectId`, `score?`, `status?`) |
-| DELETE | `/api/credit-reports/:id`                  | Delete                            |
-| POST   | `/api/registration/otp/send`               | Stage 1: send OTP (body: `mobile`, `email`) |
-| POST   | `/api/registration/otp/verify`             | Stage 1: verify OTP (body: `attemptId`, `otp`) |
-| POST   | `/api/registration/pan`                    | Stage 2: submit PAN + image (multipart: `attemptId`, `panNumber`, `firstName`, `lastName`, `dateOfBirth?`, `image`) |
+All routes are under `/api`. 🔒 = requires `Authorization: Bearer <jwt>`.
 
-## Registration flow
+| Method | Path                                       | Auth     | Description                                  |
+|--------|--------------------------------------------|----------|----------------------------------------------|
+| GET    | `/api/ping`                                |          | Liveness                                     |
+| POST   | `/api/auth/signup`                         |          | Create account, email verification OTP       |
+| POST   | `/api/auth/verify-email`                   |          | Verify OTP, activate account, return JWT     |
+| POST   | `/api/auth/otp/resend`                     |          | Resend signup OTP                            |
+| POST   | `/api/auth/login`                          |          | Email + password login, return JWT           |
+| GET    | `/api/profile`                             | 🔒       | Get current account                          |
+| PUT    | `/api/profile`                             | 🔒       | Update first/last name, DOB                  |
+| GET    | `/api/credit-reports`                      | 🔒       | List all                                     |
+| GET    | `/api/credit-reports/:id`                  | 🔒       | Get by id                                    |
+| GET    | `/api/credit-reports/by-subject/:subjectId`| 🔒       | Get by subject id                            |
+| POST   | `/api/credit-reports`                      | 🔒       | Create (`subjectId`, `score?`, `status?`)    |
+| DELETE | `/api/credit-reports/:id`                  | 🔒       | Delete                                       |
 
-1. `POST /api/registration/otp/send` with `{mobile, email}` — returns `attemptId`.
-   OTP is emailed to `email` (or logged when SMTP host is empty).
-2. `POST /api/registration/otp/verify` with `{attemptId, otp}` — flips attempt
-   to `OTP_VERIFIED`. `attemptId` is the session token for step 3.
-3. `POST /api/registration/pan` multipart — submits PAN number, first/last name,
-   optional DOB, and the PAN-card image. OCR runs on the image; PAN must match
-   exactly and name within Levenshtein distance 2. On success a `users` row is
-   created and the attempt becomes `PAN_VERIFIED`.
+## Auth flow
+
+1. `POST /api/auth/signup` with `{email, password}` — creates a `PENDING` account
+   and emails a verification OTP (logged to stdout when SMTP host is empty).
+2. `POST /api/auth/verify-email` with `{email, otp}` — verifies the identity,
+   activates the account, and returns `{token, expiresAt, account}`.
+3. Use the `token` as `Authorization: Bearer <token>` for protected routes.
+   `POST /api/auth/login` re-issues a token for a verified account.
 
 ## OCR providers
 
@@ -103,7 +133,7 @@ go test ./...
 
 ## Production notes
 
+- **JWT secret** — override `auth.jwt-secret` (env `AUTH_JWT_SECRET`) before exposing publicly; the default is insecure.
 - **PAN authenticity** is NOT verified against the income-tax DB — only format + OCR consistency.
-- **No Spring Security / JWT equivalent** here; the `attemptId` is a weak session token.
 - **No HTTP rate limiter** — add one (e.g. a middleware) before exposing publicly.
-- **Stale-attempt sweep** (`STARTED` rows past their OTP TTL) is not wired to a scheduler. Add a `time.Ticker` or cron to call `RegistrationService.ExpireStale`.
+- **Swagger UI** is mounted publicly at `/swagger/*`; restrict it (or put it behind auth) in production if you don't want the spec exposed.

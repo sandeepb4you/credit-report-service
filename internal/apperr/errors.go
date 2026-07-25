@@ -59,16 +59,16 @@ func (e *PayloadTooLarge) Error() string { return e.Msg }
 
 // ---- Constructors -------------------------------------------------------
 
-func NewNotFound(msg string) error                    { return &NotFound{Msg: msg} }
-func NewValidation(msg string) error                  { return &Validation{Msg: msg} }
+func NewNotFound(msg string) error   { return &NotFound{Msg: msg} }
+func NewValidation(msg string) error { return &Validation{Msg: msg} }
 func NewValidationWith(msg string, d map[string]string) error {
 	return &Validation{Msg: msg, Details: d}
 }
-func NewOtpFailure(msg string) error                  { return &OtpFailure{Msg: msg} }
-func NewConflict(msg string) error                    { return &Conflict{Msg: msg} }
-func NewUnauthorized(msg string) error                { return &Unauthorized{Msg: msg} }
-func NewPanFailure(msg string) error                  { return &PanFailure{Msg: msg} }
-func NewPayloadTooLarge(msg string) error             { return &PayloadTooLarge{Msg: msg} }
+func NewOtpFailure(msg string) error      { return &OtpFailure{Msg: msg} }
+func NewConflict(msg string) error        { return &Conflict{Msg: msg} }
+func NewUnauthorized(msg string) error    { return &Unauthorized{Msg: msg} }
+func NewPanFailure(msg string) error      { return &PanFailure{Msg: msg} }
+func NewPayloadTooLarge(msg string) error { return &PayloadTooLarge{Msg: msg} }
 
 // As lets callers test for a typed error without importing this package's
 // concrete types: errors.As(err, &target) where target is *apperr.Conflict etc.
@@ -129,7 +129,9 @@ func isFiberBodyLimit(err error) bool {
 	return false
 }
 
-type errorBody struct {
+// ErrorBody is the JSON envelope returned for every error response. It is
+// exported so Swagger annotations can reference it via `@Failure ... apperr.ErrorBody`.
+type ErrorBody struct {
 	Status    int         `json:"status"`
 	Error     string      `json:"error"`
 	Message   string      `json:"message"`
@@ -138,7 +140,7 @@ type errorBody struct {
 }
 
 func writeError(c *fiber.Ctx, status int, errName, msg string, details interface{}) error {
-	return c.Status(status).JSON(errorBody{
+	return c.Status(status).JSON(ErrorBody{
 		Status:    status,
 		Error:     errName,
 		Message:   msg,

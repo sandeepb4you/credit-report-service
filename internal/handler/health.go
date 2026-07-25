@@ -9,6 +9,14 @@ type HealthHandler struct{}
 
 func NewHealthHandler() *HealthHandler { return &HealthHandler{} }
 
+// Ping godoc
+//
+// @Summary      Liveness check
+// @Description  Reports whether the service is up.
+// @Tags         health
+// @Produce      json
+// @Success      200  {object}  map[string]string  "UP"
+// @Router       /ping [get]
 func (h *HealthHandler) Ping(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"status":  "UP",

@@ -11,13 +11,29 @@ import (
 	"syscall"
 	"time"
 
+	_ "credit-report-service/docs" // generated Swagger spec; self-registers fiberSwagger
 	"credit-report-service/internal/config"
 	"credit-report-service/internal/db"
+	"credit-report-service/internal/digitap"
 	"credit-report-service/internal/handler"
 	"credit-report-service/internal/repository"
 	"credit-report-service/internal/server"
 	"credit-report-service/internal/service"
 )
+
+// @title          Credit Report Service API
+// @version        1.0
+// @description    REST API for the credit-report Android app: email/password auth with OTP verification, JWT sessions, profile management, and credit-report CRUD.
+// @description
+// @description    All routes are mounted under `/api`. Protected routes require an `Authorization: Bearer <jwt>` header obtained from login or email verification.
+//
+// @host      localhost:8080
+// @BasePath  /api
+//
+// @securityDefinitions.apikey BearerAuth
+// @in          header
+// @name        Authorization
+// @description  "Bearer <jwt>" — obtain via POST /api/auth/login or /api/auth/verify-email
 
 func main() {
 	profile := os.Getenv("APP_PROFILE")
@@ -45,6 +61,15 @@ func main() {
 	// Repositories.
 	creditRepo := repository.NewCreditReportRepo(pool)
 	accountRepo := repository.NewAccountRepo(pool)
+	analyticsRepo := repository.NewCreditAnalyticsRepo(pool)
+
+	// Upstream clients.
+	digitapClient := digitap.New(digitap.Config{
+		BaseURL:      cfg.Digitap.BaseURL,
+		ClientID:     cfg.Digitap.ClientID,
+		ClientSecret: cfg.Digitap.ClientSecret,
+		Timeout:      cfg.Digitap.Timeout,
+	})
 
 	// Services.
 	creditSvc := service.NewCreditReportService(creditRepo)
@@ -52,13 +77,15 @@ func main() {
 	mailSvc := service.NewMailService(cfg.Mail, cfg.Auth.OTP.TTL)
 	tokenSvc := service.NewTokenService(cfg.Auth)
 	authSvc := service.NewAuthService(accountRepo, otpSvc, mailSvc, tokenSvc)
+	analyticsSvc := service.NewCreditAnalyticsService(digitapClient, analyticsRepo)
 
 	// Handlers.
 	healthH := handler.NewHealthHandler()
 	creditH := handler.NewCreditReportHandler(creditSvc)
 	authH := handler.NewAuthHandler(authSvc)
+	analyticsH := handler.NewCreditAnalyticsHandler(analyticsSvc)
 
-	app := server.New(cfg, healthH, creditH, authH, tokenSvc)
+	app := server.New(cfg, healthH, creditH, authH, analyticsH, tokenSvc)
 
 	go func() {
 		addr := ":" + itoa(cfg.Server.Port)

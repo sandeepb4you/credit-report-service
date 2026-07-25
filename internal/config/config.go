@@ -16,12 +16,23 @@ import (
 
 // Config is the top-level configuration tree.
 type Config struct {
-	Server   ServerConfig   `mapstructure:"server"`
-	DB       DBConfig       `mapstructure:"db"`
-	Mail     MailConfig     `mapstructure:"mail"`
-	Auth     AuthConfig     `mapstructure:"auth"`
-	Multipart MultipartConfig `mapstructure:"multipart"`
+	Server       ServerConfig       `mapstructure:"server"`
+	DB           DBConfig           `mapstructure:"db"`
+	Mail         MailConfig         `mapstructure:"mail"`
+	Auth         AuthConfig         `mapstructure:"auth"`
+	Multipart    MultipartConfig    `mapstructure:"multipart"`
 	Registration RegistrationConfig `mapstructure:"registration"`
+	Digitap      DigitapConfig      `mapstructure:"digitap"`
+}
+
+// DigitapConfig holds credentials and endpoint settings for the Digitap Credit
+// Analytics API (spec V2.7). When ClientID is empty, the service runs the
+// client in an offline stub mode.
+type DigitapConfig struct {
+	BaseURL      string        `mapstructure:"base-url"`
+	ClientID     string        `mapstructure:"client-id"`
+	ClientSecret string        `mapstructure:"client-secret"`
+	Timeout      time.Duration `mapstructure:"timeout"`
 }
 
 // AuthConfig holds JWT signing settings for the email/password auth flow.
@@ -32,18 +43,18 @@ type AuthConfig struct {
 }
 
 type ServerConfig struct {
-	Port            int    `mapstructure:"port"`
-	MaxRequestBody  string `mapstructure:"max-request-body"`
+	Port           int    `mapstructure:"port"`
+	MaxRequestBody string `mapstructure:"max-request-body"`
 }
 
 type DBConfig struct {
-	URL             string `mapstructure:"url"`
-	Username        string `mapstructure:"username"`
-	Password        string `mapstructure:"password"`
-	MaxPoolSize     int    `mapstructure:"max-pool-size"`
-	MinIdle         int    `mapstructure:"min-idle"`
+	URL         string `mapstructure:"url"`
+	Username    string `mapstructure:"username"`
+	Password    string `mapstructure:"password"`
+	MaxPoolSize int    `mapstructure:"max-pool-size"`
+	MinIdle     int    `mapstructure:"min-idle"`
 	// When set, takes precedence over URL/Username/Password.
-	DSN             string `mapstructure:"dsn"`
+	DSN string `mapstructure:"dsn"`
 }
 
 type MailConfig struct {
@@ -67,11 +78,11 @@ type RegistrationConfig struct {
 }
 
 type OTPConfig struct {
-	Length               int           `mapstructure:"length"`
-	TTL                  time.Duration `mapstructure:"ttl"`
-	ResendCooldown       time.Duration `mapstructure:"resend-cooldown"`
-	MaxAttempts          int           `mapstructure:"max-attempts"`
-	MaxSends             int           `mapstructure:"max-sends"`
+	Length         int           `mapstructure:"length"`
+	TTL            time.Duration `mapstructure:"ttl"`
+	ResendCooldown time.Duration `mapstructure:"resend-cooldown"`
+	MaxAttempts    int           `mapstructure:"max-attempts"`
+	MaxSends       int           `mapstructure:"max-sends"`
 }
 
 type PANConfig struct {
@@ -79,7 +90,7 @@ type PANConfig struct {
 }
 
 type OCRConfig struct {
-	Provider     string  `mapstructure:"provider"`
+	Provider      string  `mapstructure:"provider"`
 	MinConfidence float64 `mapstructure:"min-confidence"`
 }
 
@@ -89,9 +100,9 @@ type OCRConfig struct {
 // REGISTRATION_OTP_LENGTH). Env values override file values.
 func Load(profile string) (*Config, error) {
 	v := viper.New()
-	v.SetConfigName("config")             // config.yaml / config.yml
+	v.SetConfigName("config") // config.yaml / config.yml
 	v.SetConfigType("yaml")
-	v.AddConfigPath(".")                  // project root when run from repo
+	v.AddConfigPath(".") // project root when run from repo
 	v.AddConfigPath("./config")
 
 	setDefaults(v)
@@ -158,6 +169,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("registration.pan.name-match-distance", 2)
 	v.SetDefault("registration.ocr.provider", "stub")
 	v.SetDefault("registration.ocr.min-confidence", 0.8)
+
+	// Digitap Credit Analytics API. Empty client-id -> offline stub client.
+	v.SetDefault("digitap.base-url", "https://apidemo.digitap.work/")
+	v.SetDefault("digitap.client-id", "")
+	v.SetDefault("digitap.client-secret", "")
+	v.SetDefault("digitap.timeout", "30s")
 }
 
 func allKeys() []string {
@@ -175,6 +192,7 @@ func allKeys() []string {
 		"registration.otp.max-sends",
 		"registration.pan.name-match-distance",
 		"registration.ocr.provider", "registration.ocr.min-confidence",
+		"digitap.base-url", "digitap.client-id", "digitap.client-secret", "digitap.timeout",
 	}
 }
 

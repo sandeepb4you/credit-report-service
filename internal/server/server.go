@@ -3,6 +3,7 @@ package server
 
 import (
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/swagger"
 
 	"credit-report-service/internal/apperr"
 	"credit-report-service/internal/config"
@@ -18,6 +19,7 @@ func New(
 	health *handler.HealthHandler,
 	credit *handler.CreditReportHandler,
 	auth *handler.AuthHandler,
+	analytics *handler.CreditAnalyticsHandler,
 	tokens *service.TokenService,
 ) *fiber.App {
 	app := fiber.New(fiber.Config{
@@ -29,6 +31,10 @@ func New(
 
 	api := app.Group("/api")
 	api.Get("/ping", health.Ping)
+
+	// Swagger UI (served from the generated docs/ package). Public so the
+	// docs/Authorize button can be reached without a session.
+	app.Get("/swagger/*", swagger.HandlerDefault)
 
 	// ---- Auth (public) ---------------------------------------------------
 	a := api.Group("/auth")
@@ -50,6 +56,10 @@ func New(
 	cr.Get("/by-subject/:subjectId", credit.GetBySubject)
 	cr.Post("/", credit.Create)
 	cr.Delete("/:id<int>", credit.Delete)
+
+	// ---- Credit analytics (Digitap proxy) -------------------------------
+	ca := api.Group("/credit-analytics", requireAuth)
+	ca.Post("/request", analytics.Request)
 
 	return app
 }

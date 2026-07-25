@@ -48,3 +48,13 @@ registration:
   ocr:
     provider: stub          # stub | google-vision
     min-confidence: 0.8
+
+digitap:
+  # Digitap Credit Analytics API (spec V2.7). Override credentials via env:
+  #   DIGITAP_CLIENT_ID, DIGITAP_CLIENT_SECRET
+  # When client-id is empty, the service runs the upstream client in an offline
+  # stub mode (no outbound HTTP) so the build/tests work without credentials.
+  base-url: https://apidemo.digitap.work/
+  client-id: ""
+  client-secret: ""
+  timeout: 30s

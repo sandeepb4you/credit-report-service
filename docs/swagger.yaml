@@ -1,0 +1,487 @@
+basePath: /api
+definitions:
+  credit-report-service_internal_apperr.ErrorBody:
+    properties:
+      details: {}
+      error:
+        type: string
+      message:
+        type: string
+      status:
+        type: integer
+      timestamp:
+        type: string
+    type: object
+  credit-report-service_internal_models.Account:
+    properties:
+      createdAt:
+        type: string
+      dateOfBirth:
+        type: string
+      email:
+        type: string
+      firstName:
+        type: string
+      id:
+        type: integer
+      lastName:
+        type: string
+      phone:
+        type: string
+      profileCompleted:
+        type: boolean
+      status:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  credit-report-service_internal_models.CreditReport:
+    properties:
+      createdAt:
+        type: string
+      id:
+        type: integer
+      score:
+        type: integer
+      status:
+        type: string
+      subjectId:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  credit-report-service_internal_service.AuthResult:
+    properties:
+      account:
+        $ref: '#/definitions/credit-report-service_internal_models.Account'
+      expiresAt:
+        type: string
+      token:
+        type: string
+    type: object
+  credit-report-service_internal_service.SignupResult:
+    properties:
+      accountId:
+        type: integer
+      email:
+        type: string
+      message:
+        type: string
+    type: object
+  internal_handler.creditReportCreateReq:
+    properties:
+      score:
+        example: 780
+        type: integer
+      status:
+        example: HEALTHY
+        type: string
+      subjectId:
+        example: PAN-ABCDE1234F
+        type: string
+    type: object
+  internal_handler.loginReq:
+    properties:
+      email:
+        example: user@example.com
+        type: string
+      password:
+        example: hunter2pass
+        type: string
+    type: object
+  internal_handler.resendReq:
+    properties:
+      email:
+        example: user@example.com
+        type: string
+    type: object
+  internal_handler.signupReq:
+    properties:
+      email:
+        example: user@example.com
+        type: string
+      password:
+        example: hunter2pass
+        type: string
+    type: object
+  internal_handler.updateProfileReq:
+    properties:
+      dateOfBirth:
+        example: "1815-12-10"
+        type: string
+      firstName:
+        example: Ada
+        type: string
+      lastName:
+        example: Lovelace
+        type: string
+    type: object
+  internal_handler.verifyEmailReq:
+    properties:
+      email:
+        example: user@example.com
+        type: string
+      otp:
+        example: "123456"
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: |-
+    REST API for the credit-report Android app: email/password auth with OTP verification, JWT sessions, profile management, and credit-report CRUD.
+
+    All routes are mounted under `/api`. Protected routes require an `Authorization: Bearer <jwt>` header obtained from login or email verification.
+  title: Credit Report Service API
+  version: "1.0"
+paths:
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Verifies email + password and returns a session JWT. Requires the
+        email to be verified.
+      parameters:
+      - description: Login credentials
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.loginReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_service.AuthResult'
+        "400":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Invalid email or password / email not verified
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      summary: Log in with email + password
+      tags:
+      - auth
+  /auth/otp/resend:
+    post:
+      consumes:
+      - application/json
+      description: Re-issues the signup OTP for an unverified email, subject to cooldown
+        / send limits.
+      parameters:
+      - description: Email to resend to
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.resendReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{\"message\": \"Verification code re-sent\"}'
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Validation failed / cooldown / send limit
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: No signup found for this email
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "409":
+          description: Email is already verified
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      summary: Resend signup verification OTP
+      tags:
+      - auth
+  /auth/signup:
+    post:
+      consumes:
+      - application/json
+      description: Creates a PENDING account with an unverified password identity
+        and emails a verification OTP. Re-signing up for an unverified email updates
+        the password and re-issues the OTP.
+      parameters:
+      - description: Signup credentials
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.signupReq'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_service.SignupResult'
+        "400":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "409":
+          description: Email already registered
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      summary: Sign up with email + password
+      tags:
+      - auth
+  /auth/verify-email:
+    post:
+      consumes:
+      - application/json
+      description: Checks the signup OTP; on success verifies the identity, activates
+        the account, and returns a session JWT.
+      parameters:
+      - description: Email + OTP
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.verifyEmailReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_service.AuthResult'
+        "400":
+          description: Wrong / expired / locked OTP
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "409":
+          description: Email already registered
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      summary: Verify email with OTP
+      tags:
+      - auth
+  /credit-reports:
+    get:
+      description: Returns every credit report row.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/credit-report-service_internal_models.CreditReport'
+            type: array
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List all credit reports
+      tags:
+      - credit-reports
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Report fields
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.creditReportCreateReq'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.CreditReport'
+        "400":
+          description: Invalid JSON body
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Create a credit report
+      tags:
+      - credit-reports
+  /credit-reports/{id}:
+    delete:
+      parameters:
+      - description: Report id
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: id must be an integer
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: Not found
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Delete a credit report by id
+      tags:
+      - credit-reports
+    get:
+      parameters:
+      - description: Report id
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.CreditReport'
+        "400":
+          description: id must be an integer
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: Not found
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Get a credit report by id
+      tags:
+      - credit-reports
+  /credit-reports/by-subject/{subjectId}:
+    get:
+      parameters:
+      - description: Subject id
+        in: path
+        name: subjectId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.CreditReport'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: Not found
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Get a credit report by subject id
+      tags:
+      - credit-reports
+  /ping:
+    get:
+      description: Reports whether the service is up.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: UP
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Liveness check
+      tags:
+      - health
+  /profile:
+    get:
+      description: Returns the full account record for the current session.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.Account'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: Account not found
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Get the authenticated account's profile
+      tags:
+      - profile
+    put:
+      consumes:
+      - application/json
+      description: Sets first/last name (required) and optional date of birth (YYYY-MM-DD),
+        marking the profile step complete.
+      parameters:
+      - description: Profile fields
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.updateProfileReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.Account'
+        "400":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: Account not found
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Update the authenticated account's profile
+      tags:
+      - profile
+securityDefinitions:
+  BearerAuth:
+    description: '"Bearer <jwt>" — obtain via POST /api/auth/login or /api/auth/verify-email'
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"
