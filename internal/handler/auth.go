@@ -176,6 +176,38 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 	return c.JSON(res)
 }
 
+// ---- POST /api/auth/google -----------------------------------------------
+
+type googleLoginReq struct {
+	IDToken string `json:"idToken" example:"eyJhbGciOiJSUzI1NiIs..."`
+}
+
+// GoogleLogin godoc
+//
+// @Summary      Log in with Google
+// @Description  Verifies a Google ID token (issued by the Android/iOS Google Sign-In SDK) and returns a session JWT. On first login, creates a verified account; on subsequent logins, reuses the existing account. If the Google email matches an existing account, the Google identity is linked onto it. Requires the Web OAuth client ID to be configured (AUTH_GOOGLE_CLIENT_ID); otherwise returns 503.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        request  body      googleLoginReq  true  "Google ID token"
+// @Success      200      {object}  service.AuthResult
+// @Failure      400      {object}  apperr.ErrorBody  "Validation failed (missing idToken)"
+// @Failure      401      {object}  apperr.ErrorBody  "Invalid Google token"
+// @Failure      409      {object}  apperr.ErrorBody  "Google identity already linked to another account"
+// @Failure      503      {object}  apperr.ErrorBody  "Google login is not configured"
+// @Router       /auth/google [post]
+func (h *AuthHandler) GoogleLogin(c *fiber.Ctx) error {
+	var req googleLoginReq
+	if err := c.BodyParser(&req); err != nil {
+		return apperr.NewValidation("invalid JSON body")
+	}
+	res, err := h.svc.GoogleLogin(c.Context(), req.IDToken)
+	if err != nil {
+		return err
+	}
+	return c.JSON(res)
+}
+
 // ---- GET /api/profile ----------------------------------------------------
 
 // GetProfile godoc

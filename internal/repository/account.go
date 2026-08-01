@@ -107,6 +107,20 @@ func (r *AccountRepo) FindIdentity(ctx context.Context, provider, subject string
 	return &id, err
 }
 
+// FindIdentityByEmail looks up any identity matching the given (normalized)
+// email, across providers. Used to link a new Google identity onto an existing
+// account whose primary email already matches. Returns ErrNotFound if none.
+func (r *AccountRepo) FindIdentityByEmail(ctx context.Context, email string) (*models.AuthIdentity, error) {
+	var id models.AuthIdentity
+	err := pgxscan.Get(ctx, r.pool, &id,
+		`SELECT `+identityCols+` FROM auth_identities
+		 WHERE email = $1 ORDER BY verified DESC, id ASC LIMIT 1`, email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &id, err
+}
+
 func (r *AccountRepo) CreateIdentity(ctx context.Context, tx pgx.Tx, id *models.AuthIdentity) error {
 	row := tx.QueryRow(ctx,
 		`INSERT INTO auth_identities

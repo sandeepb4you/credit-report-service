@@ -3,8 +3,10 @@
 //
 // It only covers the /credit_analytics/request endpoint used by this service.
 // When no client credentials are configured (ClientID == ""), New returns a
-// stub client that replies with a canned success envelope so the service can
-// be built and exercised offline / in CI.
+// stub client that replies with a synthesized success envelope containing a
+// realistic, randomized Experian-style INProfileResponse report (see mock.go).
+// This lets the service return rich data offline / in CI / while the Digitap
+// UAT endpoint is unavailable.
 package digitap
 
 import (
@@ -13,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -81,8 +84,11 @@ func (c *Client) IsStub() bool { return c.stub }
 // with the HTTP status of the upstream call.
 func (c *Client) Request(ctx context.Context, payload any) (*Response, int, error) {
 	if c.stub {
+		slog.Debug("digitap stub response (no live upstream configured)", "client_ref_num", clientRefOf(payload))
 		return c.stubResponse(payload), http.StatusOK, nil
 	}
+
+	refNum := clientRefOf(payload)
 
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -97,8 +103,16 @@ func (c *Client) Request(ctx context.Context, payload any) (*Response, int, erro
 	req.Header.Set("Content-Type", "application/json")
 	req.SetBasicAuth(c.cfg.ClientID, c.cfg.ClientSecret)
 
+	slog.Debug("calling digitap upstream", "client_ref_num", refNum, "url", url)
+	start := time.Now()
 	resp, err := c.http.Do(req)
+	latencyMs := time.Since(start).Milliseconds()
 	if err != nil {
+		slog.Error("digitap upstream call failed",
+			"client_ref_num", refNum,
+			"latency_ms", latencyMs,
+			"error", err,
+		)
 		return nil, 0, fmt.Errorf("call digitap: %w", err)
 	}
 	defer resp.Body.Close()
@@ -114,6 +128,12 @@ func (c *Client) Request(ctx context.Context, payload any) (*Response, int, erro
 	var env Response
 	if jErr := json.Unmarshal(raw, &env); jErr != nil {
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			slog.Error("digitap response decode failed",
+				"client_ref_num", refNum,
+				"upstream_status", resp.StatusCode,
+				"latency_ms", latencyMs,
+				"error", jErr,
+			)
 			return nil, resp.StatusCode, fmt.Errorf("decode digitap response: %w (body: %s)", jErr, truncate(string(raw), 256))
 		}
 		env = Response{HTTPResponseCode: resp.StatusCode, Message: "upstream returned non-JSON error"}
@@ -121,7 +141,31 @@ func (c *Client) Request(ctx context.Context, payload any) (*Response, int, erro
 	if env.HTTPResponseCode == 0 {
 		env.HTTPResponseCode = resp.StatusCode
 	}
+	slog.Info("digitap upstream response",
+		"client_ref_num", refNum,
+		"upstream_status", resp.StatusCode,
+		"result_code", env.ResultCode,
+		"latency_ms", latencyMs,
+	)
 	return &env, resp.StatusCode, nil
+}
+
+// clientRefOf extracts the client_ref_num correlation id from an opaque payload
+// via a JSON round-trip, for log correlation. Returns "" if absent or if the
+// payload isn't the expected shape.
+func clientRefOf(payload any) string {
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	var m map[string]any
+	if json.Unmarshal(b, &m) != nil {
+		return ""
+	}
+	if v, ok := m["client_ref_num"].(string); ok {
+		return v
+	}
+	return ""
 }
 
 func (c *Client) stubResponse(payload any) *Response {
@@ -132,31 +176,8 @@ func (c *Client) stubResponse(payload any) *Response {
 		RequestID:        "00000000-0000-0000-0000-stub000000000",
 		ResultCode:       &code,
 		Message:          msg,
-		Result:           stubResult(payload),
+		Result:           generateReport(payload),
 	}
-}
-
-// stubResult mirrors the shape of a successful result.result_json payload just
-// enough to be a non-empty placeholder; it is only used by the offline stub.
-func stubResult(payload any) json.RawMessage {
-	ref := ""
-	if b, err := json.Marshal(payload); err == nil {
-		var m map[string]any
-		if json.Unmarshal(b, &m) == nil {
-			if v, ok := m["client_ref_num"].(string); ok {
-				ref = v
-			}
-		}
-	}
-	b, _ := json.Marshal(map[string]any{
-		"result_json": map[string]any{
-			"INProfileResponse": map[string]any{
-				"stub":           true,
-				"client_ref_num": ref,
-			},
-		},
-	})
-	return b
 }
 
 func truncate(s string, n int) string {

@@ -14,6 +14,7 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/swaggo/swag v1.16.6
 	golang.org/x/crypto v0.54.0
+	google.golang.org/api v0.287.1
 	gopkg.in/mail.v2 v2.3.1
 )
 
@@ -78,7 +79,6 @@ require (
 	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.47.0 // indirect
-	google.golang.org/api v0.287.1 // indirect
 	google.golang.org/genproto v0.0.0-20260319201613-d00831a3d3e7 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260630182238-925bb5da69e7 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260630182238-925bb5da69e7 // indirect

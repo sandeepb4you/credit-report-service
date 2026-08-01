@@ -10,7 +10,7 @@ package apperr
 
 import (
 	"errors"
-	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -62,6 +62,11 @@ type PayloadTooLarge struct{ Msg string }
 
 func (e *PayloadTooLarge) Error() string { return e.Msg }
 
+// ServiceUnavailable maps to HTTP 503 (a required provider/config is missing).
+type ServiceUnavailable struct{ Msg string }
+
+func (e *ServiceUnavailable) Error() string { return e.Msg }
+
 // ---- Constructors -------------------------------------------------------
 
 func NewNotFound(msg string) error   { return &NotFound{Msg: msg} }
@@ -69,12 +74,13 @@ func NewValidation(msg string) error { return &Validation{Msg: msg} }
 func NewValidationWith(msg string, d map[string]string) error {
 	return &Validation{Msg: msg, Details: d}
 }
-func NewOtpFailure(msg string) error      { return &OtpFailure{Msg: msg} }
-func NewConflict(msg string) error        { return &Conflict{Msg: msg} }
-func NewUnauthorized(msg string) error    { return &Unauthorized{Msg: msg} }
-func NewForbidden(msg string) error       { return &Forbidden{Msg: msg} }
-func NewPanFailure(msg string) error      { return &PanFailure{Msg: msg} }
-func NewPayloadTooLarge(msg string) error { return &PayloadTooLarge{Msg: msg} }
+func NewOtpFailure(msg string) error         { return &OtpFailure{Msg: msg} }
+func NewConflict(msg string) error           { return &Conflict{Msg: msg} }
+func NewUnauthorized(msg string) error       { return &Unauthorized{Msg: msg} }
+func NewForbidden(msg string) error          { return &Forbidden{Msg: msg} }
+func NewPanFailure(msg string) error         { return &PanFailure{Msg: msg} }
+func NewPayloadTooLarge(msg string) error    { return &PayloadTooLarge{Msg: msg} }
+func NewServiceUnavailable(msg string) error { return &ServiceUnavailable{Msg: msg} }
 
 // As lets callers test for a typed error without importing this package's
 // concrete types: errors.As(err, &target) where target is *apperr.Conflict etc.
@@ -94,6 +100,7 @@ func ErrorHandler(c *fiber.Ctx, err error) error {
 		fb  *Forbidden
 		pf  *PanFailure
 		ptl *PayloadTooLarge
+		su  *ServiceUnavailable
 	)
 
 	switch {
@@ -113,6 +120,8 @@ func ErrorHandler(c *fiber.Ctx, err error) error {
 		return writeError(c, 422, "Unprocessable Entity", pf.Msg, nil)
 	case errors.As(err, &ptl):
 		return writeError(c, 413, "Payload Too Large", ptl.Msg, nil)
+	case errors.As(err, &su):
+		return writeError(c, 503, "Service Unavailable", su.Msg, nil)
 	case isFiberBodyLimit(err):
 		// Fiber's body limit error isn't exported; detect by message.
 		return writeError(c, 413, "Payload Too Large",
@@ -126,7 +135,11 @@ func ErrorHandler(c *fiber.Ctx, err error) error {
 	}
 
 	// Fallback: log and return 500 without leaking internals.
-	fmt.Printf("[error] unhandled: %v\n", err)
+	slog.Error("unhandled error",
+		"method", c.Method(),
+		"path", c.Path(),
+		"error", err,
+	)
 	return writeError(c, 500, "Internal Server Error", "Unexpected error", nil)
 }
 

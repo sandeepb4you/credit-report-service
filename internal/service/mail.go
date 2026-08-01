@@ -1,8 +1,11 @@
 package service
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
-	"log"
+	"log/slog"
+	"strings"
 	"time"
 
 	"gopkg.in/mail.v2"
@@ -39,8 +42,12 @@ func (m *MailService) SendOTP(toEmail, otp string) error {
 	}
 
 	if m.cfg.Host == "" {
-		// Dev fallback: don't fail the flow, just log.
-		log.Printf("[MAIL-STUB] %s OTP for %s: %s (valid %dm)", brandName, toEmail, otp, validMins)
+		// Dev fallback: don't fail the flow. Log only a non-reversible hash of
+		// the recipient — never the OTP or the email address.
+		slog.Info("otp email stubbed (no SMTP configured)",
+			"recipient_hash", hashEmail(toEmail),
+			"valid_minutes", validMins,
+		)
 		return nil
 	}
 
@@ -58,11 +65,39 @@ func (m *MailService) SendOTP(toEmail, otp string) error {
 	msg.AddAlternative("text/html", htmlBody)
 
 	if err := m.dialer.DialAndSend(msg); err != nil {
-		// Log the OTP locally so dev runs without SMTP can still complete the flow.
-		log.Printf("[MAIL-FAIL] SMTP send to %s failed: %v; OTP for local testing: %s",
-			toEmail, err, otp)
+		// Log the failure without the OTP value or recipient address. SMTP
+		// servers sometimes echo the envelope recipient in their error text, so
+		// scrub any occurrence of the address before logging.
+		slog.Error("otp email send failed",
+			"recipient_hash", hashEmail(toEmail),
+			"error", scrubEmail(err.Error(), toEmail),
+		)
 		return fmt.Errorf("send otp email: %w", err)
 	}
-	log.Printf("[MAIL] %s OTP email dispatched to %s", brandName, toEmail)
+	slog.Info("otp email dispatched", "recipient_hash", hashEmail(toEmail))
 	return nil
 }
+
+// scrubEmail replaces any occurrence of email in s with "[redacted]", so an
+// SMTP bounce message that echoes the recipient can't leak it into the logs.
+func scrubEmail(s, email string) string {
+	if email == "" {
+		return s
+	}
+	return strings.ReplaceAll(s, email, "[redacted]")
+}
+
+// hashEmail returns a short, non-reversible identifier for an email address so
+// the recipient can be correlated in logs without the address itself being
+// written. It is a salted SHA-256 truncated to 12 hex chars; the salt is fixed
+// per-process so the same address is stable within a run but not reversible
+// from the digest alone.
+func hashEmail(email string) string {
+	sum := sha256.Sum256([]byte(emailHashSalt + email))
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+// emailHashSalt mixes the hash so a precomputed rainbow table for emails can't
+// reverse the digest. Constant is fine; this only needs to defeat lookup
+// tables, not a targeted adversary (the logs stay inside the operator's sink).
+const emailHashSalt = "crs-log-v1"

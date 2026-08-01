@@ -24,6 +24,14 @@ type Config struct {
 	Multipart    MultipartConfig    `mapstructure:"multipart"`
 	Registration RegistrationConfig `mapstructure:"registration"`
 	Digitap      DigitapConfig      `mapstructure:"digitap"`
+	Log          LogConfig          `mapstructure:"log"`
+}
+
+// LogConfig holds structured-logging settings (log/slog). Level is one of
+// debug/info/warn/error (default info); Format is json or text.
+type LogConfig struct {
+	Level  string `mapstructure:"level"`
+	Format string `mapstructure:"format"`
 }
 
 // DigitapConfig holds credentials and endpoint settings for the Digitap Credit
@@ -42,6 +50,16 @@ type AuthConfig struct {
 	JWTTTL      time.Duration `mapstructure:"jwt-ttl"`
 	OTP         OTPConfig     `mapstructure:"otp"`
 	AdminEmails []string      `mapstructure:"admin-emails"`
+	Google      GoogleConfig  `mapstructure:"google"`
+}
+
+// GoogleConfig holds settings for the Google OAuth ID-token login flow. The
+// ClientID is the "Web application" OAuth client ID from Google Cloud Console;
+// both the Android and iOS Google Sign-In SDKs must pass it as serverClientID
+// so the ID tokens they mint all carry the same `aud`. When empty, Google
+// login is disabled (the handler returns 503).
+type GoogleConfig struct {
+	ClientID string `mapstructure:"client-id"`
 }
 
 type ServerConfig struct {
@@ -175,6 +193,9 @@ func setDefaults(v *viper.Viper) {
 	// Admin allowlist: accounts whose email matches get role=admin at verify/login.
 	// Defaults to empty (no admins). Set via AUTH_ADMIN_EMAILS=a@x.com,b@y.com.
 	v.SetDefault("auth.admin-emails", []string{})
+	// Google OAuth ID-token login. Empty client-id disables the flow.
+	// Set via AUTH_GOOGLE_CLIENT_ID (or google.client-id in the config file).
+	v.SetDefault("auth.google.client-id", "")
 
 	v.SetDefault("multipart.max-file-size", "5MB")
 	v.SetDefault("multipart.max-request-size", "10MB")
@@ -194,6 +215,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("digitap.client-id", "")
 	v.SetDefault("digitap.client-secret", "")
 	v.SetDefault("digitap.timeout", "30s")
+
+	// Structured logging (log/slog). Override level via LOG_LEVEL.
+	// Format defaults to "text" (human-readable) and falls back to it on any
+	// unrecognized value; set "json" for production/structured ingestion.
+	v.SetDefault("log.level", "info")
+	v.SetDefault("log.format", "text")
 }
 
 func allKeys() []string {
@@ -205,6 +232,7 @@ func allKeys() []string {
 		"auth.otp.length", "auth.otp.ttl", "auth.otp.resend-cooldown",
 		"auth.otp.max-attempts", "auth.otp.max-sends",
 		"auth.admin-emails",
+		"auth.google.client-id",
 		"multipart.max-file-size", "multipart.max-request-size",
 		"registration.pan-image-dir",
 		"registration.otp.length", "registration.otp.ttl",
@@ -213,6 +241,7 @@ func allKeys() []string {
 		"registration.pan.name-match-distance",
 		"registration.ocr.provider", "registration.ocr.min-confidence",
 		"digitap.base-url", "digitap.client-id", "digitap.client-secret", "digitap.timeout",
+		"log.level", "log.format",
 	}
 }
 

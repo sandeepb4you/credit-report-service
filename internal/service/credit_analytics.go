@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"strings"
@@ -139,11 +140,21 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 		return nil, fmt.Errorf("marshal credit-analytics request: %w", err)
 	}
 
+	// Time the upstream call so latency is observable independently of the
+	// request-scoped middleware timing.
+	upstart := time.Now()
 	env, httpStatus, err := s.client.Request(ctx, payload)
+	upstreamLatency := time.Since(upstart).Milliseconds()
 	if err != nil {
 		// Network/transport failure — persist what we have, then surface the error.
 		row := s.buildRow(accountID, payload, reqBody)
 		_ = s.persist(ctx, row)
+		slog.Error("credit-analytics upstream unreachable",
+			"account_id", accountID,
+			"client_ref_num", payload.ClientRefNum,
+			"latency_ms", upstreamLatency,
+			"error", err,
+		)
 		return nil, apperr.NewValidation("credit-analytics provider unreachable: " + err.Error())
 	}
 
@@ -166,14 +177,45 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 	// Map the upstream status to a typed error. The row is already persisted.
 	switch {
 	case httpStatus >= 200 && httpStatus < 300:
+		slog.Info("credit-analytics request succeeded",
+			"account_id", accountID,
+			"report_id", row.ID,
+			"client_ref_num", payload.ClientRefNum,
+			"upstream_status", httpStatus,
+			"result_code", env.ResultCode,
+			"latency_ms", upstreamLatency,
+		)
 		return row, nil
 	case httpStatus == http.StatusBadRequest:
+		slog.Warn("credit-analytics upstream bad request",
+			"account_id", accountID,
+			"report_id", row.ID,
+			"upstream_status", httpStatus,
+			"message", env.Message,
+		)
 		return row, apperr.NewValidation(env.Message)
 	case httpStatus == http.StatusUnauthorized:
+		slog.Warn("credit-analytics upstream unauthorized",
+			"account_id", accountID,
+			"report_id", row.ID,
+			"upstream_status", httpStatus,
+		)
 		return row, apperr.NewUnauthorized(env.Message)
 	case httpStatus == http.StatusUnprocessableEntity:
+		slog.Warn("credit-analytics upstream tradeline rejection",
+			"account_id", accountID,
+			"report_id", row.ID,
+			"upstream_status", httpStatus,
+			"message", env.Message,
+		)
 		return row, apperr.NewPanFailure(env.Message)
 	default:
+		slog.Warn("credit-analytics upstream error",
+			"account_id", accountID,
+			"report_id", row.ID,
+			"upstream_status", httpStatus,
+			"message", env.Message,
+		)
 		return row, apperr.NewValidation(fmt.Sprintf("digitap upstream error (%d): %s", httpStatus, env.Message))
 	}
 }
@@ -199,6 +241,12 @@ func (s *CreditAnalyticsService) buildPayload(ctx context.Context, accountID int
 		missing["last_name"] = "account profile has no last name; complete your profile"
 	}
 	if len(missing) > 0 {
+		// Debug: these are routine client omissions, not faults. Keys only,
+		// never the values (mobile/name are PII).
+		slog.Debug("credit-analytics rejected: incomplete profile",
+			"account_id", accountID,
+			"missing", keysOf(missing),
+		)
 		return nil, apperr.NewValidationWith("invalid credit-analytics request", missing)
 	}
 
@@ -215,6 +263,7 @@ func (s *CreditAnalyticsService) buildPayload(ctx context.Context, accountID int
 			map[string]string{"pan": "no PAN on file; submit one via POST /api/kyc/pan"})
 	}
 	if !kyc.PANVerified {
+		slog.Debug("credit-analytics rejected: PAN not verified", "account_id", accountID)
 		return nil, apperr.NewValidationWith("invalid credit-analytics request",
 			map[string]string{"pan": "PAN not verified; an admin must verify it before requesting credit analytics"})
 	}
@@ -340,4 +389,14 @@ func strPtr(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// keysOf returns the map's keys as a slice, for logging field names without
+// their (potentially PII-bearing) values.
+func keysOf(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }

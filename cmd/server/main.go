@@ -5,7 +5,7 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -39,22 +39,27 @@ func main() {
 	profile := os.Getenv("APP_PROFILE")
 	cfg, err := config.Load(profile)
 	if err != nil {
-		log.Fatalf("config load: %v", err)
+		// Logger isn't initialized yet; write to stderr directly.
+		slog.Error("config load failed", "error", err)
+		os.Exit(1)
 	}
+	initLogger(cfg.Log, profile)
 
 	rootCtx, cancel := signal.NotifyContext(context.Background(),
 		os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	log.Printf("running database migrations...")
+	slog.Info("running database migrations")
 	if err := db.Migrate(rootCtx, cfg.DB); err != nil {
-		log.Fatalf("migrate: %v", err)
+		slog.Error("database migration failed", "error", err)
+		os.Exit(1)
 	}
 
-	log.Printf("connecting to database...")
+	slog.Info("connecting to database")
 	pool, err := db.New(rootCtx, cfg.DB)
 	if err != nil {
-		log.Fatalf("db connect: %v", err)
+		slog.Error("database connection failed", "error", err)
+		os.Exit(1)
 	}
 	defer pool.Close()
 
@@ -84,29 +89,69 @@ func main() {
 	analyticsH := handler.NewCreditAnalyticsHandler(analyticsSvc)
 	kycH := handler.NewKycHandler(kycSvc)
 
+	// One-time configuration snapshot. No secrets: just feature flags the
+	// operator needs to confirm at boot (stub vs. live upstream, OCR provider,
+	// whether Google login is wired up).
+	slog.Info("service starting",
+		"port", cfg.Server.Port,
+		"profile", profile,
+		"digitap_stub", digitapClient.IsStub(),
+		"ocr_provider", cfg.Registration.OCR.Provider,
+		"google_login_enabled", cfg.Auth.Google.ClientID != "",
+	)
+
 	app := server.New(cfg, healthH, authH, analyticsH, kycH, tokenSvc)
 
 	go func() {
 		addr := ":" + itoa(cfg.Server.Port)
-		log.Printf("listening on %s", addr)
+		slog.Info("http server listening", "addr", addr)
 		if err := app.Listen(addr); err != nil {
 			// Graceful shutdown via signal context will close the server; only
 			// fatal on other errors.
 			if errors.Is(err, fiberServerClosed) {
 				return
 			}
-			log.Fatalf("listen: %v", err)
+			slog.Error("http server failed", "error", err)
+			os.Exit(1)
 		}
 	}()
 
 	<-rootCtx.Done()
-	log.Printf("shutting down...")
+	slog.Info("shutdown signal received")
 	shutdownCtx, cancelShut := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelShut()
 	if err := app.ShutdownWithContext(shutdownCtx); err != nil {
-		log.Printf("shutdown error: %v", err)
+		slog.Error("shutdown error", "error", err)
 	}
-	log.Printf("bye")
+	slog.Info("service stopped")
+}
+
+// initLogger configures the package-level slog default from config. Format
+// "text" (human-readable, default for dev) or "json" (log ingestion); level is
+// one of debug/info/warn/error (default info). Any unrecognized value falls
+// back to the safe default rather than failing startup.
+func initLogger(cfg config.LogConfig, profile string) {
+	var level slog.Level
+	switch cfg.Level {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+
+	var handler slog.Handler
+	opts := &slog.HandlerOptions{Level: level}
+	if cfg.Format == "json" {
+		handler = slog.NewJSONHandler(os.Stdout, opts)
+	} else {
+		handler = slog.NewTextHandler(os.Stdout, opts)
+	}
+	logger := slog.New(handler)
+	slog.SetDefault(logger)
 }
 
 // fiberServerClosed is a sentinel for Listen returning due to Shutdown.

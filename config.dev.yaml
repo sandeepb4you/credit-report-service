@@ -54,7 +54,9 @@ digitap:
   #   DIGITAP_CLIENT_ID, DIGITAP_CLIENT_SECRET
   # When client-id is empty, the service runs the upstream client in an offline
   # stub mode (no outbound HTTP) so the build/tests work without credentials.
+  # client-id: "43398827"
+  # client-secret: "UwSufO5A0L7gZxABIsLjR9PILm9H2OQ5"
   base-url: https://apidemo.digitap.work/
-  client-id: "43398827"
-  client-secret: "UwSufO5A0L7gZxABIsLjR9PILm9H2OQ5"
+  client-id:
+  client-secret: 
   timeout: 30s

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 
 	"credit-report-service/internal/apperr"
@@ -35,10 +36,14 @@ func (s *KycService) SubmitPAN(ctx context.Context, accountID int64, pan string)
 	rec, err := s.accounts.UpsertPAN(ctx, accountID, pan)
 	if err != nil {
 		if errors.Is(err, repository.ErrConflict) {
+			// Conflict, not the PAN value itself.
+			slog.Warn("pan submission rejected: linked to another account", "account_id", accountID)
 			return nil, apperr.NewConflict("PAN is already linked to another account")
 		}
 		return nil, err
 	}
+	// account_id only — the PAN number is PII and must never appear in logs.
+	slog.Info("pan submitted", "account_id", accountID, "verified", rec.PANVerified)
 	return rec, nil
 }
 
@@ -52,5 +57,7 @@ func (s *KycService) VerifyPAN(ctx context.Context, accountID int64) (*models.KY
 	if err != nil {
 		return nil, err
 	}
+	// Admin-gated action — worth recording who was verified, never the PAN.
+	slog.Info("pan verified", "account_id", accountID)
 	return rec, nil
 }

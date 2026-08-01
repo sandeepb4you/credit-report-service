@@ -32,6 +32,11 @@ func New(
 		BodyLimit:             bodyLimitBytes(cfg.Multipart.MaxRequestSize),
 	})
 
+	// Request logger runs first so it can time every handler. It logs method,
+	// route pattern, status, latency, and account_id — never the body, headers,
+	// or query string. See middleware.RequestLogger.
+	app.Use(middleware.RequestLogger())
+
 	api := app.Group("/api")
 	api.Get("/ping", health.Ping)
 
@@ -59,6 +64,7 @@ func New(
 	a.Post("/verify-email", auth.VerifyEmail)
 	a.Post("/otp/resend", auth.ResendOTP)
 	a.Post("/login", auth.Login)
+	a.Post("/google", auth.GoogleLogin)
 
 	// ---- Protected -------------------------------------------------------
 	requireAuth := middleware.RequireAuth(tokens)

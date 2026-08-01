@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -21,11 +22,12 @@ const minPasswordLen = 8
 // JWT login. Additional identity providers (google, phone) slot in alongside
 // the password provider on the same accounts.
 type AuthService struct {
-	accounts *repository.AccountRepo
-	otp      *OTPService
-	mailer   Mailer
-	tokens   *TokenService
-	admins   []string // auth.admin-emails allowlist; lowercase
+	accounts       *repository.AccountRepo
+	otp            *OTPService
+	mailer         Mailer
+	tokens         *TokenService
+	admins         []string // auth.admin-emails allowlist; lowercase
+	googleClientID string   // "Web application" OAuth client ID; empty -> disabled
 }
 
 func NewAuthService(
@@ -41,7 +43,14 @@ func NewAuthService(
 			admins = append(admins, t)
 		}
 	}
-	return &AuthService{accounts: accounts, otp: otp, mailer: mailer, tokens: tokens, admins: admins}
+	return &AuthService{
+		accounts:       accounts,
+		otp:            otp,
+		mailer:         mailer,
+		tokens:         tokens,
+		admins:         admins,
+		googleClientID: authCfg.Google.ClientID,
+	}
 }
 
 // SignupResult is returned after signup; the client must verify the email next.
@@ -87,6 +96,7 @@ func (s *AuthService) Signup(ctx context.Context, email, password string) (*Sign
 
 	switch {
 	case existing != nil && existing.Verified:
+		slog.Warn("signup rejected: email already registered", "account_id", existing.AccountID)
 		return nil, apperr.NewConflict("Email already registered")
 	case existing != nil:
 		// Unverified: allow updating the password and re-verifying.
@@ -124,6 +134,7 @@ func (s *AuthService) Signup(ctx context.Context, email, password string) (*Sign
 	if err := s.issueAndSend(ctx, &accountID, email, models.OtpPurposeSignup); err != nil {
 		return nil, err
 	}
+	slog.Info("signup", "account_id", accountID, "status", "pending_verification")
 	return &SignupResult{
 		AccountID: accountID,
 		Email:     email,
@@ -166,6 +177,17 @@ func (s *AuthService) VerifyEmail(ctx context.Context, email, otp string) (*Auth
 			_ = s.accounts.UpdateChallenge(ctx, tx, ch)
 			_ = tx.Commit(ctx)
 		}
+		// Log the failed attempt without the OTP value or the email. account_id
+		// may be nil for legacy challenges; fall back to 0.
+		aid := int64(0)
+		if ch.AccountID != nil {
+			aid = *ch.AccountID
+		}
+		slog.Warn("otp verification failed",
+			"account_id", aid,
+			"attempts", ch.Attempts,
+			"error", verr.Error(),
+		)
 		return nil, verr
 	}
 
@@ -212,6 +234,7 @@ func (s *AuthService) VerifyEmail(ctx context.Context, email, otp string) (*Auth
 	// must not unwind a successful verification — the account is already active.
 	s.applyAdminRole(ctx, acc)
 
+	slog.Info("email verified", "account_id", acc.ID)
 	return s.issueToken(acc)
 }
 
@@ -221,6 +244,8 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*AuthR
 
 	ident, err := s.accounts.FindIdentity(ctx, models.ProviderPassword, email)
 	if errors.Is(err, repository.ErrNotFound) {
+		// Unknown email: don't echo the address or any account id.
+		slog.Warn("login failed: unknown identity")
 		return nil, apperr.NewUnauthorized("Invalid email or password")
 	}
 	if err != nil {
@@ -228,9 +253,13 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*AuthR
 	}
 	if ident.PasswordHash == nil ||
 		bcrypt.CompareHashAndPassword([]byte(*ident.PasswordHash), []byte(password)) != nil {
+		// Wrong password: log the account_id so brute-force is traceable, but
+		// never the email or password.
+		slog.Warn("login failed: invalid credentials", "account_id", ident.AccountID)
 		return nil, apperr.NewUnauthorized("Invalid email or password")
 	}
 	if !ident.Verified {
+		slog.Warn("login failed: email not verified", "account_id", ident.AccountID)
 		return nil, apperr.NewUnauthorized("Email not verified; please verify to continue")
 	}
 
@@ -239,6 +268,7 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*AuthR
 		return nil, err
 	}
 	s.applyAdminRole(ctx, acc)
+	slog.Info("login", "account_id", acc.ID, "method", "password")
 	return s.issueToken(acc)
 }
 
@@ -351,8 +381,10 @@ func (s *AuthService) applyAdminRole(ctx context.Context, acc *models.Account) {
 	}
 	if err := s.accounts.SetRole(ctx, acc.ID, models.RoleAdmin); err != nil {
 		// Don't fail the auth flow; the next login will retry the promotion.
+		slog.Warn("admin role promotion failed", "account_id", acc.ID, "error", err)
 		return
 	}
+	slog.Info("admin role granted", "account_id", acc.ID)
 	acc.Role = models.RoleAdmin
 }
 

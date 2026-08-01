@@ -138,6 +138,12 @@ definitions:
       message:
         type: string
     type: object
+  internal_handler.googleLoginReq:
+    properties:
+      idToken:
+        example: eyJhbGciOiJSUzI1NiIs...
+        type: string
+    type: object
   internal_handler.loginReq:
     properties:
       email:
@@ -237,6 +243,49 @@ paths:
       summary: Verify an account's PAN (admin only)
       tags:
       - kyc
+  /auth/google:
+    post:
+      consumes:
+      - application/json
+      description: Verifies a Google ID token (issued by the Android/iOS Google Sign-In
+        SDK) and returns a session JWT. On first login, creates a verified account;
+        on subsequent logins, reuses the existing account. If the Google email matches
+        an existing account, the Google identity is linked onto it. Requires the Web
+        OAuth client ID to be configured (AUTH_GOOGLE_CLIENT_ID); otherwise returns
+        503.
+      parameters:
+      - description: Google ID token
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.googleLoginReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_service.AuthResult'
+        "400":
+          description: Validation failed (missing idToken)
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Invalid Google token
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "409":
+          description: Google identity already linked to another account
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "503":
+          description: Google login is not configured
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      summary: Log in with Google
+      tags:
+      - auth
   /auth/login:
     post:
       consumes:

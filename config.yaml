@@ -24,6 +24,12 @@ auth:
   # HS256 signing secret for login JWTs. OVERRIDE in prod via AUTH_JWT_SECRET.
   jwt-secret: "dev-insecure-change-me"
   jwt-ttl: 720h   # 30 days
+  # Google OAuth ID-token login. Set to the "Web application" OAuth client ID
+  # from Google Cloud Console; both the Android and iOS Google Sign-In SDKs
+  # must use it as serverClientID so all ID tokens share one `aud`.
+  # Override via AUTH_GOOGLE_CLIENT_ID. Empty -> Google login disabled (503).
+  google:
+    client-id: ""
   otp:
     length: 6
     ttl: 10m
@@ -58,3 +64,10 @@ digitap:
   client-id: ""
   client-secret: ""
   timeout: 30s
+
+log:
+  # Structured logging (log/slog). Override via LOG_LEVEL / LOG_FORMAT.
+  # level: debug | info | warn | error (default info)
+  # format: text (human-readable, good for dev) | json (good for log ingestion)
+  level: info
+  format: text
