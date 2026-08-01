@@ -67,6 +67,12 @@ type ServiceUnavailable struct{ Msg string }
 
 func (e *ServiceUnavailable) Error() string { return e.Msg }
 
+// BadGateway maps to HTTP 502 (an upstream dependency, e.g. the payment
+// gateway, failed).
+type BadGateway struct{ Msg string }
+
+func (e *BadGateway) Error() string { return e.Msg }
+
 // ---- Constructors -------------------------------------------------------
 
 func NewNotFound(msg string) error   { return &NotFound{Msg: msg} }
@@ -81,6 +87,7 @@ func NewForbidden(msg string) error          { return &Forbidden{Msg: msg} }
 func NewPanFailure(msg string) error         { return &PanFailure{Msg: msg} }
 func NewPayloadTooLarge(msg string) error    { return &PayloadTooLarge{Msg: msg} }
 func NewServiceUnavailable(msg string) error { return &ServiceUnavailable{Msg: msg} }
+func NewBadGateway(msg string) error         { return &BadGateway{Msg: msg} }
 
 // As lets callers test for a typed error without importing this package's
 // concrete types: errors.As(err, &target) where target is *apperr.Conflict etc.
@@ -101,6 +108,7 @@ func ErrorHandler(c *fiber.Ctx, err error) error {
 		pf  *PanFailure
 		ptl *PayloadTooLarge
 		su  *ServiceUnavailable
+		bg  *BadGateway
 	)
 
 	switch {
@@ -122,6 +130,8 @@ func ErrorHandler(c *fiber.Ctx, err error) error {
 		return writeError(c, 413, "Payload Too Large", ptl.Msg, nil)
 	case errors.As(err, &su):
 		return writeError(c, 503, "Service Unavailable", su.Msg, nil)
+	case errors.As(err, &bg):
+		return writeError(c, 502, "Bad Gateway", bg.Msg, nil)
 	case isFiberBodyLimit(err):
 		// Fiber's body limit error isn't exported; detect by message.
 		return writeError(c, 413, "Payload Too Large",

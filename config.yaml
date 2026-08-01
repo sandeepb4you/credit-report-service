@@ -41,6 +41,21 @@ multipart:
   max-file-size: 5MB
   max-request-size: 10MB
 
+cashfree:
+  mode: sandbox            # sandbox | production
+  # Credentials from the Cashfree merchant dashboard. OVERRIDE in prod via
+  # CASHFREE_CLIENT_ID / CASHFREE_CLIENT_SECRET env vars. Empty client-id ->
+  # log-only stub gateway (no real Cashfree calls; dev fallback).
+  client-id: ""
+  client-secret: ""
+  api-version: "2025-01-01"
+  # Browser redirect after payment; "{order_id}" is replaced with our order uid.
+  return-url: "http://localhost:3000/payment/result?order_id={order_id}"
+  # Public HTTPS URL of POST /api/payments/cashfree/webhook. Empty -> webhooks
+  # must be configured in the Cashfree dashboard instead.
+  notify-url: ""
+  timeout: 15s
+
 registration:
   pan-image-dir: ./data/pan-images
   otp:

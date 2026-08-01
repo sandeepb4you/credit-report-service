@@ -25,6 +25,21 @@ type Config struct {
 	Registration RegistrationConfig `mapstructure:"registration"`
 	Digitap      DigitapConfig      `mapstructure:"digitap"`
 	Log          LogConfig          `mapstructure:"log"`
+	Cashfree     CashfreeConfig     `mapstructure:"cashfree"`
+}
+
+// CashfreeConfig holds Cashfree Payment Gateway credentials and endpoints.
+// When ClientID is empty the service falls back to a log-only stub gateway
+// (mirroring the mail stub) so local dev works without credentials.
+type CashfreeConfig struct {
+	Mode         string        `mapstructure:"mode"`     // sandbox | production
+	BaseURL      string        `mapstructure:"base-url"` // optional; derived from mode when empty
+	ClientID     string        `mapstructure:"client-id"`
+	ClientSecret string        `mapstructure:"client-secret"`
+	APIVersion   string        `mapstructure:"api-version"`
+	ReturnURL    string        `mapstructure:"return-url"` // browser redirect after payment
+	NotifyURL    string        `mapstructure:"notify-url"` // public URL of our webhook endpoint
+	Timeout      time.Duration `mapstructure:"timeout"`
 }
 
 // LogConfig holds structured-logging settings (log/slog). Level is one of
@@ -65,6 +80,8 @@ type GoogleConfig struct {
 type ServerConfig struct {
 	Port           int    `mapstructure:"port"`
 	MaxRequestBody string `mapstructure:"max-request-body"`
+	// Comma-separated list of allowed CORS origins, or "*" for any.
+	CORSOrigins string `mapstructure:"cors-origins"`
 }
 
 type DBConfig struct {
@@ -176,6 +193,7 @@ func Load(profile string) (*Config, error) {
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.port", 8080)
 	v.SetDefault("server.max-request-body", "10MB")
+	v.SetDefault("server.cors-origins", "*")
 
 	v.SetDefault("db.max-pool-size", 10)
 	v.SetDefault("db.min-idle", 2)
@@ -221,11 +239,15 @@ func setDefaults(v *viper.Viper) {
 	// unrecognized value; set "json" for production/structured ingestion.
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "text")
+
+	v.SetDefault("cashfree.mode", "sandbox")
+	v.SetDefault("cashfree.api-version", "2025-01-01")
+	v.SetDefault("cashfree.timeout", "15s")
 }
 
 func allKeys() []string {
 	return []string{
-		"server.port", "server.max-request-body",
+		"server.port", "server.max-request-body", "server.cors-origins",
 		"db.url", "db.username", "db.password", "db.dsn", "db.max-pool-size", "db.min-idle",
 		"mail.host", "mail.port", "mail.username", "mail.password", "mail.from",
 		"auth.jwt-secret", "auth.jwt-ttl",
@@ -242,6 +264,9 @@ func allKeys() []string {
 		"registration.ocr.provider", "registration.ocr.min-confidence",
 		"digitap.base-url", "digitap.client-id", "digitap.client-secret", "digitap.timeout",
 		"log.level", "log.format",
+		"cashfree.mode", "cashfree.base-url", "cashfree.client-id",
+		"cashfree.client-secret", "cashfree.api-version",
+		"cashfree.return-url", "cashfree.notify-url", "cashfree.timeout",
 	}
 }
 

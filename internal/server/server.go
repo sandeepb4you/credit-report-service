@@ -5,6 +5,7 @@ import (
 	"html/template"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/swagger"
 
 	"credit-report-service/internal/apperr"
@@ -24,6 +25,7 @@ func New(
 	analytics *handler.CreditAnalyticsHandler,
 	kyc *handler.KycHandler,
 	agents *handler.AgentHandler,
+	orders *handler.OrderHandler,
 	tokens *service.TokenService,
 ) *fiber.App {
 	app := fiber.New(fiber.Config{
@@ -37,6 +39,14 @@ func New(
 	// route pattern, status, latency, and account_id — never the body, headers,
 	// or query string. See middleware.RequestLogger.
 	app.Use(middleware.RequestLogger())
+
+	// CORS: the browser frontend preflights cross-origin requests (OPTIONS);
+	// without this every POST from the UI fails with 405.
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: cfg.Server.CORSOrigins,
+		AllowMethods: "GET,POST,PUT,DELETE,OPTIONS",
+		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
+	}))
 
 	api := app.Group("/api")
 	api.Get("/ping", health.Ping)
@@ -67,12 +77,24 @@ func New(
 	a.Post("/login", auth.Login)
 	a.Post("/google", auth.GoogleLogin)
 
+	// Cashfree server-to-server webhook (public; authenticated by HMAC
+	// signature over the raw body, not by a bearer token).
+	api.Post("/payments/cashfree/webhook", orders.Webhook)
+
 	// ---- Protected -------------------------------------------------------
 	requireAuth := middleware.RequireAuth(tokens)
 
 	profile := api.Group("/profile", requireAuth)
 	profile.Get("/", auth.GetProfile)
 	profile.Put("/", auth.UpdateProfile)
+
+	// ---- Products & orders (Cashfree) -----------------------------------
+	api.Get("/products", requireAuth, orders.ListProducts)
+
+	o := api.Group("/orders", requireAuth)
+	o.Post("/", orders.Create)
+	o.Get("/", orders.List)
+	o.Get("/:orderId", orders.Get)
 
 	// ---- Credit analytics (Digitap proxy) -------------------------------
 	ca := api.Group("/credit-analytics", requireAuth)
