@@ -10,10 +10,9 @@ import (
 )
 
 // The embedded migration set must be loadable. iofs rejects duplicate version
-// numbers, so this fails at boot — not at deploy time — if two branches each
-// claim the same NNNN prefix. That is exactly what happened when `agents` and
-// `orders` both landed on 0006, and it is invisible to git (different
-// filenames never conflict).
+// numbers, so two branches each claiming the same NNNN prefix takes the
+// service down at boot rather than failing in CI. Git cannot catch it on its
+// own: different filenames never conflict, so both sides merge cleanly.
 func TestMigrations_SourceLoads(t *testing.T) {
 	if _, err := iofs.New(migrationsFS, "migrations"); err != nil {
 		t.Fatalf("embedded migrations do not load: %v", err)

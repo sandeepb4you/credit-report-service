@@ -67,7 +67,6 @@ func main() {
 	// Repositories.
 	accountRepo := repository.NewAccountRepo(pool)
 	analyticsRepo := repository.NewCreditAnalyticsRepo(pool)
-	agentRepo := repository.NewAgentRepo(pool)
 	orderRepo := repository.NewOrderRepo(pool)
 	sessionRepo := repository.NewSessionRepo(pool)
 
@@ -94,10 +93,9 @@ func main() {
 	otpSvc := service.NewOTPService(cfg.Auth.OTP)
 	mailSvc := service.NewMailService(cfg.Mail, cfg.Auth.OTP.TTL)
 	tokenSvc := service.NewTokenService(cfg.Auth)
-	agentSvc := service.NewAgentService(agentRepo, accountRepo)
 	sessionSvc := service.NewSessionService(sessionRepo, cfg.Auth)
 	authSvc := service.NewAuthService(
-		accountRepo, otpSvc, mailSvc, tokenSvc, sessionSvc, cfg.Auth, agentSvc)
+		accountRepo, otpSvc, mailSvc, tokenSvc, sessionSvc, cfg.Auth)
 	analyticsSvc := service.NewCreditAnalyticsService(digitapClient, analyticsRepo, accountRepo)
 	kycSvc := service.NewKycService(accountRepo)
 	orderSvc := service.NewOrderService(orderRepo, accountRepo, gateway, cfg.Cashfree)
@@ -107,7 +105,6 @@ func main() {
 	authH := handler.NewAuthHandler(authSvc, sessionSvc, cfg.Auth.CookieSecure)
 	analyticsH := handler.NewCreditAnalyticsHandler(analyticsSvc)
 	kycH := handler.NewKycHandler(kycSvc)
-	agentH := handler.NewAgentHandler(agentSvc, authSvc)
 	orderH := handler.NewOrderHandler(orderSvc)
 
 	// One-time configuration snapshot. No secrets: just feature flags the
@@ -125,7 +122,7 @@ func main() {
 		"trusted_proxies", len(cfg.Server.TrustedProxies),
 	)
 
-	app := server.New(cfg, healthH, authH, analyticsH, kycH, agentH, orderH, tokenSvc)
+	app := server.New(cfg, healthH, authH, analyticsH, kycH, orderH, tokenSvc)
 
 	go func() {
 		addr := ":" + itoa(cfg.Server.Port)

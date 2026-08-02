@@ -57,6 +57,27 @@ func RequireRole(tokens *service.TokenService, role string) fiber.Handler {
 	}
 }
 
+// RequirePermission is RequireAuth plus a capability check. This is the
+// preferred gate: routes declare what they need done rather than who may do
+// it, so re-scoping a role or adding a new one never touches a route.
+// A token whose role lacks the permission yields 403; a missing/invalid token
+// yields 401 (from parseBearer).
+func RequirePermission(tokens *service.TokenService, perm string) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		accountID, role, sessionID, err := parseBearer(c, tokens)
+		if err != nil {
+			return err
+		}
+		if !models.HasPermission(role, perm) {
+			return apperr.NewForbidden("This resource requires the '" + perm + "' permission")
+		}
+		c.Locals(accountIDKey, accountID)
+		c.Locals(accountRoleKey, models.NormalizeRole(role))
+		c.Locals(sessionIDKey, sessionID)
+		return c.Next()
+	}
+}
+
 // parseBearer extracts and validates the Bearer JWT from the Authorization
 // header, returning the account id, role, and session id.
 func parseBearer(c *fiber.Ctx, tokens *service.TokenService) (int64, string, int64, error) {

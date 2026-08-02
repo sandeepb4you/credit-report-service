@@ -1,22 +1,90 @@
 package models
 
-// Account roles. The role is assigned via the auth.admin-emails config
-// allowlist (auto-promoted at verify/login) and rides in the JWT as a claim.
+// Account roles. 'admin' is assigned via the auth.admin-emails config
+// allowlist (auto-promoted at verify/login); 'agent' is granted by an admin.
+// The role rides in the JWT as a claim.
 const (
 	RoleUser  = "user"
+	RoleAgent = "agent" // referral partner: can issue coupon codes
 	RoleAdmin = "admin"
 )
 
 // roleRank orders roles from least to most privileged. A role satisfies a
 // requirement when its rank is >= the required rank, so gating a route on
-// RoleUser also admits admins.
+// RoleUser also admits agents and admins.
 //
-// Ranks are spaced by 10 so an intermediate role (e.g. "support" at 50) can be
-// slotted in without renumbering the existing ones. A role that is not in this
-// map is unknown and satisfies nothing — checks fail closed.
+// Ranks are spaced by 10 so an intermediate role can be slotted in without
+// renumbering the existing ones. A role that is not in this map is unknown and
+// satisfies nothing — checks fail closed.
+//
+// This assumes a total order, which holds while every role is a superset of
+// the one below it. The first genuinely disjoint role (say "support" that can
+// read tickets but not issue coupons) breaks that assumption; at that point
+// drop the rank comparison and match on permission sets alone, which is
+// already how routes are gated — see PermissionsFor.
 var roleRank = map[string]int{
 	RoleUser:  10,
+	RoleAgent: 50,
 	RoleAdmin: 100,
+}
+
+// Permissions are the capabilities routes gate on. Gating on a permission
+// rather than a role name means adding or re-scoping a role never touches a
+// route declaration, and it is what lets the role -> permission mapping move
+// into the database later without changing any handler.
+const (
+	PermKycVerify      = "kyc:verify"       // mark another account's PAN verified
+	PermAccountSetRole = "account:set-role" // grant/revoke roles
+	PermCouponCreate   = "coupon:create"    // issue a coupon code
+	PermCouponManage   = "coupon:manage"    // list/revoke your own coupons
+	PermCouponAdmin    = "coupon:admin"     // see and revoke anyone's coupons
+)
+
+// rolePerms lists the permissions each role adds on top of the role beneath
+// it. Effective permissions are the union across every role at or below your
+// rank — see PermissionsFor — so an entry here is written once and inherited
+// upward rather than repeated for admin.
+var rolePerms = map[string][]string{
+	RoleUser: {},
+	RoleAgent: {
+		PermCouponCreate,
+		PermCouponManage,
+	},
+	RoleAdmin: {
+		PermKycVerify,
+		PermAccountSetRole,
+		PermCouponAdmin,
+	},
+}
+
+// PermissionsFor returns the effective permission set for a role: everything
+// granted at its own rank plus everything granted below it. An unknown role
+// gets nothing.
+func PermissionsFor(role string) map[string]bool {
+	rank, ok := RoleRank(role)
+	if !ok {
+		return nil
+	}
+	out := make(map[string]bool)
+	for r, rRank := range roleRank {
+		if rRank > rank {
+			continue
+		}
+		for _, p := range rolePerms[r] {
+			out[p] = true
+		}
+	}
+	return out
+}
+
+// HasPermission reports whether a role carries a permission. Unknown roles and
+// unknown permissions both deny — this is the check routes depend on, so it
+// fails closed on anything it does not recognize.
+func HasPermission(role, perm string) bool {
+	if perm == "" {
+		return false
+	}
+	return PermissionsFor(role)[perm]
 }
 
 // NormalizeRole maps the empty role to RoleUser. Tokens issued before the role

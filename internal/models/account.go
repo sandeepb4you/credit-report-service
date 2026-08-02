@@ -38,8 +38,6 @@ type Account struct {
 	LastName         *string    `json:"lastName"         db:"last_name"`
 	DateOfBirth      *time.Time `json:"dateOfBirth"      db:"date_of_birth"`
 	ProfileCompleted bool       `json:"profileCompleted" db:"profile_completed"`
-	AgentID          *int64     `json:"agentId,omitempty" db:"agent_id"`
-	AgentCodeUpdated bool       `json:"agentCodeUpdated" db:"agent_code_updated"`
 	CreatedAt        time.Time  `json:"createdAt"        db:"created_at"`
 	UpdatedAt        time.Time  `json:"updatedAt"        db:"updated_at"`
 }

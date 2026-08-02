@@ -2,6 +2,7 @@ package handler
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,9 +33,8 @@ var otpCodeRE = regexp.MustCompile(`^\d{4,8}$`)
 // ---- POST /api/auth/signup ----------------------------------------------
 
 type signupReq struct {
-	Email     string  `json:"email"     example:"user@example.com"`
-	Password  string  `json:"password"  example:"hunter2pass"`
-	AgentCode *string `json:"agentCode" example:"AGENT001"`
+	Email    string `json:"email"    example:"user@example.com"`
+	Password string `json:"password" example:"hunter2pass"`
 }
 
 // Signup godoc
@@ -59,7 +59,7 @@ func (h *AuthHandler) Signup(c *fiber.Ctx) error {
 		return apperr.NewValidationWith("Validation failed",
 			map[string]string{"email": "email must be valid"})
 	}
-	res, err := h.svc.Signup(c.Context(), req.Email, req.Password, req.AgentCode)
+	res, err := h.svc.Signup(c.Context(), req.Email, req.Password)
 	if err != nil {
 		return err
 	}
@@ -308,6 +308,44 @@ func (h *AuthHandler) UpdateProfile(c *fiber.Ctx) error {
 	}
 
 	acc, err := h.svc.UpdateProfile(c.Context(), accountID, req.FirstName, req.LastName, dob)
+	if err != nil {
+		return err
+	}
+	return c.JSON(acc)
+}
+
+// ---- PUT /api/admin/accounts/:accountId/role -----------------------------
+
+type setRoleReq struct {
+	Role string `json:"role" example:"agent"`
+}
+
+// SetAccountRole godoc
+//
+// @Summary      Set an account's role
+// @Description  Grants or revokes a role. 'agent' lets the account issue coupon codes; 'user' is the default. Note that the role rides in the JWT, so a change only takes effect for the target account on its next token refresh — up to one access-token lifetime later.
+// @Tags         admin
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        accountId  path      int         true  "Account to modify"
+// @Param        request    body      setRoleReq  true  "Role to set (user | agent | admin)"
+// @Success      200        {object}  models.Account
+// @Failure      400        {object}  apperr.ErrorBody  "Unknown role / accountId must be an integer"
+// @Failure      401        {object}  apperr.ErrorBody  "Not authenticated"
+// @Failure      403        {object}  apperr.ErrorBody  "Missing the 'account:set-role' permission"
+// @Failure      404        {object}  apperr.ErrorBody  "Account not found"
+// @Router       /admin/accounts/{accountId}/role [put]
+func (h *AuthHandler) SetAccountRole(c *fiber.Ctx) error {
+	accountID, err := strconv.ParseInt(c.Params("accountId"), 10, 64)
+	if err != nil {
+		return apperr.NewValidation("accountId must be an integer")
+	}
+	var req setRoleReq
+	if err := c.BodyParser(&req); err != nil {
+		return apperr.NewValidation("invalid JSON body")
+	}
+	acc, err := h.svc.SetRole(c.Context(), accountID, strings.TrimSpace(req.Role))
 	if err != nil {
 		return err
 	}

@@ -24,7 +24,6 @@ func New(
 	auth *handler.AuthHandler,
 	analytics *handler.CreditAnalyticsHandler,
 	kyc *handler.KycHandler,
-	agents *handler.AgentHandler,
 	orders *handler.OrderHandler,
 	tokens *service.TokenService,
 ) *fiber.App {
@@ -139,21 +138,16 @@ func New(
 	k := api.Group("/kyc", requireAuth)
 	k.Post("/pan", kyc.SubmitPAN)
 
-	// ---- Admin (role-gated) ---------------------------------------------
-	admin := api.Group("/admin", middleware.RequireRole(tokens, models.RoleAdmin))
+	// ---- Admin (permission-gated) ----------------------------------------
+	//
+	// Each route declares the capability it needs rather than a role name, so
+	// re-scoping a role or adding one never touches this block. The group
+	// itself is gated on the weakest permission any member needs; individual
+	// routes tighten it where they need more.
+	admin := api.Group("/admin", middleware.RequirePermission(tokens, models.PermKycVerify))
 	admin.Post("/kyc/pan/:accountId<int>/verify", kyc.VerifyPAN)
-
-	// ---- Admin agent management ----------------------------------------
-	adminAgents := admin.Group("/agents")
-	adminAgents.Post("/", agents.CreateAgent)
-	adminAgents.Put("/:id<int>", agents.UpdateAgent)
-	adminAgents.Patch("/:id<int>/status", agents.SetAgentStatus)
-	adminAgents.Get("/", agents.ListActiveAgents)
-	adminAgents.Get("/:id<int>", agents.GetAgent)
-	adminAgents.Put("/account/:accountId<int>/agent-code", agents.UpdateAccountAgentCode)
-
-	// ---- User agent code update -----------------------------------------
-	profile.Put("/agent-code", requireAuth, agents.UpdateAgentCode)
+	admin.Put("/accounts/:accountId<int>/role",
+		middleware.RequirePermission(tokens, models.PermAccountSetRole), auth.SetAccountRole)
 
 	return app
 }

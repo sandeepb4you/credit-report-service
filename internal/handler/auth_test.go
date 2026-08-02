@@ -517,6 +517,65 @@ func TestRequireRole_WrongRole(t *testing.T) {
 	}
 }
 
+// ---- RequirePermission ---------------------------------------------------
+
+// The capability gate is what routes actually use, so it gets the same
+// fail-closed scrutiny as the role gate.
+func TestRequirePermission(t *testing.T) {
+	tests := []struct {
+		name string
+		role string
+		perm string
+		want int
+	}{
+		{"agent may create coupons", models.RoleAgent, models.PermCouponCreate, 200},
+		{"admin inherits coupon create", models.RoleAdmin, models.PermCouponCreate, 200},
+		{"user may not create coupons", models.RoleUser, models.PermCouponCreate, 403},
+		{"legacy empty role may not", "", models.PermCouponCreate, 403},
+		{"agent may not verify kyc", models.RoleAgent, models.PermKycVerify, 403},
+		{"agent may not grant roles", models.RoleAgent, models.PermAccountSetRole, 403},
+		{"admin may grant roles", models.RoleAdmin, models.PermAccountSetRole, 200},
+		{"unknown role denied", "superuser", models.PermCouponCreate, 403},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tokens := service.NewTokenService(config.AuthConfig{JWTSecret: "secret", AccessTTL: time.Hour})
+			issued, _ := tokens.Issue(1, tt.role, 0)
+
+			app := fiber.New(fiber.Config{ErrorHandler: apperr.ErrorHandler})
+			app.Use(middleware.RequirePermission(tokens, tt.perm))
+			app.Get("/", func(c *fiber.Ctx) error { return c.SendString("ok") })
+
+			req := httptest.NewRequest("GET", "/", nil)
+			req.Header.Set("Authorization", "Bearer "+issued.Token)
+			resp, err := app.Test(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != tt.want {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tt.want)
+			}
+		})
+	}
+}
+
+// A bad token is 401 (not authenticated), never 403 (authenticated but
+// unauthorized) — the two must stay distinguishable to clients.
+func TestRequirePermission_NoTokenIs401(t *testing.T) {
+	tokens := service.NewTokenService(config.AuthConfig{JWTSecret: "secret", AccessTTL: time.Hour})
+	app := fiber.New(fiber.Config{ErrorHandler: apperr.ErrorHandler})
+	app.Use(middleware.RequirePermission(tokens, models.PermCouponCreate))
+	app.Get("/", func(c *fiber.Ctx) error { return c.SendString("ok") })
+
+	resp, err := app.Test(httptest.NewRequest("GET", "/", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 401 {
+		t.Errorf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
 // RequireRole is a minimum-rank check, so a higher role passes a lower gate.
 func TestRequireRole_HigherRolePasses(t *testing.T) {
 	tokens := service.NewTokenService(config.AuthConfig{JWTSecret: "secret", AccessTTL: time.Hour})

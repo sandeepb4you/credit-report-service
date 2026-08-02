@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,7 +28,6 @@ type AuthService struct {
 	mailer         Mailer
 	tokens         *TokenService
 	sessions       *SessionService
-	agentSvc       *AgentService
 	admins         []string // auth.admin-emails allowlist; lowercase
 	googleClientID string   // "Web application" OAuth client ID; empty -> disabled
 }
@@ -39,7 +39,6 @@ func NewAuthService(
 	tokens *TokenService,
 	sessions *SessionService,
 	authCfg config.AuthConfig,
-	agentSvc *AgentService,
 ) *AuthService {
 	admins := make([]string, 0, len(authCfg.AdminEmails))
 	for _, e := range authCfg.AdminEmails {
@@ -53,7 +52,6 @@ func NewAuthService(
 		mailer:         mailer,
 		tokens:         tokens,
 		sessions:       sessions,
-		agentSvc:       agentSvc,
 		admins:         admins,
 		googleClientID: authCfg.Google.ClientID,
 	}
@@ -86,25 +84,11 @@ type AuthResult struct {
 
 // Signup creates a PENDING account with an unverified password identity and
 // mails a verification OTP. Re-signing up for an unverified email updates the
-// password and re-issues the OTP. An optional agentCode links the account to
-// the referring agent.
-func (s *AuthService) Signup(ctx context.Context, email, password string, agentCode *string) (*SignupResult, error) {
+// password and re-issues the OTP.
+func (s *AuthService) Signup(ctx context.Context, email, password string) (*SignupResult, error) {
 	email = normalizeEmail(email)
 	if err := validatePassword(password); err != nil {
 		return nil, err
-	}
-
-	// Validate agent code if provided.
-	var agentID *int64
-	if agentCode != nil {
-		cleaned := strings.TrimSpace(*agentCode)
-		if cleaned != "" {
-			aid, err := s.agentSvc.ValidateAgentCode(ctx, cleaned)
-			if err != nil {
-				return nil, err
-			}
-			agentID = &aid
-		}
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -137,7 +121,7 @@ func (s *AuthService) Signup(ctx context.Context, email, password string, agentC
 		}
 		accountID = existing.AccountID
 	default:
-		acc := &models.Account{Status: models.AccountPending, AgentID: agentID}
+		acc := &models.Account{Status: models.AccountPending}
 		if err := s.accounts.CreateAccount(ctx, tx, acc); err != nil {
 			return nil, err
 		}
@@ -350,38 +334,30 @@ func (s *AuthService) UpdateProfile(
 	return acc, nil
 }
 
-// UpdateAgentCode sets or updates the agent on the authenticated account.
-// Non-admin users can only update the agent code once (tracked by agent_code_updated).
-// Admins can update it anytime.
-func (s *AuthService) UpdateAgentCode(ctx context.Context, accountID int64, agentCode string, isAdmin bool) (*models.Account, error) {
+// SetRole grants or revokes a role on an account. Callers must already have
+// gated on models.PermAccountSetRole — the service only validates that the
+// role exists, so an unknown value can never be written to the column.
+func (s *AuthService) SetRole(ctx context.Context, accountID int64, role string) (*models.Account, error) {
+	if _, ok := models.RoleRank(role); !ok {
+		return nil, apperr.NewValidationWith("Validation failed",
+			map[string]string{"role": "unknown role " + strconv.Quote(role)})
+	}
+	if _, err := s.accounts.FindByID(ctx, accountID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, apperr.NewNotFound("Account not found")
+		}
+		return nil, err
+	}
+	if err := s.accounts.SetRole(ctx, accountID, role); err != nil {
+		return nil, err
+	}
 	acc, err := s.accounts.FindByID(ctx, accountID)
-	if errors.Is(err, repository.ErrNotFound) {
-		return nil, apperr.NewNotFound("Account not found")
-	}
 	if err != nil {
 		return nil, err
 	}
-
-	// Non-admin users can only update agent code once.
-	if !isAdmin && acc.AgentCodeUpdated {
-		return nil, apperr.NewConflict("Agent code can only be updated once")
-	}
-
-	agentID, err := s.agentSvc.ValidateAgentCode(ctx, agentCode)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := s.accounts.SetAgentID(ctx, accountID, &agentID, true); err != nil {
-		return nil, err
-	}
-
-	// Re-fetch to return the updated account with the new agent_id.
-	acc, err = s.accounts.FindByID(ctx, accountID)
-	if err != nil {
-		return nil, err
-	}
-	slog.Info("agent code updated", "account_id", accountID, "agent_id", agentID, "is_admin", isAdmin)
+	// The account keeps whatever access its existing tokens carry until they
+	// expire; role lives in the JWT and is only re-read on refresh.
+	slog.Info("role changed", "account_id", accountID, "role", role)
 	return acc, nil
 }
 
