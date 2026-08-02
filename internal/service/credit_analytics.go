@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -81,11 +82,129 @@ type ReportPage struct {
 // report: on-time payment percentage, card utilization percentage, and
 // enquiry count for the past 180 days.
 type ReportInsights struct {
-	ReportID               int64   `json:"reportId"`
-	OnTimePaymentPercent   float64 `json:"onTimePaymentPercent"`
-	CardUtilizationPercent float64 `json:"cardUtilizationPercent"`
-	EnquiryCount180Days    int64   `json:"enquiryCount180Days"`
-	Outdated               bool    `json:"outdated"`
+	ReportID               int64         `json:"reportId"`
+	OnTimePaymentPercent   float64       `json:"onTimePaymentPercent"`
+	CardUtilizationPercent float64       `json:"cardUtilizationPercent"`
+	EnquiryCount180Days    int64         `json:"enquiryCount180Days"`
+	Outdated               bool          `json:"outdated"`
+	TotalAccountCount      int64         `json:"totalAccountCount"`
+	ActiveAccountCount     int64         `json:"activeAccountCount"`
+	TotalOutstandingAmount float64       `json:"totalOutstandingAmount"`
+	MonthlyEMI             float64       `json:"monthlyEmi"`
+	InterestPaidPerYear    float64       `json:"interestPaidPerYear"`
+	LoanAccounts           []LoanAccount `json:"loanAccounts"`
+	ReportCard             *ReportCard   `json:"reportCard"`
+}
+
+// ReportCard is the school-style graded summary of the credit profile across
+// five factors, mirroring the FICO-style weight model.
+type ReportCard struct {
+	OverallGrade string       `json:"overallGrade"`
+	Factors      []CardFactor `json:"factors"`
+}
+
+// CardFactor is one graded row in the report card.
+type CardFactor struct {
+	Name        string `json:"name"`        // e.g. "Payment history"
+	Weight      int    `json:"weight"`      // percent weight (e.g. 35)
+	Grade       string `json:"grade"`       // "A+", "A", "B", "C", "D", "F"
+	Summary     string `json:"summary"`     // human-readable detail line
+	Detail      string `json:"detail"`      // suggested next action
+	MissedCount int64  `json:"missedCount"` // missed/delayed months (payment factor)
+}
+
+// LoanAccount is a per-tradeline summary in the insights response.
+type LoanAccount struct {
+	AccountNumber      string         `json:"accountNumber"`
+	LoanType           string         `json:"loanType"`
+	Company            string         `json:"company"`
+	PercentagePaid     float64        `json:"percentagePaid"`
+	TotalTenureMonths  int64          `json:"totalTenureMonths"`
+	CurrentBalance     float64        `json:"currentBalance"`
+	OriginalLoanAmount float64        `json:"originalLoanAmount"`
+	PaymentHistory     []PaymentMonth `json:"paymentHistory"`
+}
+
+// PaymentMonth is one month's payment status in the 36-month history.
+type PaymentMonth struct {
+	Month    string `json:"month"`    // e.g. "2026-08"
+	Status   string `json:"status"`   // "paid", "delayed", "not_reported"
+	DaysLate int    `json:"daysLate"` // 0 if paid on time
+}
+
+// accountTypeMap translates Experian Account_Type codes to human-readable
+// loan type names. Based on the Digitap V2.7 spec.
+var accountTypeMap = map[string]string{
+	"01": "Auto Loan",
+	"02": "Auto Loan",
+	"03": "Auto Loan",
+	"04": "Two Wheeler Loan",
+	"05": "Two Wheeler Loan",
+	"06": "Personal Loan",
+	"07": "Home Loan",
+	"08": "Property Loan",
+	"09": "Credit Card",
+	"10": "Credit Card",
+	"11": "Consumer Loan",
+	"12": "Education Loan",
+	"13": "Overdraft",
+	"14": "Business Loan",
+	"15": "Business Loan",
+	"25": "Commercial Vehicle Loan",
+	"26": "Tractor Loan",
+	"27": "Gold Loan",
+	"28": "Loan Against Shares",
+	"29": "Loan Against FD",
+	"30": "Corporate Credit Card",
+	"31": "Leasing",
+	"32": "Consumer Durable",
+	"33": "Consumer Durable",
+	"34": "Used Car Loan",
+	"35": "Loan Against Debentures",
+	"36": "Loan Against Mutual Funds",
+	"37": "Construction Equipment Loan",
+	"38": "Used Two Wheeler Loan",
+	"39": "Used Three Wheeler Loan",
+	"40": "Loan Against jewellery",
+	"41": "Commercial Real Estate Loan",
+	"42": "Heavy Commercial Vehicle Loan",
+	"43": "Medium Commercial Vehicle Loan",
+	"44": "Light Commercial Vehicle Loan",
+	"45": "Loan Against Car",
+	"46": "Kisan Card",
+	"47": "Doctor Loan",
+	"48": "Engineer Loan",
+	"49": "CA Loan",
+	"50": "Loan Against Property",
+	"51": "Personal Computer Loan",
+	"52": "Mobile Phone Loan",
+	"53": "Scooter Loan",
+	"54": "Truck Loan",
+	"55": "Housing Loan",
+	"56": "Staff Loan",
+	"57": "Staff Loan",
+	"58": "Bank Loan",
+	"59": "Loan Against Savings Certificates",
+	"60": "Secured Credit Card",
+	"61": "Transaction Loan",
+	"62": "Agricultural Loan",
+	"63": "Group Agricultural Loan",
+	"64": "Agri Allied Activities Loan",
+	"65": "Mortgage Loan",
+	"66": "Microfinance Loan",
+	"67": "Pradhan Mantri Awas Yojana",
+	"68": "Small Business Loan",
+	"69": "Working Capital Loan",
+	"70": "Term Loan",
+}
+
+// loanTypeFor returns the human-readable loan type for an Experian
+// Account_Type code, falling back to "Other" if unknown.
+func loanTypeFor(accountType string) string {
+	if name, ok := accountTypeMap[accountType]; ok {
+		return name
+	}
+	return "Other"
 }
 
 // Pagination bounds for ListReports.
@@ -419,15 +538,35 @@ func parseReportInsights(raw json.RawMessage) (*ReportInsights, error) {
 			INProfileResponse struct {
 				CAISAccount struct {
 					CAISAccountDetails []struct {
-						PaymentHistoryProfile string `json:"Payment_History_Profile"`
-						PortfolioType         string `json:"Portfolio_Type"`
-						CreditLimitAmount     string `json:"Credit_Limit_Amount"`
-						CurrentBalance        string `json:"Current_Balance"`
-					} `json:"CAIS_Account_Details"`
+						PaymentHistoryProfile         string `json:"Payment_History_Profile"`
+						PortfolioType                 string `json:"Portfolio_Type"`
+						CreditLimitAmount             string `json:"Credit_Limit_Amount"`
+						CurrentBalance                string `json:"Current_Balance"`
+						AccountStatus                 string `json:"Account_Status"`
+						ScheduledMonthlyPaymentAmount string `json:"Scheduled_Monthly_Payment_Amount"`
+						RateOfInterest                string `json:"Rate_of_Interest"`
+						AccountType                   string `json:"Account_Type"`
+						AccountNumber                 string `json:"Account_Number"`
+						SubscriberName                string `json:"Subscriber_Name"`
+						OpenDate                      string `json:"Open_Date"`
+						HighestCredit                 string `json:"Highest_Credit_or_Original_Loan_Amount"`
+						RepaymentTenure               string `json:"Repayment_Tenure"`
+					} `json:"CAIS_Account_DETAILS"`
 				} `json:"CAIS_Account"`
 				TotalCAPSSummary struct {
 					TotalCAPSLast180Days string `json:"TotalCAPSLast180Days"`
+					TotalCAPSLast90Days  string `json:"TotalCAPSLast90Days"`
+					TotalCAPSLast30Days  string `json:"TotalCAPSLast30Days"`
+					TotalCAPSLast7Days   string `json:"TotalCAPSLast7Days"`
 				} `json:"TotalCAPS_Summary"`
+				CAPS struct {
+					CAPSSummary struct {
+						CAPSLast180Days string `json:"CAPSLast180Days"`
+						CAPSLast90Days  string `json:"CAPSLast90Days"`
+						CAPSLast30Days  string `json:"CAPSLast30Days"`
+						CAPSLast7Days   string `json:"CAPSLast7Days"`
+					} `json:"CAPS_Summary"`
+				} `json:"CAPS"`
 			} `json:"INProfileResponse"`
 		} `json:"result_json"`
 	}
@@ -457,28 +596,432 @@ func parseReportInsights(raw json.RawMessage) (*ReportInsights, error) {
 		insights.OnTimePaymentPercent = float64(int(insights.OnTimePaymentPercent*10+0.5)) / 10
 	}
 
-	// ---- Card utilization percentage ----
-	// Sum Current_Balance / Credit_Limit_Amount for revolving (R) accounts.
+	// ---- Card utilization, account counts, outstanding, EMI, interest ----
+	// Computed in a single pass over all accounts.
 	var totalLimit, totalBalance int64
+	var activeCount int64
+	var totalOutstanding, monthlyEMI, interestPaidPerYear float64
+	accountCount := int64(len(profile.CAISAccount.CAISAccountDetails))
 	for _, acct := range profile.CAISAccount.CAISAccountDetails {
-		if acct.PortfolioType != "R" {
+		balance := atoiSafe64(acct.CurrentBalance)
+
+		// Revolving (credit card) utilization.
+		if acct.PortfolioType == "R" {
+			limit := atoiSafe64(acct.CreditLimitAmount)
+			totalLimit += limit
+			totalBalance += balance
+		}
+
+		// Active = has a known status that isn't closed ("00") or
+		// written-off ("97"). A null/missing status (unmarshalled to "") is
+		// treated as unknown, so conservatively NOT counted as active.
+		if !isActiveStatus(acct.AccountStatus) {
 			continue
 		}
-		limit := atoiSafe64(acct.CreditLimitAmount)
-		balance := atoiSafe64(acct.CurrentBalance)
-		totalLimit += limit
-		totalBalance += balance
+		activeCount++
+		totalOutstanding += float64(balance)
+
+		// Monthly EMI: Scheduled_Monthly_Payment_Amount for active accounts.
+		if emi := atofSafe(acct.ScheduledMonthlyPaymentAmount); emi > 0 {
+			monthlyEMI += emi
+		}
+
+		// Interest paid per year = outstanding balance * annual rate.
+		// Rate_of_Interest is a percentage (e.g. "12.5" = 12.5% p.a.).
+		if rate := atofSafe(acct.RateOfInterest); rate > 0 {
+			interestPaidPerYear += float64(balance) * rate / 100
+		}
 	}
 	if totalLimit > 0 {
 		insights.CardUtilizationPercent = float64(totalBalance) / float64(totalLimit) * 100
-		// Round to 1 decimal place.
 		insights.CardUtilizationPercent = float64(int(insights.CardUtilizationPercent*10+0.5)) / 10
 	}
 
-	// ---- Enquiry count past 180 days ----
-	insights.EnquiryCount180Days = atoiSafe64(profile.TotalCAPSSummary.TotalCAPSLast180Days)
+	insights.TotalAccountCount = accountCount
+	insights.ActiveAccountCount = activeCount
+	insights.TotalOutstandingAmount = roundTo2(totalOutstanding)
+	insights.MonthlyEMI = roundTo2(monthlyEMI)
+	insights.InterestPaidPerYear = roundTo2(interestPaidPerYear)
+
+	// ---- Enquiry counts ----
+	caps := profile.TotalCAPSSummary
+	insights.EnquiryCount180Days = atoiSafe64(caps.TotalCAPSLast180Days)
+
+	// ---- Loan account list ----
+	loanAccounts := make([]LoanAccount, 0, len(profile.CAISAccount.CAISAccountDetails))
+	var oldestOpenDate time.Time
+	var missedPayments int64
+	productTypes := map[string]bool{}
+
+	for _, acct := range profile.CAISAccount.CAISAccountDetails {
+		originalLoan := atofSafe(acct.HighestCredit)
+		balance := atofSafe(acct.CurrentBalance)
+
+		// Percentage paid = (original - current) / original * 100.
+		var pctPaid float64
+		if originalLoan > 0 {
+			pctPaid = (originalLoan - balance) / originalLoan * 100
+			if pctPaid < 0 {
+				pctPaid = 0
+			}
+			if pctPaid > 100 {
+				pctPaid = 100
+			}
+			pctPaid = float64(int(pctPaid*10+0.5)) / 10
+		}
+
+		loanAccounts = append(loanAccounts, LoanAccount{
+			AccountNumber:      acct.AccountNumber,
+			LoanType:           loanTypeFor(acct.AccountType),
+			Company:            acct.SubscriberName,
+			PercentagePaid:     pctPaid,
+			TotalTenureMonths:  atoiSafe64(acct.RepaymentTenure),
+			CurrentBalance:     roundTo2(balance),
+			OriginalLoanAmount: roundTo2(originalLoan),
+			PaymentHistory:     parsePaymentHistory(acct.PaymentHistoryProfile),
+		})
+
+		// Track oldest account open date for credit age.
+		if t := parseExperianDate(acct.OpenDate); !t.IsZero() {
+			if oldestOpenDate.IsZero() || t.Before(oldestOpenDate) {
+				oldestOpenDate = t
+			}
+		}
+
+		// Count missed/delayed payments across all accounts.
+		for _, ch := range acct.PaymentHistoryProfile {
+			if ch != '?' && ch != ' ' && ch != '0' {
+				missedPayments++
+			}
+		}
+
+		// Track distinct product types for credit mix.
+		if lt := loanTypeFor(acct.AccountType); lt != "Other" {
+			productTypes[lt] = true
+		}
+	}
+	insights.LoanAccounts = loanAccounts
+
+	// ---- Report card ----
+	insights.ReportCard = buildReportCard(reportCardInputs{
+		OnTimePercent:    insights.OnTimePaymentPercent,
+		MissedPayments:   missedPayments,
+		CardUtilization:  insights.CardUtilizationPercent,
+		OldestOpenDate:   oldestOpenDate,
+		Enquiries180Days: atoiSafe64(caps.TotalCAPSLast180Days),
+		Enquiries90Days:  atoiSafe64(caps.TotalCAPSLast90Days),
+		Enquiries30Days:  atoiSafe64(caps.TotalCAPSLast30Days),
+		Enquiries7Days:   atoiSafe64(caps.TotalCAPSLast7Days),
+		ProductTypeCount: len(productTypes),
+		ProductTypes:     productTypes,
+	})
 
 	return insights, nil
+}
+
+// parsePaymentHistory decodes the 36-character Payment_History_Profile string
+// into per-month entries. The bureau convention: position 0 = most recent
+// month, each position going back one month.
+//
+// Payment rating codes:
+//
+//	'0' = current / paid on time
+//	'1' = 1-30 days past due
+//	'2' = 31-60 days past due
+//	'3' = 61-90 days past due
+//	'4' = 91-120 days past due
+//	'5' = 121-150 days past due
+//	'6' = 151+ days past due
+//	'?' = not reported (before account opened)
+//
+// Month labels are assigned relative to the report generation date (position
+// 0 = the report month). The most recent month is returned first.
+func parsePaymentHistory(php string) []PaymentMonth {
+	if php == "" {
+		return []PaymentMonth{}
+	}
+
+	// Rating -> (status, approx days late). Days late are the lower bound of
+	// the DPD bucket for that rating.
+	ratingMap := map[byte]struct {
+		status   string
+		daysLate int
+	}{
+		'0': {"paid", 0},
+		'1': {"delayed", 1},
+		'2': {"delayed", 31},
+		'3': {"delayed", 61},
+		'4': {"delayed", 91},
+		'5': {"delayed", 121},
+		'6': {"delayed", 151},
+	}
+
+	now := time.Now().UTC()
+	history := make([]PaymentMonth, 0, len(php))
+
+	for i := 0; i < len(php); i++ {
+		ch := php[i]
+		// Position 0 = current month; position i = i months ago.
+		monthDate := now.AddDate(0, -i, 0)
+		monthLabel := monthDate.Format("2006-01")
+
+		pm := PaymentMonth{Month: monthLabel}
+		if ch == '?' || ch == ' ' {
+			pm.Status = "not_reported"
+		} else if info, ok := ratingMap[ch]; ok {
+			pm.Status = info.status
+			pm.DaysLate = info.daysLate
+		} else {
+			// Unknown code — treat conservatively as not reported.
+			pm.Status = "not_reported"
+		}
+		history = append(history, pm)
+	}
+
+	return history
+}
+
+// ---- Report card grading ---------------------------------------------------
+
+// reportCardInputs is the computed data the grading functions consume.
+type reportCardInputs struct {
+	OnTimePercent    float64
+	MissedPayments   int64
+	CardUtilization  float64
+	OldestOpenDate   time.Time // zero value = no open date found
+	Enquiries180Days int64
+	Enquiries90Days  int64
+	Enquiries30Days  int64
+	Enquiries7Days   int64
+	ProductTypeCount int
+	ProductTypes     map[string]bool
+}
+
+// buildReportCard grades each of the five credit factors and derives an
+// overall grade. The weights follow the FICO model: payment history 35%,
+// credit utilization 30%, credit age 15%, enquiries 10%, credit mix 10%.
+func buildReportCard(in reportCardInputs) *ReportCard {
+	card := &ReportCard{}
+
+	// 1. Payment history (35%)
+	phGrade, phSum, phDetail := gradePaymentHistory(in.OnTimePercent, in.MissedPayments)
+	card.Factors = append(card.Factors, CardFactor{
+		Name: "Payment history", Weight: 35, Grade: phGrade,
+		Summary: phSum, Detail: phDetail, MissedCount: in.MissedPayments,
+	})
+
+	// 2. Credit utilisation (30%)
+	cuGrade, cuSum, cuDetail := gradeUtilization(in.CardUtilization)
+	card.Factors = append(card.Factors, CardFactor{
+		Name: "Credit utilisation", Weight: 30, Grade: cuGrade,
+		Summary: cuSum, Detail: cuDetail,
+	})
+
+	// 3. Credit age (15%)
+	caGrade, caSum, caDetail := gradeCreditAge(in.OldestOpenDate)
+	card.Factors = append(card.Factors, CardFactor{
+		Name: "Credit age", Weight: 15, Grade: caGrade,
+		Summary: caSum, Detail: caDetail,
+	})
+
+	// 4. Enquiries (10%)
+	enqGrade, enqSum, enqDetail := gradeEnquiries(in.Enquiries180Days)
+	card.Factors = append(card.Factors, CardFactor{
+		Name: "Enquiries", Weight: 10, Grade: enqGrade,
+		Summary: enqSum, Detail: enqDetail,
+	})
+
+	// 5. Credit mix (10%)
+	cmGrade, cmSum, cmDetail := gradeCreditMix(in.ProductTypeCount, in.ProductTypes)
+	card.Factors = append(card.Factors, CardFactor{
+		Name: "Credit mix", Weight: 10, Grade: cmGrade,
+		Summary: cmSum, Detail: cmDetail,
+	})
+
+	card.OverallGrade = overallGrade(card.Factors)
+	return card
+}
+
+// gradePaymentHistory grades based on on-time percentage and missed count.
+func gradePaymentHistory(onTimePct float64, missed int64) (grade, summary, detail string) {
+	switch {
+	case onTimePct >= 99 && missed == 0:
+		return "A+", "No missed payments. Excellent track record.", "Keep the streak alive."
+	case onTimePct >= 95:
+		return "A", fmt.Sprintf("%d missed/delayed payment(s). Strong history.", missed), "Set auto-pay to eliminate lapses."
+	case onTimePct >= 85:
+		return "B", fmt.Sprintf("%d missed/delayed payment(s). Room to improve.", missed), "Prioritize on-time payments for 6 months."
+	case onTimePct >= 70:
+		return "C", fmt.Sprintf("%d missed/delayed payment(s). Needs attention.", missed), "No more missed payments for 12 months."
+	case onTimePct >= 50:
+		return "D", fmt.Sprintf("%d missed/delayed payment(s). High risk signal.", missed), "Restructure debts; seek counseling."
+	default:
+		return "F", fmt.Sprintf("%d missed/delayed payment(s). Critical.", missed), "Immediate action required."
+	}
+}
+
+// gradeUtilization grades based on revolving credit utilization percentage.
+func gradeUtilization(pct float64) (grade, summary, detail string) {
+	switch {
+	case pct == 0:
+		return "A+", "No revolving balances. Optimal.", "Maintain zero utilization."
+	case pct < 10:
+		return "A+", fmt.Sprintf("%.1f%% utilization. Elite.", pct), "Stay under 10% for top-tier scores."
+	case pct < 30:
+		return "A", fmt.Sprintf("%.1f%% utilization. Under 30%% — good.", pct), "Push under 10% for A+."
+	case pct < 50:
+		return "B", fmt.Sprintf("%.1f%% utilization. Manageable but high.", pct), "Pay down to under 30%."
+	case pct < 75:
+		return "C", fmt.Sprintf("%.1f%% utilization. High risk.", pct), "Aggressively pay down balances."
+	default:
+		return "D", fmt.Sprintf("%.1f%% utilization. Maxed out.", pct), "Stop new charges; focus on repayment."
+	}
+}
+
+// gradeCreditAge grades based on the age of the oldest account in years.
+func gradeCreditAge(oldest time.Time) (grade, summary, detail string) {
+	if oldest.IsZero() {
+		return "B", "Credit age unavailable.", "Build history over time."
+	}
+	years := time.Since(oldest).Hours() / 24 / 365
+	switch {
+	case years >= 10:
+		return "A+", fmt.Sprintf("%.1f years — long-established history.", years), "Protect old accounts; they anchor your score."
+	case years >= 5:
+		return "A", fmt.Sprintf("%.1f years of credit history.", years), "Keep your oldest card open."
+	case years >= 3:
+		return "B", fmt.Sprintf("%.1f years — still maturing.", years), "Avoid closing old accounts."
+	case years >= 1:
+		return "C", fmt.Sprintf("%.1f years — young profile.", years), "Time is your ally; keep accounts open."
+	default:
+		return "D", "Less than 1 year — thin file.", "Build gradually with responsible use."
+	}
+}
+
+// gradeEnquiries grades based on hard enquiry count in the past 180 days.
+func gradeEnquiries(count180 int64) (grade, summary, detail string) {
+	switch {
+	case count180 == 0:
+		return "A+", "0 enquiries in 6 months. Lenders see zero credit hunger.", "Maintain discipline."
+	case count180 <= 2:
+		return "A", fmt.Sprintf("%d enquiries in 6 months. Normal.", count180), "Space out new applications."
+	case count180 <= 4:
+		return "B", fmt.Sprintf("%d enquiries in 6 months. Moderate.", count180), "Pause new applications for 6 months."
+	case count180 <= 6:
+		return "C", fmt.Sprintf("%d enquiries in 6 months. Elevated.", count180), "Stop applying; let enquiries age off."
+	default:
+		return "D", fmt.Sprintf("%d enquiries in 6 months. High risk signal.", count180), "No new applications for 12 months."
+	}
+}
+
+// gradeCreditMix grades based on the count of distinct product types held.
+func gradeCreditMix(count int, types map[string]bool) (grade, summary, detail string) {
+	// Build a sorted product list for the summary line.
+	products := make([]string, 0, len(types))
+	for t := range types {
+		products = append(products, strings.ToLower(t))
+	}
+	sort.Strings(products)
+	productList := strings.Join(products, ", ")
+
+	switch {
+	case count >= 4:
+		return "A+", fmt.Sprintf("%d product types: %s.", count, productList), "Diverse mix — well-managed portfolio."
+	case count >= 3:
+		return "A", fmt.Sprintf("%d product types: %s.", count, productList), "Good mix of revolving and installment."
+	case count == 2:
+		return "B", fmt.Sprintf("%d product types: %s.", count, productList), "Add another type to diversify."
+	case count == 1:
+		return "C", fmt.Sprintf("Only 1 product type: %s.", productList), "Add a different credit type to strengthen mix."
+	default:
+		return "D", "No active credit products.", "Start with a secured card or small loan."
+	}
+}
+
+// overallGrade computes the weighted average of factor grades and returns
+// the overall letter grade. Each grade maps to a numeric score: A+=5, A=4,
+// B=3, C=2, D=1, F=0.
+func overallGrade(factors []CardFactor) string {
+	gradeScore := map[string]float64{"A+": 5, "A": 4, "B": 3, "C": 2, "D": 1, "F": 0}
+	var totalWeight, weightedSum float64
+	for _, f := range factors {
+		totalWeight += float64(f.Weight)
+		weightedSum += gradeScore[f.Grade] * float64(f.Weight)
+	}
+	if totalWeight == 0 {
+		return "B"
+	}
+	avg := weightedSum / totalWeight
+	switch {
+	case avg >= 4.5:
+		return "A+"
+	case avg >= 3.5:
+		return "A"
+	case avg >= 2.5:
+		return "B"
+	case avg >= 1.5:
+		return "C"
+	case avg >= 0.5:
+		return "D"
+	default:
+		return "F"
+	}
+}
+
+// parseExperianDate parses an Experian date string in YYYYMMDD format
+// (e.g. "20150312"). Returns the zero time if the string is empty/invalid.
+func parseExperianDate(s string) time.Time {
+	if len(s) < 8 {
+		return time.Time{}
+	}
+	t, err := time.Parse("20060102", s[:8])
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+// atofSafe parses a numeric prefix of s as float64. Non-numeric or empty
+// strings return 0. Handles decimal values (e.g. "12.5").
+func atofSafe(s string) float64 {
+	var intPart, fracPart float64
+	var divisor float64 = 1
+	inFrac := false
+	for _, c := range s {
+		switch {
+		case c >= '0' && c <= '9':
+			if inFrac {
+				divisor *= 10
+				fracPart = fracPart*10 + float64(c-'0')
+			} else {
+				intPart = intPart*10 + float64(c-'0')
+			}
+		case c == '.' && !inFrac:
+			inFrac = true
+		default:
+			return (intPart + fracPart/divisor)
+		}
+	}
+	return intPart + fracPart/divisor
+}
+
+// roundTo2 rounds to 2 decimal places.
+func roundTo2(v float64) float64 {
+	return float64(int(v*100+0.5)) / 100
+}
+
+// isActiveStatus reports whether the Experian Account_Status code represents
+// an active, open tradeline. Closed ("00") and written-off ("97") are inactive.
+// An empty/missing/null status (unmarshalled to "") is treated as unknown and
+// therefore NOT active, so a null upstream status can't inflate the active
+// count or outstanding balance.
+func isActiveStatus(status string) bool {
+	switch status {
+	case "", "00", "97":
+		return false
+	default:
+		return true
+	}
 }
 
 // atoiSafe64 parses a numeric prefix of s as int64. Non-numeric or empty

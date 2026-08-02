@@ -231,6 +231,30 @@ func generateAccount(now time.Time, forceDefault bool) map[string]any {
 		currentBalance = rand.IntN(highCredit + 1)
 	}
 
+	// Monthly EMI for active installment/consumer loans. Revolving cards have
+	// no fixed EMI (nil). Generated as ~1/24th of the disbursed amount.
+	var scheduledMonthly any
+	if !isClosed && (pt.portfolio == "I" || pt.portfolio == "C") {
+		scheduledMonthly = fmt.Sprintf("%d", highCredit/24)
+	}
+
+	// Interest rate: loans carry 8–18% p.a.; revolving cards 24–42% p.a.
+	var rateOfInterest any
+	if !isClosed {
+		if pt.portfolio == "R" {
+			rateOfInterest = fmt.Sprintf("%d", 24+rand.IntN(18))
+		} else {
+			rateOfInterest = fmt.Sprintf("%d", 8+rand.IntN(10))
+		}
+	}
+
+	// Repayment tenure (months): loans have fixed tenures (12–240); revolving
+	// cards have no tenure (0).
+	repaymentTenure := "0"
+	if pt.portfolio == "I" || pt.portfolio == "C" {
+		repaymentTenure = fmt.Sprintf("%d", 12+rand.IntN(229)) // 12–240 months
+	}
+
 	phpLen := 36
 	monthsOpen := monthsBetween(openDate, now)
 	if monthsOpen > phpLen {
@@ -252,7 +276,7 @@ func generateAccount(now time.Time, forceDefault bool) map[string]any {
 		"Highest_Credit_or_Original_Loan_Amount":  fmt.Sprintf("%d", highCredit),
 		"Terms_Duration":                          nil,
 		"Terms_Frequency":                         nil,
-		"Scheduled_Monthly_Payment_Amount":        nil,
+		"Scheduled_Monthly_Payment_Amount":        scheduledMonthly,
 		"Account_Status":                          status,
 		"Payment_Rating":                          paymentRating,
 		"Payment_History_Profile":                 php,
@@ -274,8 +298,8 @@ func generateAccount(now time.Time, forceDefault bool) map[string]any {
 		"Type_of_Collateral":                      nil,
 		"Written_Off_Amt_Total":                   nil,
 		"Written_Off_Amt_Principal":               nil,
-		"Rate_of_Interest":                        nil,
-		"Repayment_Tenure":                        "0",
+		"Rate_of_Interest":                        rateOfInterest,
+		"Repayment_Tenure":                        repaymentTenure,
 		"Promotional_Rate_Flag":                   nil,
 		"Income":                                  nil,
 		"Income_Indicator":                        nil,
