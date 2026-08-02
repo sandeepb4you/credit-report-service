@@ -27,8 +27,9 @@ var otpCodeRE = regexp.MustCompile(`^\d{4,8}$`)
 // ---- POST /api/auth/signup ----------------------------------------------
 
 type signupReq struct {
-	Email    string `json:"email"    example:"user@example.com"`
-	Password string `json:"password" example:"hunter2pass"`
+	Email     string  `json:"email"     example:"user@example.com"`
+	Password  string  `json:"password"  example:"hunter2pass"`
+	AgentCode *string `json:"agentCode" example:"AGENT001"`
 }
 
 // Signup godoc
@@ -53,7 +54,7 @@ func (h *AuthHandler) Signup(c *fiber.Ctx) error {
 		return apperr.NewValidationWith("Validation failed",
 			map[string]string{"email": "email must be valid"})
 	}
-	res, err := h.svc.Signup(c.Context(), req.Email, req.Password)
+	res, err := h.svc.Signup(c.Context(), req.Email, req.Password, req.AgentCode)
 	if err != nil {
 		return err
 	}

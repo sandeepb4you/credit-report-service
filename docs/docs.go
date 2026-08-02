@@ -15,6 +15,379 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/admin/agents": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns all agents with status ACTIVE.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-agents"
+                ],
+                "summary": "List active agents (admin only)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/credit-report-service_internal_models.Agent"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a new agent with a unique referral code.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-agents"
+                ],
+                "summary": "Create an agent (admin only)",
+                "parameters": [
+                    {
+                        "description": "Agent details",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.createAgentReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.Agent"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Agent code already exists",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/agents/account/{accountId}/agent-code": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Allows an admin to set or update the agent code for any account by ID. Admins bypass the one-time update limit.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-agents"
+                ],
+                "summary": "Update agent code for any account (admin only)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Account ID",
+                        "name": "accountId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Agent code",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.updateAgentCodeReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.Account"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Account not found",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/agents/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns an agent's details along with the number of signups under that agent for a given date range. Query params: from, to (YYYY-MM-DD, optional).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-agents"
+                ],
+                "summary": "Get agent with signup count (admin only)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Agent ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start date (YYYY-MM-DD)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End date (YYYY-MM-DD)",
+                        "name": "to",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.AgentWithSignupCount"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Agent not found",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Updates an agent's name, email, and/or phone.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-agents"
+                ],
+                "summary": "Update an agent (admin only)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Agent ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Agent fields to update",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.updateAgentReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.Agent"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Agent not found",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/agents/{id}/status": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sets an agent's status to ACTIVE or INACTIVE.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-agents"
+                ],
+                "summary": "Activate or deactivate an agent (admin only)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Agent ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Status",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.setAgentStatusReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.Agent"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Agent not found",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/admin/kyc/pan/{accountId}/verify": {
             "post": {
                 "security": [
@@ -317,6 +690,43 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Email already registered",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/credit-analytics/latest-insights": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns derived analytics from the most recent successful credit report: on-time payment percentage, card utilization percentage, and enquiry count for the past 180 days.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "credit-analytics"
+                ],
+                "summary": "Get credit insights from the latest report",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_service.ReportInsights"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No credit report found",
                         "schema": {
                             "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
@@ -650,6 +1060,69 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/profile/agent-code": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sets or updates the agent code for the authenticated account. Non-admin users can only update once. Admins can update anytime.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "profile"
+                ],
+                "summary": "Update agent code on profile",
+                "parameters": [
+                    {
+                        "description": "Agent code",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.updateAgentCodeReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.Account"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Account not found",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Agent code can only be updated once",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -674,6 +1147,12 @@ const docTemplate = `{
         "credit-report-service_internal_models.Account": {
             "type": "object",
             "properties": {
+                "agentCodeUpdated": {
+                    "type": "boolean"
+                },
+                "agentId": {
+                    "type": "integer"
+                },
                 "createdAt": {
                     "type": "string"
                 },
@@ -700,6 +1179,67 @@ const docTemplate = `{
                 },
                 "role": {
                     "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "credit-report-service_internal_models.Agent": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "phone": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "credit-report-service_internal_models.AgentWithSignupCount": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "phone": {
+                    "type": "string"
+                },
+                "signupCount": {
+                    "type": "integer"
                 },
                 "status": {
                     "type": "string"
@@ -819,6 +1359,26 @@ const docTemplate = `{
                 }
             }
         },
+        "credit-report-service_internal_service.ReportInsights": {
+            "type": "object",
+            "properties": {
+                "cardUtilizationPercent": {
+                    "type": "number"
+                },
+                "enquiryCount180Days": {
+                    "type": "integer"
+                },
+                "onTimePaymentPercent": {
+                    "type": "number"
+                },
+                "outdated": {
+                    "type": "boolean"
+                },
+                "reportId": {
+                    "type": "integer"
+                }
+            }
+        },
         "credit-report-service_internal_service.ReportPage": {
             "type": "object",
             "properties": {
@@ -864,6 +1424,27 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_handler.createAgentReq": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "example": "AGENT001"
+                },
+                "email": {
+                    "type": "string",
+                    "example": "john@example.com"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "John Doe"
+                },
+                "phone": {
+                    "type": "string",
+                    "example": "+919876543210"
+                }
+            }
+        },
         "internal_handler.googleLoginReq": {
             "type": "object",
             "properties": {
@@ -895,9 +1476,22 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_handler.setAgentStatusReq": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "example": "ACTIVE"
+                }
+            }
+        },
         "internal_handler.signupReq": {
             "type": "object",
             "properties": {
+                "agentCode": {
+                    "type": "string",
+                    "example": "AGENT001"
+                },
                 "email": {
                     "type": "string",
                     "example": "user@example.com"
@@ -914,6 +1508,32 @@ const docTemplate = `{
                 "pan": {
                     "type": "string",
                     "example": "ABCDE1234F"
+                }
+            }
+        },
+        "internal_handler.updateAgentCodeReq": {
+            "type": "object",
+            "properties": {
+                "agentCode": {
+                    "type": "string",
+                    "example": "AGENT001"
+                }
+            }
+        },
+        "internal_handler.updateAgentReq": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "example": "jane@example.com"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "Jane Doe"
+                },
+                "phone": {
+                    "type": "string",
+                    "example": "+919876543210"
                 }
             }
         },

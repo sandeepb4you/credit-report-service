@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -157,5 +158,164 @@ func TestGenerateClientRefNum_Unique(t *testing.T) {
 	b := generateClientRefNum()
 	if a == b {
 		t.Errorf("two calls produced the same ref: %q", a)
+	}
+}
+
+// ---- parseReportInsights ----
+
+func TestParseReportInsights_FullData(t *testing.T) {
+	// Build a response with known values.
+	// Account 1 (revolving): PHP "000010000000000000000000000000000000" = 2 on-time out of 3 reported, limit 100000, balance 30000
+	// Account 2 (installment): PHP "000000000000000000000000000000000000" = 36 on-time out of 36
+	// TotalCAPSLast180Days = 7
+	raw := json.RawMessage(`{
+		"result_json": {
+			"INProfileResponse": {
+				"CAIS_Account": {
+					"CAIS_Account_DETAILS": [
+						{
+							"Payment_History_Profile": "000010000000000000000000000000000000",
+							"Portfolio_Type": "R",
+							"Credit_Limit_Amount": "100000",
+							"Current_Balance": "30000"
+						},
+						{
+							"Payment_History_Profile": "000000000000000000000000000000000000",
+							"Portfolio_Type": "I",
+							"Credit_Limit_Amount": "500000",
+							"Current_Balance": "200000"
+						}
+					]
+				},
+				"TotalCAPS_Summary": {
+					"TotalCAPSLast180Days": "7"
+				}
+			}
+		}
+	}`)
+
+	insights, err := parseReportInsights(raw)
+	if err != nil {
+		t.Fatalf("parseReportInsights: %v", err)
+	}
+
+	// On-time: Account 1 has 35 '0' + Account 2 has 36 '0' = 71 on-time out of 72 total
+	// 71/72 * 100 = 98.61... rounded to 98.6
+	if insights.OnTimePaymentPercent != 98.6 {
+		t.Errorf("onTimePaymentPercent = %.1f, want 98.6", insights.OnTimePaymentPercent)
+	}
+
+	// Card utilization: only revolving (R) accounts. Account 1: 30000/100000 = 30.0%
+	if insights.CardUtilizationPercent != 30.0 {
+		t.Errorf("cardUtilizationPercent = %.1f, want 30.0", insights.CardUtilizationPercent)
+	}
+
+	// Enquiry count
+	if insights.EnquiryCount180Days != 7 {
+		t.Errorf("enquiryCount180Days = %d, want 7", insights.EnquiryCount180Days)
+	}
+}
+
+func TestParseReportInsights_AllUnknownPayments(t *testing.T) {
+	raw := json.RawMessage(`{
+		"result_json": {
+			"INProfileResponse": {
+				"CAIS_Account": {
+					"CAIS_Account_DETAILS": [{
+						"Payment_History_Profile": "????????????????????????????????",
+						"Portfolio_Type": "R",
+						"Credit_Limit_Amount": "100000",
+						"Current_Balance": "0"
+					}]
+				},
+				"TotalCAPS_Summary": {
+					"TotalCAPSLast180Days": "3"
+				}
+			}
+		}
+	}`)
+
+	insights, err := parseReportInsights(raw)
+	if err != nil {
+		t.Fatalf("parseReportInsights: %v", err)
+	}
+
+	// All '?' -> no reported months -> 0%
+	if insights.OnTimePaymentPercent != 0 {
+		t.Errorf("onTimePaymentPercent = %.1f, want 0.0", insights.OnTimePaymentPercent)
+	}
+	// No balance on revolving -> 0%
+	if insights.CardUtilizationPercent != 0 {
+		t.Errorf("cardUtilizationPercent = %.1f, want 0.0", insights.CardUtilizationPercent)
+	}
+	if insights.EnquiryCount180Days != 3 {
+		t.Errorf("enquiryCount180Days = %d, want 3", insights.EnquiryCount180Days)
+	}
+}
+
+func TestParseReportInsights_NoRevolvingAccounts(t *testing.T) {
+	raw := json.RawMessage(`{
+		"result_json": {
+			"INProfileResponse": {
+				"CAIS_Account": {
+					"CAIS_Account_DETAILS": [{
+						"Payment_History_Profile": "000000000000000000000000000000000000",
+						"Portfolio_Type": "I",
+						"Credit_Limit_Amount": "500000",
+						"Current_Balance": "200000"
+					}]
+				},
+				"TotalCAPS_Summary": {
+					"TotalCAPSLast180Days": "0"
+				}
+			}
+		}
+	}`)
+
+	insights, err := parseReportInsights(raw)
+	if err != nil {
+		t.Fatalf("parseReportInsights: %v", err)
+	}
+
+	if insights.OnTimePaymentPercent != 100.0 {
+		t.Errorf("onTimePaymentPercent = %.1f, want 100.0", insights.OnTimePaymentPercent)
+	}
+	// No revolving accounts -> 0%
+	if insights.CardUtilizationPercent != 0 {
+		t.Errorf("cardUtilizationPercent = %.1f, want 0.0", insights.CardUtilizationPercent)
+	}
+	if insights.EnquiryCount180Days != 0 {
+		t.Errorf("enquiryCount180Days = %d, want 0", insights.EnquiryCount180Days)
+	}
+}
+
+func TestParseReportInsights_InvalidJSON(t *testing.T) {
+	_, err := parseReportInsights(json.RawMessage(`not json`))
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+// ---- atoiSafe64 ----
+
+func TestAtoiSafe64(t *testing.T) {
+	tests := []struct {
+		input string
+		want  int64
+	}{
+		{"0", 0},
+		{"42", 42},
+		{"100000", 100000},
+		{"", 0},
+		{"abc", 0},
+		{"12abc34", 12},
+	}
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			got := atoiSafe64(tc.input)
+			if got != tc.want {
+				t.Errorf("atoiSafe64(%q) = %d, want %d", tc.input, got, tc.want)
+			}
+		})
 	}
 }

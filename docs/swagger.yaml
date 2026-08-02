@@ -14,6 +14,10 @@ definitions:
     type: object
   credit-report-service_internal_models.Account:
     properties:
+      agentCodeUpdated:
+        type: boolean
+      agentId:
+        type: integer
       createdAt:
         type: string
       dateOfBirth:
@@ -32,6 +36,46 @@ definitions:
         type: boolean
       role:
         type: string
+      status:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  credit-report-service_internal_models.Agent:
+    properties:
+      code:
+        type: string
+      createdAt:
+        type: string
+      email:
+        type: string
+      id:
+        type: integer
+      name:
+        type: string
+      phone:
+        type: string
+      status:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  credit-report-service_internal_models.AgentWithSignupCount:
+    properties:
+      code:
+        type: string
+      createdAt:
+        type: string
+      email:
+        type: string
+      id:
+        type: integer
+      name:
+        type: string
+      phone:
+        type: string
+      signupCount:
+        type: integer
       status:
         type: string
       updatedAt:
@@ -109,6 +153,19 @@ definitions:
       device_ip:
         type: string
     type: object
+  credit-report-service_internal_service.ReportInsights:
+    properties:
+      cardUtilizationPercent:
+        type: number
+      enquiryCount180Days:
+        type: integer
+      onTimePaymentPercent:
+        type: number
+      outdated:
+        type: boolean
+      reportId:
+        type: integer
+    type: object
   credit-report-service_internal_service.ReportPage:
     properties:
       items:
@@ -138,6 +195,21 @@ definitions:
       message:
         type: string
     type: object
+  internal_handler.createAgentReq:
+    properties:
+      code:
+        example: AGENT001
+        type: string
+      email:
+        example: john@example.com
+        type: string
+      name:
+        example: John Doe
+        type: string
+      phone:
+        example: "+919876543210"
+        type: string
+    type: object
   internal_handler.googleLoginReq:
     properties:
       idToken:
@@ -159,8 +231,17 @@ definitions:
         example: user@example.com
         type: string
     type: object
+  internal_handler.setAgentStatusReq:
+    properties:
+      status:
+        example: ACTIVE
+        type: string
+    type: object
   internal_handler.signupReq:
     properties:
+      agentCode:
+        example: AGENT001
+        type: string
       email:
         example: user@example.com
         type: string
@@ -172,6 +253,24 @@ definitions:
     properties:
       pan:
         example: ABCDE1234F
+        type: string
+    type: object
+  internal_handler.updateAgentCodeReq:
+    properties:
+      agentCode:
+        example: AGENT001
+        type: string
+    type: object
+  internal_handler.updateAgentReq:
+    properties:
+      email:
+        example: jane@example.com
+        type: string
+      name:
+        example: Jane Doe
+        type: string
+      phone:
+        example: "+919876543210"
         type: string
     type: object
   internal_handler.updateProfileReq:
@@ -205,6 +304,247 @@ info:
   title: Credit Report Service API
   version: "1.0"
 paths:
+  /admin/agents:
+    get:
+      description: Returns all agents with status ACTIVE.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/credit-report-service_internal_models.Agent'
+            type: array
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List active agents (admin only)
+      tags:
+      - admin-agents
+    post:
+      consumes:
+      - application/json
+      description: Creates a new agent with a unique referral code.
+      parameters:
+      - description: Agent details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.createAgentReq'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.Agent'
+        "400":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "409":
+          description: Agent code already exists
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Create an agent (admin only)
+      tags:
+      - admin-agents
+  /admin/agents/{id}:
+    get:
+      description: 'Returns an agent''s details along with the number of signups under
+        that agent for a given date range. Query params: from, to (YYYY-MM-DD, optional).'
+      parameters:
+      - description: Agent ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: from
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.AgentWithSignupCount'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: Agent not found
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Get agent with signup count (admin only)
+      tags:
+      - admin-agents
+    put:
+      consumes:
+      - application/json
+      description: Updates an agent's name, email, and/or phone.
+      parameters:
+      - description: Agent ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Agent fields to update
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.updateAgentReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.Agent'
+        "400":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: Agent not found
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Update an agent (admin only)
+      tags:
+      - admin-agents
+  /admin/agents/{id}/status:
+    patch:
+      consumes:
+      - application/json
+      description: Sets an agent's status to ACTIVE or INACTIVE.
+      parameters:
+      - description: Agent ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Status
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.setAgentStatusReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.Agent'
+        "400":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: Agent not found
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Activate or deactivate an agent (admin only)
+      tags:
+      - admin-agents
+  /admin/agents/account/{accountId}/agent-code:
+    put:
+      consumes:
+      - application/json
+      description: Allows an admin to set or update the agent code for any account
+        by ID. Admins bypass the one-time update limit.
+      parameters:
+      - description: Account ID
+        in: path
+        name: accountId
+        required: true
+        type: integer
+      - description: Agent code
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.updateAgentCodeReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.Account'
+        "400":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: Account not found
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Update agent code for any account (admin only)
+      tags:
+      - admin-agents
   /admin/kyc/pan/{accountId}/verify:
     post:
       description: Marks the named account's KYC row as PAN-verified. Required before
@@ -417,6 +757,31 @@ paths:
       summary: Verify email with OTP
       tags:
       - auth
+  /credit-analytics/latest-insights:
+    get:
+      description: 'Returns derived analytics from the most recent successful credit
+        report: on-time payment percentage, card utilization percentage, and enquiry
+        count for the past 180 days.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_service.ReportInsights'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: No credit report found
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Get credit insights from the latest report
+      tags:
+      - credit-analytics
   /credit-analytics/reports:
     get:
       description: Returns a paginated list of the caller's reports, newest first.
@@ -632,6 +997,47 @@ paths:
       security:
       - BearerAuth: []
       summary: Update the authenticated account's profile
+      tags:
+      - profile
+  /profile/agent-code:
+    put:
+      consumes:
+      - application/json
+      description: Sets or updates the agent code for the authenticated account. Non-admin
+        users can only update once. Admins can update anytime.
+      parameters:
+      - description: Agent code
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.updateAgentCodeReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.Account'
+        "400":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: Account not found
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "409":
+          description: Agent code can only be updated once
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Update agent code on profile
       tags:
       - profile
 securityDefinitions:

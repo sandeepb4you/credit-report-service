@@ -26,6 +26,7 @@ type AuthService struct {
 	otp            *OTPService
 	mailer         Mailer
 	tokens         *TokenService
+	agentSvc       *AgentService
 	admins         []string // auth.admin-emails allowlist; lowercase
 	googleClientID string   // "Web application" OAuth client ID; empty -> disabled
 }
@@ -36,6 +37,7 @@ func NewAuthService(
 	mailer Mailer,
 	tokens *TokenService,
 	authCfg config.AuthConfig,
+	agentSvc *AgentService,
 ) *AuthService {
 	admins := make([]string, 0, len(authCfg.AdminEmails))
 	for _, e := range authCfg.AdminEmails {
@@ -48,6 +50,7 @@ func NewAuthService(
 		otp:            otp,
 		mailer:         mailer,
 		tokens:         tokens,
+		agentSvc:       agentSvc,
 		admins:         admins,
 		googleClientID: authCfg.Google.ClientID,
 	}
@@ -69,11 +72,25 @@ type AuthResult struct {
 
 // Signup creates a PENDING account with an unverified password identity and
 // mails a verification OTP. Re-signing up for an unverified email updates the
-// password and re-issues the OTP.
-func (s *AuthService) Signup(ctx context.Context, email, password string) (*SignupResult, error) {
+// password and re-issues the OTP. An optional agentCode links the account to
+// the referring agent.
+func (s *AuthService) Signup(ctx context.Context, email, password string, agentCode *string) (*SignupResult, error) {
 	email = normalizeEmail(email)
 	if err := validatePassword(password); err != nil {
 		return nil, err
+	}
+
+	// Validate agent code if provided.
+	var agentID *int64
+	if agentCode != nil {
+		cleaned := strings.TrimSpace(*agentCode)
+		if cleaned != "" {
+			aid, err := s.agentSvc.ValidateAgentCode(ctx, cleaned)
+			if err != nil {
+				return nil, err
+			}
+			agentID = &aid
+		}
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -106,7 +123,7 @@ func (s *AuthService) Signup(ctx context.Context, email, password string) (*Sign
 		}
 		accountID = existing.AccountID
 	default:
-		acc := &models.Account{Status: models.AccountPending}
+		acc := &models.Account{Status: models.AccountPending, AgentID: agentID}
 		if err := s.accounts.CreateAccount(ctx, tx, acc); err != nil {
 			return nil, err
 		}
@@ -312,6 +329,41 @@ func (s *AuthService) UpdateProfile(
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
+	return acc, nil
+}
+
+// UpdateAgentCode sets or updates the agent on the authenticated account.
+// Non-admin users can only update the agent code once (tracked by agent_code_updated).
+// Admins can update it anytime.
+func (s *AuthService) UpdateAgentCode(ctx context.Context, accountID int64, agentCode string, isAdmin bool) (*models.Account, error) {
+	acc, err := s.accounts.FindByID(ctx, accountID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, apperr.NewNotFound("Account not found")
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Non-admin users can only update agent code once.
+	if !isAdmin && acc.AgentCodeUpdated {
+		return nil, apperr.NewConflict("Agent code can only be updated once")
+	}
+
+	agentID, err := s.agentSvc.ValidateAgentCode(ctx, agentCode)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.accounts.SetAgentID(ctx, accountID, &agentID, true); err != nil {
+		return nil, err
+	}
+
+	// Re-fetch to return the updated account with the new agent_id.
+	acc, err = s.accounts.FindByID(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("agent code updated", "account_id", accountID, "agent_id", agentID, "is_admin", isAdmin)
 	return acc, nil
 }
 

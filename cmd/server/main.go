@@ -66,6 +66,7 @@ func main() {
 	// Repositories.
 	accountRepo := repository.NewAccountRepo(pool)
 	analyticsRepo := repository.NewCreditAnalyticsRepo(pool)
+	agentRepo := repository.NewAgentRepo(pool)
 
 	// Upstream clients.
 	digitapClient := digitap.New(digitap.Config{
@@ -79,7 +80,8 @@ func main() {
 	otpSvc := service.NewOTPService(cfg.Auth.OTP)
 	mailSvc := service.NewMailService(cfg.Mail, cfg.Auth.OTP.TTL)
 	tokenSvc := service.NewTokenService(cfg.Auth)
-	authSvc := service.NewAuthService(accountRepo, otpSvc, mailSvc, tokenSvc, cfg.Auth)
+	agentSvc := service.NewAgentService(agentRepo, accountRepo)
+	authSvc := service.NewAuthService(accountRepo, otpSvc, mailSvc, tokenSvc, cfg.Auth, agentSvc)
 	analyticsSvc := service.NewCreditAnalyticsService(digitapClient, analyticsRepo, accountRepo)
 	kycSvc := service.NewKycService(accountRepo)
 
@@ -88,6 +90,7 @@ func main() {
 	authH := handler.NewAuthHandler(authSvc)
 	analyticsH := handler.NewCreditAnalyticsHandler(analyticsSvc)
 	kycH := handler.NewKycHandler(kycSvc)
+	agentH := handler.NewAgentHandler(agentSvc, authSvc)
 
 	// One-time configuration snapshot. No secrets: just feature flags the
 	// operator needs to confirm at boot (stub vs. live upstream, OCR provider,
@@ -100,7 +103,7 @@ func main() {
 		"google_login_enabled", cfg.Auth.Google.ClientID != "",
 	)
 
-	app := server.New(cfg, healthH, authH, analyticsH, kycH, tokenSvc)
+	app := server.New(cfg, healthH, authH, analyticsH, kycH, agentH, tokenSvc)
 
 	go func() {
 		addr := ":" + itoa(cfg.Server.Port)

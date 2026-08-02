@@ -23,6 +23,7 @@ func New(
 	auth *handler.AuthHandler,
 	analytics *handler.CreditAnalyticsHandler,
 	kyc *handler.KycHandler,
+	agents *handler.AgentHandler,
 	tokens *service.TokenService,
 ) *fiber.App {
 	app := fiber.New(fiber.Config{
@@ -78,6 +79,7 @@ func New(
 	ca.Post("/request", analytics.Request)
 	ca.Get("/reports", analytics.ListReports)
 	ca.Get("/reports/:id<int>", analytics.GetReport)
+	ca.Get("/latest-insights", analytics.GetLatestInsights)
 
 	// ---- KYC (PAN submission) -------------------------------------------
 	k := api.Group("/kyc", requireAuth)
@@ -86,6 +88,18 @@ func New(
 	// ---- Admin (role-gated) ---------------------------------------------
 	admin := api.Group("/admin", middleware.RequireRole(tokens, models.RoleAdmin))
 	admin.Post("/kyc/pan/:accountId<int>/verify", kyc.VerifyPAN)
+
+	// ---- Admin agent management ----------------------------------------
+	adminAgents := admin.Group("/agents")
+	adminAgents.Post("/", agents.CreateAgent)
+	adminAgents.Put("/:id<int>", agents.UpdateAgent)
+	adminAgents.Patch("/:id<int>/status", agents.SetAgentStatus)
+	adminAgents.Get("/", agents.ListActiveAgents)
+	adminAgents.Get("/:id<int>", agents.GetAgent)
+	adminAgents.Put("/account/:accountId<int>/agent-code", agents.UpdateAccountAgentCode)
+
+	// ---- User agent code update -----------------------------------------
+	profile.Put("/agent-code", requireAuth, agents.UpdateAgentCode)
 
 	return app
 }

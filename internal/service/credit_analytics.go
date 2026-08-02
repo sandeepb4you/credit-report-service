@@ -77,6 +77,17 @@ type ReportPage struct {
 	Total int64           `json:"total"`
 }
 
+// ReportInsights is the derived analytics from the latest successful credit
+// report: on-time payment percentage, card utilization percentage, and
+// enquiry count for the past 180 days.
+type ReportInsights struct {
+	ReportID               int64   `json:"reportId"`
+	OnTimePaymentPercent   float64 `json:"onTimePaymentPercent"`
+	CardUtilizationPercent float64 `json:"cardUtilizationPercent"`
+	EnquiryCount180Days    int64   `json:"enquiryCount180Days"`
+	Outdated               bool    `json:"outdated"`
+}
+
 // Pagination bounds for ListReports.
 const (
 	reportDefaultSize = 20
@@ -354,6 +365,133 @@ func (s *CreditAnalyticsService) GetReport(ctx context.Context, accountID, id in
 		return nil, apperr.NewNotFound("Report not found")
 	}
 	return row, nil
+}
+
+// GetLatestReportInsights returns derived credit analytics from the account's
+// most recent successful report: on-time payment %, card utilization %, and
+// enquiry count for the past 180 days. Returns ErrNotFound if no successful
+// report exists yet.
+func (s *CreditAnalyticsService) GetLatestReportInsights(ctx context.Context, accountID int64) (*ReportInsights, error) {
+	row, err := s.repo.FindLatestByAccount(ctx, accountID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, apperr.NewNotFound("No credit report found")
+	}
+	if err != nil {
+		return nil, err
+	}
+	insights, err := parseReportInsights(row.ResponseBody)
+	if err != nil {
+		return nil, err
+	}
+	insights.ReportID = row.ID
+	insights.Outdated = time.Since(row.CreatedAt) > 30*24*time.Hour
+	return insights, nil
+}
+
+// parseReportInsights extracts on-time payment %, card utilization %, and
+// 180-day enquiry count from the raw Digitap INProfileResponse JSONB.
+//
+// Response shape (from Digitap V2.7):
+//
+//	{
+//	  "result_json": {
+//	    "INProfileResponse": {
+//	      "CAIS_Account": {
+//	        "CAIS_Account_DETAILS": [{
+//	          "Payment_History_Profile": "000000000...",  // 36-char, '0'=ontime, '1'-'6'=DPD, '?'=N/A
+//	          "Portfolio_Type": "R",                     // R=revolving, I=installment
+//	          "Credit_Limit_Amount": "100000",
+//	          "Current_Balance": "45000"
+//	        }]
+//	      },
+//	      "TotalCAPS_Summary": {
+//	        "TotalCAPSLast180Days": "5"
+//	      }
+//	    }
+//	  }
+//	}
+func parseReportInsights(raw json.RawMessage) (*ReportInsights, error) {
+	insights := &ReportInsights{}
+
+	// Navigate: result_json -> INProfileResponse
+	var wrapper struct {
+		ResultJSON struct {
+			INProfileResponse struct {
+				CAISAccount struct {
+					CAISAccountDetails []struct {
+						PaymentHistoryProfile string `json:"Payment_History_Profile"`
+						PortfolioType         string `json:"Portfolio_Type"`
+						CreditLimitAmount     string `json:"Credit_Limit_Amount"`
+						CurrentBalance        string `json:"Current_Balance"`
+					} `json:"CAIS_Account_Details"`
+				} `json:"CAIS_Account"`
+				TotalCAPSSummary struct {
+					TotalCAPSLast180Days string `json:"TotalCAPSLast180Days"`
+				} `json:"TotalCAPS_Summary"`
+			} `json:"INProfileResponse"`
+		} `json:"result_json"`
+	}
+	if err := json.Unmarshal(raw, &wrapper); err != nil {
+		return nil, fmt.Errorf("parse credit report response: %w", err)
+	}
+	profile := wrapper.ResultJSON.INProfileResponse
+
+	// ---- On-time payment percentage ----
+	// Across all accounts, count months where payment was on-time ('0') vs
+	// total reported months (anything except '?').
+	var onTime, totalMonths int
+	for _, acct := range profile.CAISAccount.CAISAccountDetails {
+		for _, ch := range acct.PaymentHistoryProfile {
+			if ch == '?' {
+				continue
+			}
+			totalMonths++
+			if ch == '0' {
+				onTime++
+			}
+		}
+	}
+	if totalMonths > 0 {
+		insights.OnTimePaymentPercent = float64(onTime) / float64(totalMonths) * 100
+		// Round to 1 decimal place.
+		insights.OnTimePaymentPercent = float64(int(insights.OnTimePaymentPercent*10+0.5)) / 10
+	}
+
+	// ---- Card utilization percentage ----
+	// Sum Current_Balance / Credit_Limit_Amount for revolving (R) accounts.
+	var totalLimit, totalBalance int64
+	for _, acct := range profile.CAISAccount.CAISAccountDetails {
+		if acct.PortfolioType != "R" {
+			continue
+		}
+		limit := atoiSafe64(acct.CreditLimitAmount)
+		balance := atoiSafe64(acct.CurrentBalance)
+		totalLimit += limit
+		totalBalance += balance
+	}
+	if totalLimit > 0 {
+		insights.CardUtilizationPercent = float64(totalBalance) / float64(totalLimit) * 100
+		// Round to 1 decimal place.
+		insights.CardUtilizationPercent = float64(int(insights.CardUtilizationPercent*10+0.5)) / 10
+	}
+
+	// ---- Enquiry count past 180 days ----
+	insights.EnquiryCount180Days = atoiSafe64(profile.TotalCAPSSummary.TotalCAPSLast180Days)
+
+	return insights, nil
+}
+
+// atoiSafe64 parses a numeric prefix of s as int64. Non-numeric or empty
+// strings return 0.
+func atoiSafe64(s string) int64 {
+	n := int64(0)
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			break
+		}
+		n = n*10 + int64(c-'0')
+	}
+	return n
 }
 
 // generateClientRefNum returns "CA-<unixmilli>-<6 hex chars>", unique per call

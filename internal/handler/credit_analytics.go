@@ -120,3 +120,26 @@ func (h *CreditAnalyticsHandler) GetReport(c *fiber.Ctx) error {
 	}
 	return c.JSON(row)
 }
+
+// GetLatestInsights godoc
+//
+// @Summary      Get credit insights from the latest report
+// @Description  Returns derived analytics from the most recent successful credit report: on-time payment percentage, card utilization percentage, and enquiry count for the past 180 days.
+// @Tags         credit-analytics
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  service.ReportInsights
+// @Failure      401  {object}  apperr.ErrorBody  "Not authenticated"
+// @Failure      404  {object}  apperr.ErrorBody  "No credit report found"
+// @Router       /credit-analytics/latest-insights [get]
+func (h *CreditAnalyticsHandler) GetLatestInsights(c *fiber.Ctx) error {
+	accountID, ok := middleware.AccountID(c)
+	if !ok {
+		return apperr.NewUnauthorized("Not authenticated")
+	}
+	insights, err := h.svc.GetLatestReportInsights(c.Context(), accountID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(insights)
+}

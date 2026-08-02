@@ -70,3 +70,20 @@ func (r *CreditAnalyticsRepo) CountByAccount(ctx context.Context, accountID int6
 		`SELECT COUNT(*) FROM credit_analytics_requests WHERE account_id = $1`, accountID).Scan(&n)
 	return n, err
 }
+
+// FindLatestByAccount returns the most recent successful report (2xx upstream)
+// for an account, or ErrNotFound.
+func (r *CreditAnalyticsRepo) FindLatestByAccount(ctx context.Context, accountID int64) (*models.CreditAnalyticsRequest, error) {
+	var req models.CreditAnalyticsRequest
+	err := pgxscan.Get(ctx, r.pool, &req,
+		`SELECT `+creditAnalyticsCols+` FROM credit_analytics_requests
+		 WHERE account_id = $1
+		   AND http_status >= 200 AND http_status < 300
+		   AND response_body IS NOT NULL
+		 ORDER BY id DESC
+		 LIMIT 1`, accountID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &req, err
+}
