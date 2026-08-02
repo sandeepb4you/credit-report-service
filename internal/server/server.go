@@ -64,7 +64,7 @@ func New(
 	allowCredentials := cfg.Server.CORSOrigins != "*"
 	app.Use(cors.New(cors.Config{
 		AllowOrigins:     cfg.Server.CORSOrigins,
-		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS",
+		AllowMethods:     "GET,POST,PUT,PATCH,DELETE,OPTIONS",
 		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, X-Device-Id, X-Device-Name, X-Device-Platform, X-Device-Info",
 		AllowCredentials: allowCredentials,
 	}))
