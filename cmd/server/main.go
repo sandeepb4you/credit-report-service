@@ -16,6 +16,7 @@ import (
 	"credit-report-service/internal/db"
 	"credit-report-service/internal/digitap"
 	"credit-report-service/internal/handler"
+	"credit-report-service/internal/payments"
 	"credit-report-service/internal/repository"
 	"credit-report-service/internal/server"
 	"credit-report-service/internal/service"
@@ -66,7 +67,9 @@ func main() {
 	// Repositories.
 	accountRepo := repository.NewAccountRepo(pool)
 	analyticsRepo := repository.NewCreditAnalyticsRepo(pool)
-	agentRepo := repository.NewAgentRepo(pool)
+	orderRepo := repository.NewOrderRepo(pool)
+	sessionRepo := repository.NewSessionRepo(pool)
+	couponRepo := repository.NewCouponRepo(pool)
 
 	// Upstream clients.
 	digitapClient := digitap.New(digitap.Config{
@@ -76,21 +79,36 @@ func main() {
 		Timeout:      cfg.Digitap.Timeout,
 	})
 
+	// Payment gateway: real Cashfree client when credentials are set,
+	// otherwise the log-only stub (dev fallback, like the mail stub).
+	var gateway payments.Gateway
+	cashfreeStub := cfg.Cashfree.ClientID == ""
+	if cashfreeStub {
+		slog.Warn("cashfree.client-id is empty; using the stub payment gateway")
+		gateway = payments.NewStubGateway(cfg.Cashfree.Mode)
+	} else {
+		gateway = payments.NewCashfreeClient(cfg.Cashfree)
+	}
+
 	// Services.
 	otpSvc := service.NewOTPService(cfg.Auth.OTP)
 	mailSvc := service.NewMailService(cfg.Mail, cfg.Auth.OTP.TTL)
 	tokenSvc := service.NewTokenService(cfg.Auth)
-	agentSvc := service.NewAgentService(agentRepo, accountRepo)
-	authSvc := service.NewAuthService(accountRepo, otpSvc, mailSvc, tokenSvc, cfg.Auth, agentSvc)
+	sessionSvc := service.NewSessionService(sessionRepo, cfg.Auth)
+	couponSvc := service.NewCouponService(couponRepo, orderRepo)
+	authSvc := service.NewAuthService(
+		accountRepo, otpSvc, mailSvc, tokenSvc, sessionSvc, couponSvc, cfg.Auth)
 	analyticsSvc := service.NewCreditAnalyticsService(digitapClient, analyticsRepo, accountRepo)
 	kycSvc := service.NewKycService(accountRepo)
+	orderSvc := service.NewOrderService(orderRepo, accountRepo, couponSvc, gateway, cfg.Cashfree)
 
 	// Handlers.
 	healthH := handler.NewHealthHandler()
-	authH := handler.NewAuthHandler(authSvc)
+	authH := handler.NewAuthHandler(authSvc, sessionSvc, cfg.Auth.CookieSecure)
 	analyticsH := handler.NewCreditAnalyticsHandler(analyticsSvc)
 	kycH := handler.NewKycHandler(kycSvc)
-	agentH := handler.NewAgentHandler(agentSvc, authSvc)
+	orderH := handler.NewOrderHandler(orderSvc)
+	couponH := handler.NewCouponHandler(couponSvc)
 
 	// One-time configuration snapshot. No secrets: just feature flags the
 	// operator needs to confirm at boot (stub vs. live upstream, OCR provider,
@@ -99,11 +117,15 @@ func main() {
 		"port", cfg.Server.Port,
 		"profile", profile,
 		"digitap_stub", digitapClient.IsStub(),
+		"cashfree_stub", cashfreeStub,
 		"ocr_provider", cfg.Registration.OCR.Provider,
 		"google_login_enabled", cfg.Auth.Google.ClientID != "",
+		// Zero behind a load balancer means every session records the
+		// balancer's IP instead of the user's.
+		"trusted_proxies", len(cfg.Server.TrustedProxies),
 	)
 
-	app := server.New(cfg, healthH, authH, analyticsH, kycH, agentH, tokenSvc)
+	app := server.New(cfg, healthH, authH, analyticsH, kycH, orderH, couponH, tokenSvc)
 
 	go func() {
 		addr := ":" + itoa(cfg.Server.Port)

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,13 +14,18 @@ import (
 	"credit-report-service/internal/service"
 )
 
-// AuthHandler serves the email/password + OTP auth and profile endpoints.
+// AuthHandler serves the auth, session/device, and profile endpoints.
 type AuthHandler struct {
-	svc *service.AuthService
+	svc      *service.AuthService
+	sessions *service.SessionService
+	// cookieSecure mirrors auth.cookie-secure; see setRefreshCookie.
+	cookieSecure bool
 }
 
-func NewAuthHandler(svc *service.AuthService) *AuthHandler {
-	return &AuthHandler{svc: svc}
+func NewAuthHandler(
+	svc *service.AuthService, sessions *service.SessionService, cookieSecure bool,
+) *AuthHandler {
+	return &AuthHandler{svc: svc, sessions: sessions, cookieSecure: cookieSecure}
 }
 
 var otpCodeRE = regexp.MustCompile(`^\d{4,8}$`)
@@ -27,9 +33,11 @@ var otpCodeRE = regexp.MustCompile(`^\d{4,8}$`)
 // ---- POST /api/auth/signup ----------------------------------------------
 
 type signupReq struct {
-	Email     string  `json:"email"     example:"user@example.com"`
-	Password  string  `json:"password"  example:"hunter2pass"`
-	AgentCode *string `json:"agentCode" example:"AGENT001"`
+	Email    string `json:"email"    example:"user@example.com"`
+	Password string `json:"password" example:"hunter2pass"`
+	// ReferralCode is optional and attributes the new account to whoever owns
+	// it. An invalid code fails the signup rather than being ignored.
+	ReferralCode string `json:"referralCode" example:"REF-7K2QM4XZ"`
 }
 
 // Signup godoc
@@ -54,7 +62,7 @@ func (h *AuthHandler) Signup(c *fiber.Ctx) error {
 		return apperr.NewValidationWith("Validation failed",
 			map[string]string{"email": "email must be valid"})
 	}
-	res, err := h.svc.Signup(c.Context(), req.Email, req.Password, req.AgentCode)
+	res, err := h.svc.Signup(c.Context(), req.Email, req.Password, req.ReferralCode)
 	if err != nil {
 		return err
 	}
@@ -71,10 +79,14 @@ type verifyEmailReq struct {
 // VerifyEmail godoc
 //
 // @Summary      Verify email with OTP
-// @Description  Checks the signup OTP; on success verifies the identity, activates the account, and returns a session JWT.
+// @Description  Checks the signup OTP; on success verifies the identity, activates the account, and opens a session for the calling device. Token delivery follows the same rules as POST /auth/login.
 // @Tags         auth
 // @Accept       json
 // @Produce      json
+// @Param        X-Device-Id        header  string  false  "Stable per-device UUID"
+// @Param        X-Device-Name      header  string  false  "Human-readable device name shown in the device list"
+// @Param        X-Device-Platform  header  string  false  "ios | android | web"
+// @Param        X-Device-Info      header  string  false  "JSON device description, e.g. {\"manufacturer\":\"Apple\",\"model\":\"iPhone15,3\",\"osVersion\":\"17.4\"}"
 // @Param        request  body      verifyEmailReq  true  "Email + OTP"
 // @Success      200      {object}  service.AuthResult
 // @Failure      400      {object}  apperr.ErrorBody  "Wrong / expired / locked OTP"
@@ -99,11 +111,11 @@ func (h *AuthHandler) VerifyEmail(c *fiber.Ctx) error {
 		return apperr.NewValidationWith("Validation failed", details)
 	}
 
-	res, err := h.svc.VerifyEmail(c.Context(), req.Email, req.OTP)
+	res, err := h.svc.VerifyEmail(c.Context(), req.Email, req.OTP, middleware.Device(c))
 	if err != nil {
 		return err
 	}
-	return c.JSON(res)
+	return h.respondAuth(c, res, middleware.Device(c).IsWeb())
 }
 
 // ---- POST /api/auth/otp/resend ------------------------------------------
@@ -151,10 +163,14 @@ type loginReq struct {
 // Login godoc
 //
 // @Summary      Log in with email + password
-// @Description  Verifies email + password and returns a session JWT. Requires the email to be verified.
+// @Description  Verifies email + password and opens a session for the calling device. Returns a short-lived access JWT plus a refresh token — in the JSON body for mobile clients, or as an httpOnly `refresh_token` cookie when `X-Device-Platform: web`. Send `X-Device-Id` (a stable per-device UUID) so repeat logins update one entry in the device list instead of creating a new one.
 // @Tags         auth
 // @Accept       json
 // @Produce      json
+// @Param        X-Device-Id        header  string  false  "Stable per-device UUID"
+// @Param        X-Device-Name      header  string  false  "Human-readable device name shown in the device list"
+// @Param        X-Device-Platform  header  string  false  "ios | android | web"
+// @Param        X-Device-Info      header  string  false  "JSON device description, e.g. {\"manufacturer\":\"Apple\",\"model\":\"iPhone15,3\",\"osVersion\":\"17.4\"}"
 // @Param        request  body      loginReq  true  "Login credentials"
 // @Success      200      {object}  service.AuthResult
 // @Failure      400      {object}  apperr.ErrorBody  "Validation failed"
@@ -170,17 +186,19 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 		return apperr.NewValidationWith("Validation failed",
 			map[string]string{"email": "email and password are required"})
 	}
-	res, err := h.svc.Login(c.Context(), req.Email, req.Password)
+	res, err := h.svc.Login(c.Context(), req.Email, req.Password, middleware.Device(c))
 	if err != nil {
 		return err
 	}
-	return c.JSON(res)
+	return h.respondAuth(c, res, middleware.Device(c).IsWeb())
 }
 
 // ---- POST /api/auth/google -----------------------------------------------
 
 type googleLoginReq struct {
 	IDToken string `json:"idToken" example:"eyJhbGciOiJSUzI1NiIs..."`
+	// ReferralCode is only honoured when this login creates a new account.
+	ReferralCode string `json:"referralCode" example:"REF-7K2QM4XZ"`
 }
 
 // GoogleLogin godoc
@@ -190,6 +208,10 @@ type googleLoginReq struct {
 // @Tags         auth
 // @Accept       json
 // @Produce      json
+// @Param        X-Device-Id        header  string  false  "Stable per-device UUID"
+// @Param        X-Device-Name      header  string  false  "Human-readable device name shown in the device list"
+// @Param        X-Device-Platform  header  string  false  "ios | android | web"
+// @Param        X-Device-Info      header  string  false  "JSON device description, e.g. {\"manufacturer\":\"Apple\",\"model\":\"iPhone15,3\",\"osVersion\":\"17.4\"}"
 // @Param        request  body      googleLoginReq  true  "Google ID token"
 // @Success      200      {object}  service.AuthResult
 // @Failure      400      {object}  apperr.ErrorBody  "Validation failed (missing idToken)"
@@ -202,11 +224,11 @@ func (h *AuthHandler) GoogleLogin(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return apperr.NewValidation("invalid JSON body")
 	}
-	res, err := h.svc.GoogleLogin(c.Context(), req.IDToken)
+	res, err := h.svc.GoogleLogin(c.Context(), req.IDToken, req.ReferralCode, middleware.Device(c))
 	if err != nil {
 		return err
 	}
-	return c.JSON(res)
+	return h.respondAuth(c, res, middleware.Device(c).IsWeb())
 }
 
 // ---- GET /api/profile ----------------------------------------------------
@@ -291,6 +313,44 @@ func (h *AuthHandler) UpdateProfile(c *fiber.Ctx) error {
 	}
 
 	acc, err := h.svc.UpdateProfile(c.Context(), accountID, req.FirstName, req.LastName, dob)
+	if err != nil {
+		return err
+	}
+	return c.JSON(acc)
+}
+
+// ---- PUT /api/admin/accounts/:accountId/role -----------------------------
+
+type setRoleReq struct {
+	Role string `json:"role" example:"agent"`
+}
+
+// SetAccountRole godoc
+//
+// @Summary      Set an account's role
+// @Description  Grants or revokes a role. 'agent' lets the account issue coupon codes; 'user' is the default. Note that the role rides in the JWT, so a change only takes effect for the target account on its next token refresh — up to one access-token lifetime later.
+// @Tags         admin
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        accountId  path      int         true  "Account to modify"
+// @Param        request    body      setRoleReq  true  "Role to set (user | agent | admin)"
+// @Success      200        {object}  models.Account
+// @Failure      400        {object}  apperr.ErrorBody  "Unknown role / accountId must be an integer"
+// @Failure      401        {object}  apperr.ErrorBody  "Not authenticated"
+// @Failure      403        {object}  apperr.ErrorBody  "Missing the 'account:set-role' permission"
+// @Failure      404        {object}  apperr.ErrorBody  "Account not found"
+// @Router       /admin/accounts/{accountId}/role [put]
+func (h *AuthHandler) SetAccountRole(c *fiber.Ctx) error {
+	accountID, err := strconv.ParseInt(c.Params("accountId"), 10, 64)
+	if err != nil {
+		return apperr.NewValidation("accountId must be an integer")
+	}
+	var req setRoleReq
+	if err := c.BodyParser(&req); err != nil {
+		return apperr.NewValidation("invalid JSON body")
+	}
+	acc, err := h.svc.SetRole(c.Context(), accountID, strings.TrimSpace(req.Role))
 	if err != nil {
 		return err
 	}

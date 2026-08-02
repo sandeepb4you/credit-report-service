@@ -9,13 +9,6 @@ const (
 	AccountSuspended = "SUSPENDED"
 )
 
-// Account roles. The role is assigned via the auth.admin-emails config
-// allowlist (auto-promoted at verify/login) and rides in the JWT as a claim.
-const (
-	RoleUser  = "user"
-	RoleAdmin = "admin"
-)
-
 // Auth identity providers.
 const (
 	ProviderPassword = "password"
@@ -45,10 +38,14 @@ type Account struct {
 	LastName         *string    `json:"lastName"         db:"last_name"`
 	DateOfBirth      *time.Time `json:"dateOfBirth"      db:"date_of_birth"`
 	ProfileCompleted bool       `json:"profileCompleted" db:"profile_completed"`
-	AgentID          *int64     `json:"agentId,omitempty" db:"agent_id"`
-	AgentCodeUpdated bool       `json:"agentCodeUpdated" db:"agent_code_updated"`
-	CreatedAt        time.Time  `json:"createdAt"        db:"created_at"`
-	UpdatedAt        time.Time  `json:"updatedAt"        db:"updated_at"`
+
+	// Referral attribution, set once at signup and never changed.
+	ReferredByAccountID *int64     `json:"referredByAccountId,omitempty" db:"referred_by_account_id"`
+	ReferredByCode      *string    `json:"referredByCode,omitempty"      db:"referred_by_code"`
+	ReferredAt          *time.Time `json:"referredAt,omitempty"          db:"referred_at"`
+
+	CreatedAt time.Time `json:"createdAt" db:"created_at"`
+	UpdatedAt time.Time `json:"updatedAt" db:"updated_at"`
 }
 
 // AuthIdentity is the row model for the auth_identities table: one row per way

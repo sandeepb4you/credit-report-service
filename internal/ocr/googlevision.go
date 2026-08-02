@@ -69,4 +69,3 @@ func (g *GoogleVision) Extract(imageBytes []byte, contentType string) (*Result, 
 		Confidence: conf,
 	}, nil
 }
-

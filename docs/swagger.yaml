@@ -14,10 +14,6 @@ definitions:
     type: object
   credit-report-service_internal_models.Account:
     properties:
-      agentCodeUpdated:
-        type: boolean
-      agentId:
-        type: integer
       createdAt:
         type: string
       dateOfBirth:
@@ -34,6 +30,13 @@ definitions:
         type: string
       profileCompleted:
         type: boolean
+      referredAt:
+        type: string
+      referredByAccountId:
+        description: Referral attribution, set once at signup and never changed.
+        type: integer
+      referredByCode:
+        type: string
       role:
         type: string
       status:
@@ -41,44 +44,52 @@ definitions:
       updatedAt:
         type: string
     type: object
-  credit-report-service_internal_models.Agent:
+  credit-report-service_internal_models.AgentMeta:
     properties:
-      code:
+      browser:
         type: string
-      createdAt:
+      browserVersion:
         type: string
-      email:
+      deviceType:
+        description: mobile | tablet | desktop
         type: string
-      id:
-        type: integer
-      name:
+      os:
         type: string
-      phone:
-        type: string
-      status:
-        type: string
-      updatedAt:
+      osVersion:
         type: string
     type: object
-  credit-report-service_internal_models.AgentWithSignupCount:
+  credit-report-service_internal_models.Coupon:
     properties:
       code:
         type: string
       createdAt:
         type: string
-      email:
-        type: string
+      createdBy:
+        description: CreatedBy is the issuing account — the agent this redemption
+          attributes to.
+        type: integer
+      discountPercent:
+        type: number
       id:
         type: integer
-      name:
+      kind:
         type: string
-      phone:
-        type: string
-      signupCount:
+      maxRedemptions:
         type: integer
-      status:
+      perAccountLimit:
+        type: integer
+      productCode:
+        description: ProductCode nil means the coupon applies to every product.
+        type: string
+      redemptionCount:
+        type: integer
+      revokedAt:
         type: string
       updatedAt:
+        type: string
+      validFrom:
+        type: string
+      validUntil:
         type: string
     type: object
   credit-report-service_internal_models.CreditAnalyticsRequest:
@@ -110,6 +121,23 @@ definitions:
       resultCode:
         type: integer
     type: object
+  credit-report-service_internal_models.DeviceMeta:
+    properties:
+      agent:
+        allOf:
+        - $ref: '#/definitions/credit-report-service_internal_models.AgentMeta'
+        description: |-
+          Agent is parsed by the server from the User-Agent header. Best-effort:
+          unrecognized agents leave fields empty rather than guessing.
+      client:
+        additionalProperties:
+          type: string
+        description: |-
+          Client is whatever the app declared via X-Device-Info: make, model, OS
+          version, app version, and any extra keys it cares to send. Free-form but
+          bounded (see middleware.parseDeviceInfoHeader) because it is user input.
+        type: object
+    type: object
   credit-report-service_internal_models.KYCRecord:
     properties:
       aadhaarLast4:
@@ -139,11 +167,66 @@ definitions:
       verifiedAt:
         type: string
     type: object
+  credit-report-service_internal_models.Order:
+    properties:
+      amount:
+        description: |-
+          Amount is what the customer is charged, i.e. already net of any coupon.
+          DiscountAmount and CouponCode are snapshots of how it got there, so the
+          list price is Amount + DiscountAmount and later edits to the coupon can
+          never rewrite this order.
+        type: number
+      cfOrderId:
+        type: string
+      couponCode:
+        type: string
+      createdAt:
+        type: string
+      currency:
+        type: string
+      discountAmount:
+        type: number
+      failureReason:
+        type: string
+      orderId:
+        type: string
+      paidAt:
+        type: string
+      paymentMethod:
+        type: string
+      paymentSessionId:
+        type: string
+      productCode:
+        type: string
+      status:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  credit-report-service_internal_models.Product:
+    properties:
+      active:
+        type: boolean
+      amount:
+        type: number
+      code:
+        type: string
+      createdAt:
+        type: string
+      currency:
+        type: string
+      name:
+        type: string
+      updatedAt:
+        type: string
+    type: object
   credit-report-service_internal_service.AuthResult:
     properties:
       account:
         $ref: '#/definitions/credit-report-service_internal_models.Account'
       expiresAt:
+        type: string
+      refreshToken:
         type: string
       token:
         type: string
@@ -151,6 +234,50 @@ definitions:
   credit-report-service_internal_service.CreditAnalyticsInput:
     properties:
       device_ip:
+        type: string
+    type: object
+  credit-report-service_internal_service.PurchaseResult:
+    properties:
+      amount:
+        description: |-
+          Amount is the charged total, already net of any coupon. OriginalAmount
+          and DiscountAmount let the payment screen show the saving without
+          recomputing it — and without being trusted to.
+        type: number
+      cfOrderId:
+        type: string
+      couponCode:
+        type: string
+      currency:
+        type: string
+      discountAmount:
+        type: number
+      mode:
+        type: string
+      orderId:
+        type: string
+      originalAmount:
+        type: number
+      paymentSessionId:
+        type: string
+      status:
+        type: string
+    type: object
+  credit-report-service_internal_service.Quote:
+    properties:
+      code:
+        type: string
+      currency:
+        type: string
+      discountAmount:
+        type: number
+      discountPercent:
+        type: number
+      originalAmount:
+        type: number
+      payableAmount:
+        type: number
+      productCode:
         type: string
     type: object
   credit-report-service_internal_service.ReportInsights:
@@ -186,6 +313,34 @@ definitions:
       id:
         type: integer
     type: object
+  credit-report-service_internal_service.SessionView:
+    properties:
+      current:
+        description: |-
+          Current marks the session the requesting device is using right now, so
+          the UI can label it and warn before revoking it.
+        type: boolean
+      deviceInfo:
+        allOf:
+        - $ref: '#/definitions/credit-report-service_internal_models.DeviceMeta'
+        description: |-
+          DeviceInfo is the make/model/OS breakdown, split into what the client
+          declared and what the server parsed from the User-Agent.
+      deviceName:
+        type: string
+      expiresAt:
+        type: string
+      id:
+        type: integer
+      ip:
+        type: string
+      lastUsedAt:
+        type: string
+      platform:
+        type: string
+      signedInAt:
+        type: string
+    type: object
   credit-report-service_internal_service.SignupResult:
     properties:
       accountId:
@@ -195,25 +350,51 @@ definitions:
       message:
         type: string
     type: object
-  internal_handler.createAgentReq:
+  internal_handler.createCouponReq:
     properties:
       code:
-        example: AGENT001
+        example: SAVE20
         type: string
-      email:
-        example: john@example.com
+      discountPercent:
+        example: 20
+        type: number
+      maxRedemptions:
+        example: 100
+        type: integer
+      perAccountLimit:
+        example: 1
+        type: integer
+      productCode:
+        example: CREDIT_ANALYSIS
         type: string
-      name:
-        example: John Doe
+      validFrom:
+        example: "2026-08-01T00:00:00Z"
         type: string
-      phone:
-        example: "+919876543210"
+      validUntil:
+        example: "2026-12-31T23:59:59Z"
+        type: string
+    type: object
+  internal_handler.createOrderReq:
+    properties:
+      couponCode:
+        description: |-
+          CouponCode is optional. Only the code is accepted — the discount and the
+          resulting total are computed server-side from the catalog price, so a
+          tampered request cannot change what is charged.
+        example: SAVE20
+        type: string
+      productCode:
+        example: CREDIT_ANALYSIS
         type: string
     type: object
   internal_handler.googleLoginReq:
     properties:
       idToken:
         example: eyJhbGciOiJSUzI1NiIs...
+        type: string
+      referralCode:
+        description: ReferralCode is only honoured when this login creates a new account.
+        example: REF-7K2QM4XZ
         type: string
     type: object
   internal_handler.loginReq:
@@ -225,52 +406,43 @@ definitions:
         example: hunter2pass
         type: string
     type: object
+  internal_handler.refreshReq:
+    properties:
+      refreshToken:
+        example: rt_8Kx3...
+        type: string
+    type: object
   internal_handler.resendReq:
     properties:
       email:
         example: user@example.com
         type: string
     type: object
-  internal_handler.setAgentStatusReq:
+  internal_handler.setRoleReq:
     properties:
-      status:
-        example: ACTIVE
+      role:
+        example: agent
         type: string
     type: object
   internal_handler.signupReq:
     properties:
-      agentCode:
-        example: AGENT001
-        type: string
       email:
         example: user@example.com
         type: string
       password:
         example: hunter2pass
         type: string
+      referralCode:
+        description: |-
+          ReferralCode is optional and attributes the new account to whoever owns
+          it. An invalid code fails the signup rather than being ignored.
+        example: REF-7K2QM4XZ
+        type: string
     type: object
   internal_handler.submitPanReq:
     properties:
       pan:
         example: ABCDE1234F
-        type: string
-    type: object
-  internal_handler.updateAgentCodeReq:
-    properties:
-      agentCode:
-        example: AGENT001
-        type: string
-    type: object
-  internal_handler.updateAgentReq:
-    properties:
-      email:
-        example: jane@example.com
-        type: string
-      name:
-        example: Jane Doe
-        type: string
-      phone:
-        example: "+919876543210"
         type: string
     type: object
   internal_handler.updateProfileReq:
@@ -304,219 +476,26 @@ info:
   title: Credit Report Service API
   version: "1.0"
 paths:
-  /admin/agents:
-    get:
-      description: Returns all agents with status ACTIVE.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              $ref: '#/definitions/credit-report-service_internal_models.Agent'
-            type: array
-        "401":
-          description: Not authenticated
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-      security:
-      - BearerAuth: []
-      summary: List active agents (admin only)
-      tags:
-      - admin-agents
-    post:
-      consumes:
-      - application/json
-      description: Creates a new agent with a unique referral code.
-      parameters:
-      - description: Agent details
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/internal_handler.createAgentReq'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_models.Agent'
-        "400":
-          description: Validation failed
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-        "401":
-          description: Not authenticated
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-        "409":
-          description: Agent code already exists
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-      security:
-      - BearerAuth: []
-      summary: Create an agent (admin only)
-      tags:
-      - admin-agents
-  /admin/agents/{id}:
-    get:
-      description: 'Returns an agent''s details along with the number of signups under
-        that agent for a given date range. Query params: from, to (YYYY-MM-DD, optional).'
-      parameters:
-      - description: Agent ID
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Start date (YYYY-MM-DD)
-        in: query
-        name: from
-        type: string
-      - description: End date (YYYY-MM-DD)
-        in: query
-        name: to
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_models.AgentWithSignupCount'
-        "401":
-          description: Not authenticated
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-        "404":
-          description: Agent not found
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-      security:
-      - BearerAuth: []
-      summary: Get agent with signup count (admin only)
-      tags:
-      - admin-agents
+  /admin/accounts/{accountId}/role:
     put:
       consumes:
       - application/json
-      description: Updates an agent's name, email, and/or phone.
+      description: Grants or revokes a role. 'agent' lets the account issue coupon
+        codes; 'user' is the default. Note that the role rides in the JWT, so a change
+        only takes effect for the target account on its next token refresh — up to
+        one access-token lifetime later.
       parameters:
-      - description: Agent ID
-        in: path
-        name: id
-        required: true
-        type: integer
-      - description: Agent fields to update
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/internal_handler.updateAgentReq'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_models.Agent'
-        "400":
-          description: Validation failed
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-        "401":
-          description: Not authenticated
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-        "404":
-          description: Agent not found
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-      security:
-      - BearerAuth: []
-      summary: Update an agent (admin only)
-      tags:
-      - admin-agents
-  /admin/agents/{id}/status:
-    patch:
-      consumes:
-      - application/json
-      description: Sets an agent's status to ACTIVE or INACTIVE.
-      parameters:
-      - description: Agent ID
-        in: path
-        name: id
-        required: true
-        type: integer
-      - description: Status
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/internal_handler.setAgentStatusReq'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_models.Agent'
-        "400":
-          description: Validation failed
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-        "401":
-          description: Not authenticated
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-        "404":
-          description: Agent not found
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-      security:
-      - BearerAuth: []
-      summary: Activate or deactivate an agent (admin only)
-      tags:
-      - admin-agents
-  /admin/agents/account/{accountId}/agent-code:
-    put:
-      consumes:
-      - application/json
-      description: Allows an admin to set or update the agent code for any account
-        by ID. Admins bypass the one-time update limit.
-      parameters:
-      - description: Account ID
+      - description: Account to modify
         in: path
         name: accountId
         required: true
         type: integer
-      - description: Agent code
+      - description: Role to set (user | agent | admin)
         in: body
         name: request
         required: true
         schema:
-          $ref: '#/definitions/internal_handler.updateAgentCodeReq'
+          $ref: '#/definitions/internal_handler.setRoleReq'
       produces:
       - application/json
       responses:
@@ -525,7 +504,7 @@ paths:
           schema:
             $ref: '#/definitions/credit-report-service_internal_models.Account'
         "400":
-          description: Validation failed
+          description: Unknown role / accountId must be an integer
           schema:
             $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
         "401":
@@ -533,7 +512,7 @@ paths:
           schema:
             $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
         "403":
-          description: Forbidden
+          description: Missing the 'account:set-role' permission
           schema:
             $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
         "404":
@@ -542,9 +521,9 @@ paths:
             $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
       security:
       - BearerAuth: []
-      summary: Update agent code for any account (admin only)
+      summary: Set an account's role
       tags:
-      - admin-agents
+      - admin
   /admin/kyc/pan/{accountId}/verify:
     post:
       description: Marks the named account's KYC row as PAN-verified. Required before
@@ -594,6 +573,22 @@ paths:
         OAuth client ID to be configured (AUTH_GOOGLE_CLIENT_ID); otherwise returns
         503.
       parameters:
+      - description: Stable per-device UUID
+        in: header
+        name: X-Device-Id
+        type: string
+      - description: Human-readable device name shown in the device list
+        in: header
+        name: X-Device-Name
+        type: string
+      - description: ios | android | web
+        in: header
+        name: X-Device-Platform
+        type: string
+      - description: JSON device description, e.g. {\
+        in: header
+        name: X-Device-Info
+        type: string
       - description: Google ID token
         in: body
         name: request
@@ -630,9 +625,28 @@ paths:
     post:
       consumes:
       - application/json
-      description: Verifies email + password and returns a session JWT. Requires the
-        email to be verified.
+      description: 'Verifies email + password and opens a session for the calling
+        device. Returns a short-lived access JWT plus a refresh token — in the JSON
+        body for mobile clients, or as an httpOnly `refresh_token` cookie when `X-Device-Platform:
+        web`. Send `X-Device-Id` (a stable per-device UUID) so repeat logins update
+        one entry in the device list instead of creating a new one.'
       parameters:
+      - description: Stable per-device UUID
+        in: header
+        name: X-Device-Id
+        type: string
+      - description: Human-readable device name shown in the device list
+        in: header
+        name: X-Device-Name
+        type: string
+      - description: ios | android | web
+        in: header
+        name: X-Device-Platform
+        type: string
+      - description: JSON device description, e.g. {\
+        in: header
+        name: X-Device-Info
+        type: string
       - description: Login credentials
         in: body
         name: request
@@ -655,6 +669,29 @@ paths:
           schema:
             $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
       summary: Log in with email + password
+      tags:
+      - auth
+  /auth/logout:
+    post:
+      description: Revokes the session the access token was issued for and clears
+        the web refresh cookie. The access token itself stays valid until it expires
+        (minutes), so clients should discard it too.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{\"message\": \"Signed out\"}'
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Sign out of the current device
       tags:
       - auth
   /auth/otp/resend:
@@ -694,6 +731,128 @@ paths:
       summary: Resend signup verification OTP
       tags:
       - auth
+  /auth/refresh:
+    post:
+      consumes:
+      - application/json
+      description: 'Rotates the refresh token and issues a fresh access token. Mobile
+        clients send the token in the JSON body; web clients send nothing — the httpOnly
+        `refresh_token` cookie is read automatically. The old refresh token is invalidated
+        on every call, so replaying one revokes the whole session as a theft signal.
+        Public endpoint: the refresh token itself is the credential.'
+      parameters:
+      - description: Stable per-device UUID
+        in: header
+        name: X-Device-Id
+        type: string
+      - description: ios | android | web
+        in: header
+        name: X-Device-Platform
+        type: string
+      - description: JSON device description, e.g. {\
+        in: header
+        name: X-Device-Info
+        type: string
+      - description: Refresh token (omit for web cookie clients)
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/internal_handler.refreshReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_service.AuthResult'
+        "401":
+          description: Missing, expired, replayed, or unknown refresh token
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      summary: Exchange a refresh token for a new token pair
+      tags:
+      - auth
+  /auth/sessions:
+    delete:
+      description: Revokes all of the account's sessions except the caller's own.
+        Use after a password change or when a device is lost.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{\"revoked\": 3}'
+          schema:
+            additionalProperties:
+              type: integer
+            type: object
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Sign out every other device
+      tags:
+      - auth
+    get:
+      description: 'Returns the account''s active sessions, most recently used first.
+        The entry matching the caller''s own access token is flagged with `current:
+        true`.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/credit-report-service_internal_service.SessionView'
+            type: array
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List signed-in devices
+      tags:
+      - auth
+  /auth/sessions/{id}:
+    delete:
+      description: Revokes a single session by id. Only the caller's own sessions
+        are reachable — an id belonging to another account returns 404, not 403, so
+        session ids cannot be probed.
+      parameters:
+      - description: Session id from GET /auth/sessions
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{\"message\": \"Device signed out\"}'
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: id must be an integer
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: No such active session
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Sign out one device
+      tags:
+      - auth
   /auth/signup:
     post:
       consumes:
@@ -731,8 +890,25 @@ paths:
       consumes:
       - application/json
       description: Checks the signup OTP; on success verifies the identity, activates
-        the account, and returns a session JWT.
+        the account, and opens a session for the calling device. Token delivery follows
+        the same rules as POST /auth/login.
       parameters:
+      - description: Stable per-device UUID
+        in: header
+        name: X-Device-Id
+        type: string
+      - description: Human-readable device name shown in the device list
+        in: header
+        name: X-Device-Name
+        type: string
+      - description: ios | android | web
+        in: header
+        name: X-Device-Platform
+        type: string
+      - description: JSON device description, e.g. {\
+        in: header
+        name: X-Device-Info
+        type: string
       - description: Email + OTP
         in: body
         name: request
@@ -757,6 +933,181 @@ paths:
       summary: Verify email with OTP
       tags:
       - auth
+  /coupons:
+    get:
+      description: Returns the coupons the caller issued, newest first. Holders of
+        'coupon:admin' (admins) see every coupon instead.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/credit-report-service_internal_models.Coupon'
+            type: array
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Missing the 'coupon:manage' permission
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List coupons
+      tags:
+      - coupons
+    post:
+      consumes:
+      - application/json
+      description: Creates a percentage-discount coupon owned by the calling account.
+        Requires the 'coupon:create' permission, held by agents and admins. Omit productCode
+        to have it apply to every product; omit maxRedemptions for unlimited use.
+        The discount is applied server-side at checkout — clients never send prices.
+      parameters:
+      - description: Coupon definition
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.createCouponReq'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.Coupon'
+        "400":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Missing the 'coupon:create' permission
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "409":
+          description: That coupon code is already taken
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Issue a coupon code
+      tags:
+      - coupons
+  /coupons/{code}:
+    delete:
+      description: Stops future use of a coupon. Agents may only revoke their own;
+        a code belonging to someone else reads as 404 so the endpoint cannot be used
+        to discover which codes exist. Orders already placed keep their discount —
+        revoking is not retroactive.
+      parameters:
+      - description: Coupon code
+        in: path
+        name: code
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{\"message\": \"Coupon revoked\"}'
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Malformed code
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Missing the 'coupon:manage' permission
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: No such active coupon
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Revoke a coupon
+      tags:
+      - coupons
+  /coupons/quote:
+    get:
+      description: What the payment screen calls when a customer enters a code. Returns
+        the list price, the discount, and the payable total, all computed server-side.
+        Reserves nothing — the coupon is only consumed when the order is created,
+        so a quote can go stale if the last redemption is taken in between. Any authenticated
+        user may call it.
+      parameters:
+      - description: Coupon code
+        in: query
+        name: code
+        required: true
+        type: string
+      - description: Product being purchased
+        in: query
+        name: productCode
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_service.Quote'
+        "400":
+          description: Invalid coupon or unknown product
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Price a product with a coupon applied
+      tags:
+      - coupons
+  /coupons/referral:
+    get:
+      description: 'Returns the caller''s permanent referral code, creating it on
+        the first call. Anyone new who signs up with this code is attributed to the
+        caller — mainly how agents recruit users. Referral codes carry no discount,
+        never expire, and can be used any number of times; each account has exactly
+        one. Safe to call repeatedly: after the first call it is a plain lookup.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.Coupon'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "409":
+          description: Could not allocate a code; retry
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Get your referral code
+      tags:
+      - coupons
   /credit-analytics/latest-insights:
     get:
       description: 'Returns derived analytics from the most recent successful credit
@@ -925,6 +1276,144 @@ paths:
       summary: Submit the authenticated account's PAN
       tags:
       - kyc
+  /orders:
+    get:
+      description: Returns every order placed by the authenticated account, newest
+        first.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/credit-report-service_internal_models.Order'
+            type: array
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List the authenticated account's orders
+      tags:
+      - orders
+    post:
+      consumes:
+      - application/json
+      description: Creates an order for the given product against the authenticated
+        account and registers it with Cashfree. The response carries `paymentSessionId`
+        and `mode`, which the frontend passes to the Cashfree JS SDK to open checkout.
+      parameters:
+      - description: Product to purchase
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.createOrderReq'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_service.PurchaseResult'
+        "400":
+          description: Invalid JSON body / productCode missing or unknown
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "409":
+          description: Product is not available for purchase
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "502":
+          description: Payment gateway could not create the order
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Create an order and start checkout
+      tags:
+      - orders
+  /orders/{orderId}:
+    get:
+      description: Returns a single order owned by the authenticated account. If the
+        order is still awaiting payment its status is reconciled against Cashfree
+        before being returned, so this is the endpoint to poll after checkout closes.
+      parameters:
+      - description: Order id returned from order creation
+        in: path
+        name: orderId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.Order'
+        "400":
+          description: orderId is not valid
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: Order not found
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Get one order
+      tags:
+      - orders
+  /payments/cashfree/webhook:
+    post:
+      consumes:
+      - application/json
+      description: 'Server-to-server endpoint called by Cashfree on payment success/failure.
+        Not for client use: there is no bearer auth, trust comes from the `x-webhook-signature`
+        HMAC over the raw body, and `x-idempotency-key` de-duplicates redeliveries.'
+      parameters:
+      - description: Cashfree signature timestamp
+        in: header
+        name: x-webhook-timestamp
+        required: true
+        type: string
+      - description: Base64 HMAC-SHA256 of timestamp+body
+        in: header
+        name: x-webhook-signature
+        required: true
+        type: string
+      - description: Cashfree delivery id, used to drop duplicates
+        in: header
+        name: x-idempotency-key
+        type: string
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+        "400":
+          description: Invalid webhook payload
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Invalid webhook signature
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      summary: Cashfree payment webhook
+      tags:
+      - payments
   /ping:
     get:
       description: Reports whether the service is up.
@@ -940,6 +1429,28 @@ paths:
       summary: Liveness check
       tags:
       - health
+  /products:
+    get:
+      description: Returns the active product catalog with prices. Use a product's
+        `code` as the `productCode` when creating an order.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/credit-report-service_internal_models.Product'
+            type: array
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List purchasable products
+      tags:
+      - orders
   /profile:
     get:
       description: Returns the full account record for the current session.
@@ -997,47 +1508,6 @@ paths:
       security:
       - BearerAuth: []
       summary: Update the authenticated account's profile
-      tags:
-      - profile
-  /profile/agent-code:
-    put:
-      consumes:
-      - application/json
-      description: Sets or updates the agent code for the authenticated account. Non-admin
-        users can only update once. Admins can update anytime.
-      parameters:
-      - description: Agent code
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/internal_handler.updateAgentCodeReq'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_models.Account'
-        "400":
-          description: Validation failed
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-        "401":
-          description: Not authenticated
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-        "404":
-          description: Account not found
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-        "409":
-          description: Agent code can only be updated once
-          schema:
-            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
-      security:
-      - BearerAuth: []
-      summary: Update agent code on profile
       tags:
       - profile
 securityDefinitions:

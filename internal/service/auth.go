@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,9 +27,10 @@ type AuthService struct {
 	otp            *OTPService
 	mailer         Mailer
 	tokens         *TokenService
-	agentSvc       *AgentService
-	admins         []string // auth.admin-emails allowlist; lowercase
-	googleClientID string   // "Web application" OAuth client ID; empty -> disabled
+	sessions       *SessionService
+	coupons        *CouponService // resolves referral codes at signup
+	admins         []string       // auth.admin-emails allowlist; lowercase
+	googleClientID string         // "Web application" OAuth client ID; empty -> disabled
 }
 
 func NewAuthService(
@@ -36,8 +38,9 @@ func NewAuthService(
 	otp *OTPService,
 	mailer Mailer,
 	tokens *TokenService,
+	sessions *SessionService,
+	coupons *CouponService,
 	authCfg config.AuthConfig,
-	agentSvc *AgentService,
 ) *AuthService {
 	admins := make([]string, 0, len(authCfg.AdminEmails))
 	for _, e := range authCfg.AdminEmails {
@@ -50,7 +53,8 @@ func NewAuthService(
 		otp:            otp,
 		mailer:         mailer,
 		tokens:         tokens,
-		agentSvc:       agentSvc,
+		sessions:       sessions,
+		coupons:        coupons,
 		admins:         admins,
 		googleClientID: authCfg.Google.ClientID,
 	}
@@ -63,34 +67,45 @@ type SignupResult struct {
 	Message   string `json:"message"`
 }
 
-// AuthResult carries a session token plus the account (returned on verify/login).
+// AuthResult carries a freshly minted token pair plus the account (returned on
+// verify/login/refresh).
+//
+// RefreshToken is populated by the service on every path, but the handler
+// strips it for web clients and sets an httpOnly cookie instead — a browser
+// must never see a 30-day credential in JS-readable JSON. SessionID is the
+// device this pair belongs to and is not serialized; handlers use it to set
+// cookies and to label the current device.
 type AuthResult struct {
-	Token     string          `json:"token"`
-	ExpiresAt time.Time       `json:"expiresAt"`
-	Account   *models.Account `json:"account"`
+	Token        string          `json:"token"`
+	ExpiresAt    time.Time       `json:"expiresAt"`
+	RefreshToken string          `json:"refreshToken,omitempty"`
+	Account      *models.Account `json:"account"`
+
+	SessionID        int64     `json:"-"`
+	RefreshExpiresAt time.Time `json:"-"`
 }
 
 // Signup creates a PENDING account with an unverified password identity and
 // mails a verification OTP. Re-signing up for an unverified email updates the
-// password and re-issues the OTP. An optional agentCode links the account to
-// the referring agent.
-func (s *AuthService) Signup(ctx context.Context, email, password string, agentCode *string) (*SignupResult, error) {
+// password and re-issues the OTP.
+//
+// An optional referralCode attributes the new account to whoever owns that
+// code. It is resolved before anything is written, so a bad code fails the
+// signup outright rather than silently creating an unattributed account — the
+// referrer would otherwise never know they lost the credit. Attribution only
+// applies to accounts created here; re-signing up on an existing unverified
+// account keeps whatever attribution it already had.
+func (s *AuthService) Signup(
+	ctx context.Context, email, password, referralCode string,
+) (*SignupResult, error) {
 	email = normalizeEmail(email)
 	if err := validatePassword(password); err != nil {
 		return nil, err
 	}
 
-	// Validate agent code if provided.
-	var agentID *int64
-	if agentCode != nil {
-		cleaned := strings.TrimSpace(*agentCode)
-		if cleaned != "" {
-			aid, err := s.agentSvc.ValidateAgentCode(ctx, cleaned)
-			if err != nil {
-				return nil, err
-			}
-			agentID = &aid
-		}
+	referrerID, referrerCode, err := s.coupons.ResolveReferral(ctx, referralCode)
+	if err != nil {
+		return nil, err
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -123,7 +138,11 @@ func (s *AuthService) Signup(ctx context.Context, email, password string, agentC
 		}
 		accountID = existing.AccountID
 	default:
-		acc := &models.Account{Status: models.AccountPending, AgentID: agentID}
+		acc := &models.Account{Status: models.AccountPending}
+		if referrerID != 0 {
+			acc.ReferredByAccountID = &referrerID
+			acc.ReferredByCode = &referrerCode
+		}
 		if err := s.accounts.CreateAccount(ctx, tx, acc); err != nil {
 			return nil, err
 		}
@@ -177,7 +196,9 @@ func (s *AuthService) ResendOTP(ctx context.Context, email string) error {
 
 // VerifyEmail checks the signup OTP; on success it verifies the identity,
 // activates the account, and returns a session token.
-func (s *AuthService) VerifyEmail(ctx context.Context, email, otp string) (*AuthResult, error) {
+func (s *AuthService) VerifyEmail(
+	ctx context.Context, email, otp string, dev models.DeviceInfo,
+) (*AuthResult, error) {
 	email = normalizeEmail(email)
 
 	ch, err := s.accounts.FindActiveChallenge(ctx, email, models.OtpPurposeSignup)
@@ -252,11 +273,13 @@ func (s *AuthService) VerifyEmail(ctx context.Context, email, otp string) (*Auth
 	s.applyAdminRole(ctx, acc)
 
 	slog.Info("email verified", "account_id", acc.ID)
-	return s.issueToken(acc)
+	return s.issueSession(ctx, acc, dev)
 }
 
-// Login verifies email+password and returns a session token.
-func (s *AuthService) Login(ctx context.Context, email, password string) (*AuthResult, error) {
+// Login verifies email+password and opens a session for the device.
+func (s *AuthService) Login(
+	ctx context.Context, email, password string, dev models.DeviceInfo,
+) (*AuthResult, error) {
 	email = normalizeEmail(email)
 
 	ident, err := s.accounts.FindIdentity(ctx, models.ProviderPassword, email)
@@ -286,7 +309,7 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*AuthR
 	}
 	s.applyAdminRole(ctx, acc)
 	slog.Info("login", "account_id", acc.ID, "method", "password")
-	return s.issueToken(acc)
+	return s.issueSession(ctx, acc, dev)
 }
 
 // GetAccount returns the account for an authenticated request.
@@ -332,38 +355,30 @@ func (s *AuthService) UpdateProfile(
 	return acc, nil
 }
 
-// UpdateAgentCode sets or updates the agent on the authenticated account.
-// Non-admin users can only update the agent code once (tracked by agent_code_updated).
-// Admins can update it anytime.
-func (s *AuthService) UpdateAgentCode(ctx context.Context, accountID int64, agentCode string, isAdmin bool) (*models.Account, error) {
+// SetRole grants or revokes a role on an account. Callers must already have
+// gated on models.PermAccountSetRole — the service only validates that the
+// role exists, so an unknown value can never be written to the column.
+func (s *AuthService) SetRole(ctx context.Context, accountID int64, role string) (*models.Account, error) {
+	if _, ok := models.RoleRank(role); !ok {
+		return nil, apperr.NewValidationWith("Validation failed",
+			map[string]string{"role": "unknown role " + strconv.Quote(role)})
+	}
+	if _, err := s.accounts.FindByID(ctx, accountID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, apperr.NewNotFound("Account not found")
+		}
+		return nil, err
+	}
+	if err := s.accounts.SetRole(ctx, accountID, role); err != nil {
+		return nil, err
+	}
 	acc, err := s.accounts.FindByID(ctx, accountID)
-	if errors.Is(err, repository.ErrNotFound) {
-		return nil, apperr.NewNotFound("Account not found")
-	}
 	if err != nil {
 		return nil, err
 	}
-
-	// Non-admin users can only update agent code once.
-	if !isAdmin && acc.AgentCodeUpdated {
-		return nil, apperr.NewConflict("Agent code can only be updated once")
-	}
-
-	agentID, err := s.agentSvc.ValidateAgentCode(ctx, agentCode)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := s.accounts.SetAgentID(ctx, accountID, &agentID, true); err != nil {
-		return nil, err
-	}
-
-	// Re-fetch to return the updated account with the new agent_id.
-	acc, err = s.accounts.FindByID(ctx, accountID)
-	if err != nil {
-		return nil, err
-	}
-	slog.Info("agent code updated", "account_id", accountID, "agent_id", agentID, "is_admin", isAdmin)
+	// The account keeps whatever access its existing tokens carry until they
+	// expire; role lives in the JWT and is only re-read on refresh.
+	slog.Info("role changed", "account_id", accountID, "role", role)
 	return acc, nil
 }
 
@@ -411,12 +426,59 @@ func (s *AuthService) issueAndSend(ctx context.Context, accountID *int64, destin
 	return s.mailer.SendOTP(destination, plain)
 }
 
-func (s *AuthService) issueToken(acc *models.Account) (*AuthResult, error) {
-	tok, err := s.tokens.Issue(acc.ID, acc.Role)
+// issueSession opens a session for the device and mints the access token bound
+// to it. Every successful authentication funnels through here, so a device
+// always ends up in the account's signed-in list.
+func (s *AuthService) issueSession(
+	ctx context.Context, acc *models.Account, dev models.DeviceInfo,
+) (*AuthResult, error) {
+	sess, refresh, err := s.sessions.Start(ctx, acc.ID, dev)
 	if err != nil {
 		return nil, err
 	}
-	return &AuthResult{Token: tok.Token, ExpiresAt: tok.ExpiresAt, Account: acc}, nil
+	tok, err := s.tokens.Issue(acc.ID, acc.Role, sess.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &AuthResult{
+		Token:            tok.Token,
+		ExpiresAt:        tok.ExpiresAt,
+		RefreshToken:     refresh,
+		Account:          acc,
+		SessionID:        sess.ID,
+		RefreshExpiresAt: sess.ExpiresAt,
+	}, nil
+}
+
+// Refresh exchanges a refresh token for a new token pair. The session's
+// account is re-read so a role change lands in the new access token within one
+// refresh cycle rather than waiting for the user to sign in again.
+func (s *AuthService) Refresh(
+	ctx context.Context, refreshToken string, dev models.DeviceInfo,
+) (*AuthResult, error) {
+	sess, next, err := s.sessions.Refresh(ctx, refreshToken, dev)
+	if err != nil {
+		return nil, err
+	}
+	acc, err := s.accounts.FindByID(ctx, sess.AccountID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, apperr.NewUnauthorized("Session expired; please sign in again")
+		}
+		return nil, err
+	}
+	tok, err := s.tokens.Issue(acc.ID, acc.Role, sess.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &AuthResult{
+		Token:            tok.Token,
+		ExpiresAt:        tok.ExpiresAt,
+		RefreshToken:     next,
+		Account:          acc,
+		SessionID:        sess.ID,
+		RefreshExpiresAt: sess.ExpiresAt,
+	}, nil
 }
 
 // applyAdminRole promotes the account to admin if its primary email is on the

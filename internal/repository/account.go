@@ -27,7 +27,7 @@ func (r *AccountRepo) BeginTx(ctx context.Context) (pgx.Tx, error) {
 
 const accountCols = `id, status, role, primary_email, primary_phone,
     first_name, last_name, date_of_birth, profile_completed,
-    agent_id, agent_code_updated, created_at, updated_at`
+    referred_by_account_id, referred_by_code, referred_at, created_at, updated_at`
 
 func (r *AccountRepo) FindByID(ctx context.Context, id int64) (*models.Account, error) {
 	var a models.Account
@@ -58,31 +58,30 @@ func (r *AccountRepo) SetRole(ctx context.Context, accountID int64, role string)
 	return err
 }
 
-// SetAgentID sets or updates the agent_id on an account and marks
-// agent_code_updated. Pass agentID = nil to clear the association.
-func (r *AccountRepo) SetAgentID(ctx context.Context, accountID int64, agentID *int64, codeUpdated bool) error {
-	_, err := r.pool.Exec(ctx,
-		`UPDATE accounts SET agent_id = $2, agent_code_updated = $3, updated_at = now()
-		 WHERE id = $1`,
-		accountID, agentID, codeUpdated)
-	return err
-}
-
 // CreateAccount inserts a new account within a transaction.
+//
+// Referral attribution is written here and nowhere else: it is a fact about
+// how the account came to exist, so it is set once at creation and there is
+// deliberately no update path for it.
 func (r *AccountRepo) CreateAccount(ctx context.Context, tx pgx.Tx, a *models.Account) error {
 	row := tx.QueryRow(ctx,
-		`INSERT INTO accounts (status, primary_email, primary_phone)
-		 VALUES (COALESCE($1, 'PENDING'), $2, $3)
-		 RETURNING id, status, profile_completed, created_at, updated_at`,
+		`INSERT INTO accounts
+		     (status, primary_email, primary_phone,
+		      referred_by_account_id, referred_by_code, referred_at)
+		 VALUES (COALESCE($1, 'PENDING'), $2, $3, $4, $5,
+		         CASE WHEN $4::bigint IS NULL THEN NULL ELSE now() END)
+		 RETURNING id, status, profile_completed, referred_at, created_at, updated_at`,
 		nilString(a.Status), a.PrimaryEmail, a.PrimaryPhone,
+		a.ReferredByAccountID, a.ReferredByCode,
 	)
-	if err := row.Scan(&a.ID, &a.Status, &a.ProfileCompleted, &a.CreatedAt, &a.UpdatedAt); err != nil {
+	if err := row.Scan(&a.ID, &a.Status, &a.ProfileCompleted,
+		&a.ReferredAt, &a.CreatedAt, &a.UpdatedAt); err != nil {
 		return classifyPgErr(err)
 	}
 	return nil
 }
 
-// UpdateAccount saves the mutable account columns (status, contacts, profile, agent).
+// UpdateAccount saves the mutable account columns (status, contacts, profile).
 func (r *AccountRepo) UpdateAccount(ctx context.Context, tx pgx.Tx, a *models.Account) error {
 	_, err := tx.Exec(ctx,
 		`UPDATE accounts SET
@@ -93,13 +92,10 @@ func (r *AccountRepo) UpdateAccount(ctx context.Context, tx pgx.Tx, a *models.Ac
 			     last_name = $6,
 			     date_of_birth = $7,
 			     profile_completed = $8,
-			     agent_id = $9,
-			     agent_code_updated = $10,
 			     updated_at = now()
 			 WHERE id = $1`,
 		a.ID, a.Status, a.PrimaryEmail, a.PrimaryPhone,
 		a.FirstName, a.LastName, a.DateOfBirth, a.ProfileCompleted,
-		a.AgentID, a.AgentCodeUpdated,
 	)
 	return classifyPgErr(err)
 }

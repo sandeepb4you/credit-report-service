@@ -10,27 +10,36 @@ import (
 	"credit-report-service/internal/config"
 )
 
-// TokenService issues and validates HS256 JWTs for authenticated sessions.
-// The subject claim (`sub`) carries the account id; a custom `role` claim
-// carries the account role ("" / RoleUser / RoleAdmin).
+// TokenService issues and validates the short-lived HS256 access JWT. The
+// subject claim (`sub`) carries the account id, `role` the account role, and
+// `sid` the id of the session (device) the token was minted for.
+//
+// Access tokens are deliberately stateless: verification never touches the
+// database. That means a revoked session's access token keeps working until it
+// expires, which is why the TTL is minutes rather than days. The revocable
+// half of the pair is the refresh token — see SessionService.
 type TokenService struct {
 	secret []byte
 	ttl    time.Duration
 }
 
 func NewTokenService(cfg config.AuthConfig) *TokenService {
-	ttl := cfg.JWTTTL
+	ttl := cfg.AccessTTL
 	if ttl <= 0 {
-		ttl = 720 * time.Hour
+		ttl = 15 * time.Minute
 	}
 	return &TokenService{secret: []byte(cfg.JWTSecret), ttl: ttl}
 }
 
-// sessionClaims embeds the standard registered claims and adds a role.
-// Embedding RegisteredClaims means tokens issued before the role claim
-// existed still parse (Role just unmarshals to "").
+// TTL is the lifetime of the access tokens this service issues.
+func (s *TokenService) TTL() time.Duration { return s.ttl }
+
+// sessionClaims embeds the standard registered claims and adds the role and
+// session id. Embedding RegisteredClaims means tokens issued before either
+// custom claim existed still parse (they just unmarshal to the zero value).
 type sessionClaims struct {
-	Role string `json:"role,omitempty"`
+	Role      string `json:"role,omitempty"`
+	SessionID int64  `json:"sid,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -40,12 +49,14 @@ type IssuedToken struct {
 	ExpiresAt time.Time `json:"expiresAt"`
 }
 
-// Issue mints a signed JWT for the given account id + role.
-func (s *TokenService) Issue(accountID int64, role string) (*IssuedToken, error) {
+// Issue mints a signed access token for an account + role, bound to the
+// session (device) it was issued for.
+func (s *TokenService) Issue(accountID int64, role string, sessionID int64) (*IssuedToken, error) {
 	now := time.Now().UTC()
 	exp := now.Add(s.ttl)
 	claims := sessionClaims{
-		Role: role,
+		Role:      role,
+		SessionID: sessionID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   fmt.Sprintf("%d", accountID),
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -60,9 +71,10 @@ func (s *TokenService) Issue(accountID int64, role string) (*IssuedToken, error)
 	return &IssuedToken{Token: signed, ExpiresAt: exp}, nil
 }
 
-// Parse validates a token string and returns the account id and role from its
-// claims. Any failure maps to a 401-style unauthorized error.
-func (s *TokenService) Parse(tokenStr string) (int64, string, error) {
+// Parse validates a token string and returns the account id, role, and
+// session id from its claims. Any failure maps to a 401-style unauthorized
+// error. A zero session id means the token predates session tracking.
+func (s *TokenService) Parse(tokenStr string) (int64, string, int64, error) {
 	claims := &sessionClaims{}
 	_, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -71,11 +83,11 @@ func (s *TokenService) Parse(tokenStr string) (int64, string, error) {
 		return s.secret, nil
 	})
 	if err != nil {
-		return 0, "", apperr.NewUnauthorized("Invalid or expired session")
+		return 0, "", 0, apperr.NewUnauthorized("Invalid or expired session")
 	}
 	var accountID int64
 	if _, err := fmt.Sscanf(claims.Subject, "%d", &accountID); err != nil || accountID <= 0 {
-		return 0, "", apperr.NewUnauthorized("Invalid session subject")
+		return 0, "", 0, apperr.NewUnauthorized("Invalid session subject")
 	}
-	return accountID, claims.Role, nil
+	return accountID, claims.Role, claims.SessionID, nil
 }

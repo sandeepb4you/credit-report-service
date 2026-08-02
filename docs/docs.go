@@ -15,115 +15,14 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
-        "/admin/agents": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Returns all agents with status ACTIVE.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "admin-agents"
-                ],
-                "summary": "List active agents (admin only)",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/credit-report-service_internal_models.Agent"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Not authenticated",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    }
-                }
-            },
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Creates a new agent with a unique referral code.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "admin-agents"
-                ],
-                "summary": "Create an agent (admin only)",
-                "parameters": [
-                    {
-                        "description": "Agent details",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/internal_handler.createAgentReq"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_models.Agent"
-                        }
-                    },
-                    "400": {
-                        "description": "Validation failed",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    },
-                    "401": {
-                        "description": "Not authenticated",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    },
-                    "409": {
-                        "description": "Agent code already exists",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    }
-                }
-            }
-        },
-        "/admin/agents/account/{accountId}/agent-code": {
+        "/admin/accounts/{accountId}/role": {
             "put": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Allows an admin to set or update the agent code for any account by ID. Admins bypass the one-time update limit.",
+                "description": "Grants or revokes a role. 'agent' lets the account issue coupon codes; 'user' is the default. Note that the role rides in the JWT, so a change only takes effect for the target account on its next token refresh — up to one access-token lifetime later.",
                 "consumes": [
                     "application/json"
                 ],
@@ -131,24 +30,24 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "admin-agents"
+                    "admin"
                 ],
-                "summary": "Update agent code for any account (admin only)",
+                "summary": "Set an account's role",
                 "parameters": [
                     {
                         "type": "integer",
-                        "description": "Account ID",
+                        "description": "Account to modify",
                         "name": "accountId",
                         "in": "path",
                         "required": true
                     },
                     {
-                        "description": "Agent code",
+                        "description": "Role to set (user | agent | admin)",
                         "name": "request",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/internal_handler.updateAgentCodeReq"
+                            "$ref": "#/definitions/internal_handler.setRoleReq"
                         }
                     }
                 ],
@@ -160,7 +59,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Validation failed",
+                        "description": "Unknown role / accountId must be an integer",
                         "schema": {
                             "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
@@ -172,215 +71,13 @@ const docTemplate = `{
                         }
                     },
                     "403": {
-                        "description": "Forbidden",
+                        "description": "Missing the 'account:set-role' permission",
                         "schema": {
                             "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "Account not found",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    }
-                }
-            }
-        },
-        "/admin/agents/{id}": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Returns an agent's details along with the number of signups under that agent for a given date range. Query params: from, to (YYYY-MM-DD, optional).",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "admin-agents"
-                ],
-                "summary": "Get agent with signup count (admin only)",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Agent ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Start date (YYYY-MM-DD)",
-                        "name": "from",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "End date (YYYY-MM-DD)",
-                        "name": "to",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_models.AgentWithSignupCount"
-                        }
-                    },
-                    "401": {
-                        "description": "Not authenticated",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    },
-                    "404": {
-                        "description": "Agent not found",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    }
-                }
-            },
-            "put": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Updates an agent's name, email, and/or phone.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "admin-agents"
-                ],
-                "summary": "Update an agent (admin only)",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "Agent ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Agent fields to update",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/internal_handler.updateAgentReq"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_models.Agent"
-                        }
-                    },
-                    "400": {
-                        "description": "Validation failed",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    },
-                    "401": {
-                        "description": "Not authenticated",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    },
-                    "404": {
-                        "description": "Agent not found",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    }
-                }
-            }
-        },
-        "/admin/agents/{id}/status": {
-            "patch": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Sets an agent's status to ACTIVE or INACTIVE.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "admin-agents"
-                ],
-                "summary": "Activate or deactivate an agent (admin only)",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "Agent ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Status",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/internal_handler.setAgentStatusReq"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_models.Agent"
-                        }
-                    },
-                    "400": {
-                        "description": "Validation failed",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    },
-                    "401": {
-                        "description": "Not authenticated",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    },
-                    "404": {
-                        "description": "Agent not found",
                         "schema": {
                             "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
@@ -461,6 +158,30 @@ const docTemplate = `{
                 "summary": "Log in with Google",
                 "parameters": [
                     {
+                        "type": "string",
+                        "description": "Stable per-device UUID",
+                        "name": "X-Device-Id",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Human-readable device name shown in the device list",
+                        "name": "X-Device-Name",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "ios | android | web",
+                        "name": "X-Device-Platform",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "JSON device description, e.g. {\\",
+                        "name": "X-Device-Info",
+                        "in": "header"
+                    },
+                    {
                         "description": "Google ID token",
                         "name": "request",
                         "in": "body",
@@ -506,7 +227,7 @@ const docTemplate = `{
         },
         "/auth/login": {
             "post": {
-                "description": "Verifies email + password and returns a session JWT. Requires the email to be verified.",
+                "description": "Verifies email + password and opens a session for the calling device. Returns a short-lived access JWT plus a refresh token — in the JSON body for mobile clients, or as an httpOnly ` + "`" + `refresh_token` + "`" + ` cookie when ` + "`" + `X-Device-Platform: web` + "`" + `. Send ` + "`" + `X-Device-Id` + "`" + ` (a stable per-device UUID) so repeat logins update one entry in the device list instead of creating a new one.",
                 "consumes": [
                     "application/json"
                 ],
@@ -518,6 +239,30 @@ const docTemplate = `{
                 ],
                 "summary": "Log in with email + password",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Stable per-device UUID",
+                        "name": "X-Device-Id",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Human-readable device name shown in the device list",
+                        "name": "X-Device-Name",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "ios | android | web",
+                        "name": "X-Device-Platform",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "JSON device description, e.g. {\\",
+                        "name": "X-Device-Info",
+                        "in": "header"
+                    },
                     {
                         "description": "Login credentials",
                         "name": "request",
@@ -543,6 +288,40 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Invalid email or password / email not verified",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/logout": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Revokes the session the access token was issued for and clears the web refresh cookie. The access token itself stays valid until it expires (minutes), so clients should discard it too.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Sign out of the current device",
+                "responses": {
+                    "200": {
+                        "description": "{\\\"message\\\": \\\"Signed out\\\"}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
                         "schema": {
                             "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
@@ -605,6 +384,184 @@ const docTemplate = `{
                 }
             }
         },
+        "/auth/refresh": {
+            "post": {
+                "description": "Rotates the refresh token and issues a fresh access token. Mobile clients send the token in the JSON body; web clients send nothing — the httpOnly ` + "`" + `refresh_token` + "`" + ` cookie is read automatically. The old refresh token is invalidated on every call, so replaying one revokes the whole session as a theft signal. Public endpoint: the refresh token itself is the credential.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Exchange a refresh token for a new token pair",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Stable per-device UUID",
+                        "name": "X-Device-Id",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "ios | android | web",
+                        "name": "X-Device-Platform",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "JSON device description, e.g. {\\",
+                        "name": "X-Device-Info",
+                        "in": "header"
+                    },
+                    {
+                        "description": "Refresh token (omit for web cookie clients)",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.refreshReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_service.AuthResult"
+                        }
+                    },
+                    "401": {
+                        "description": "Missing, expired, replayed, or unknown refresh token",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/sessions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the account's active sessions, most recently used first. The entry matching the caller's own access token is flagged with ` + "`" + `current: true` + "`" + `.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "List signed-in devices",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/credit-report-service_internal_service.SessionView"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Revokes all of the account's sessions except the caller's own. Use after a password change or when a device is lost.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Sign out every other device",
+                "responses": {
+                    "200": {
+                        "description": "{\\\"revoked\\\": 3}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "integer"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/sessions/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Revokes a single session by id. Only the caller's own sessions are reachable — an id belonging to another account returns 404, not 403, so session ids cannot be probed.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Sign out one device",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Session id from GET /auth/sessions",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{\\\"message\\\": \\\"Device signed out\\\"}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "id must be an integer",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No such active session",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/signup": {
             "post": {
                 "description": "Creates a PENDING account with an unverified password identity and emails a verification OTP. Re-signing up for an unverified email updates the password and re-issues the OTP.",
@@ -653,7 +610,7 @@ const docTemplate = `{
         },
         "/auth/verify-email": {
             "post": {
-                "description": "Checks the signup OTP; on success verifies the identity, activates the account, and returns a session JWT.",
+                "description": "Checks the signup OTP; on success verifies the identity, activates the account, and opens a session for the calling device. Token delivery follows the same rules as POST /auth/login.",
                 "consumes": [
                     "application/json"
                 ],
@@ -665,6 +622,30 @@ const docTemplate = `{
                 ],
                 "summary": "Verify email with OTP",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Stable per-device UUID",
+                        "name": "X-Device-Id",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Human-readable device name shown in the device list",
+                        "name": "X-Device-Name",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "ios | android | web",
+                        "name": "X-Device-Platform",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "JSON device description, e.g. {\\",
+                        "name": "X-Device-Info",
+                        "in": "header"
+                    },
                     {
                         "description": "Email + OTP",
                         "name": "request",
@@ -690,6 +671,258 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Email already registered",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/coupons": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the coupons the caller issued, newest first. Holders of 'coupon:admin' (admins) see every coupon instead.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "coupons"
+                ],
+                "summary": "List coupons",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/credit-report-service_internal_models.Coupon"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing the 'coupon:manage' permission",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a percentage-discount coupon owned by the calling account. Requires the 'coupon:create' permission, held by agents and admins. Omit productCode to have it apply to every product; omit maxRedemptions for unlimited use. The discount is applied server-side at checkout — clients never send prices.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "coupons"
+                ],
+                "summary": "Issue a coupon code",
+                "parameters": [
+                    {
+                        "description": "Coupon definition",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.createCouponReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.Coupon"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing the 'coupon:create' permission",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "That coupon code is already taken",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/coupons/quote": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "What the payment screen calls when a customer enters a code. Returns the list price, the discount, and the payable total, all computed server-side. Reserves nothing — the coupon is only consumed when the order is created, so a quote can go stale if the last redemption is taken in between. Any authenticated user may call it.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "coupons"
+                ],
+                "summary": "Price a product with a coupon applied",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Coupon code",
+                        "name": "code",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Product being purchased",
+                        "name": "productCode",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_service.Quote"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid coupon or unknown product",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/coupons/referral": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the caller's permanent referral code, creating it on the first call. Anyone new who signs up with this code is attributed to the caller — mainly how agents recruit users. Referral codes carry no discount, never expire, and can be used any number of times; each account has exactly one. Safe to call repeatedly: after the first call it is a plain lookup.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "coupons"
+                ],
+                "summary": "Get your referral code",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.Coupon"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Could not allocate a code; retry",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/coupons/{code}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Stops future use of a coupon. Agents may only revoke their own; a code belonging to someone else reads as 404 so the endpoint cannot be used to discover which codes exist. Orders already placed keep their discount — revoking is not retroactive.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "coupons"
+                ],
+                "summary": "Revoke a coupon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Coupon code",
+                        "name": "code",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{\\\"message\\\": \\\"Coupon revoked\\\"}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed code",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing the 'coupon:manage' permission",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No such active coupon",
                         "schema": {
                             "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
@@ -946,6 +1179,210 @@ const docTemplate = `{
                 }
             }
         },
+        "/orders": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns every order placed by the authenticated account, newest first.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "orders"
+                ],
+                "summary": "List the authenticated account's orders",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/credit-report-service_internal_models.Order"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates an order for the given product against the authenticated account and registers it with Cashfree. The response carries ` + "`" + `paymentSessionId` + "`" + ` and ` + "`" + `mode` + "`" + `, which the frontend passes to the Cashfree JS SDK to open checkout.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "orders"
+                ],
+                "summary": "Create an order and start checkout",
+                "parameters": [
+                    {
+                        "description": "Product to purchase",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.createOrderReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_service.PurchaseResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid JSON body / productCode missing or unknown",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Product is not available for purchase",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "502": {
+                        "description": "Payment gateway could not create the order",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/orders/{orderId}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns a single order owned by the authenticated account. If the order is still awaiting payment its status is reconciled against Cashfree before being returned, so this is the endpoint to poll after checkout closes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "orders"
+                ],
+                "summary": "Get one order",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Order id returned from order creation",
+                        "name": "orderId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.Order"
+                        }
+                    },
+                    "400": {
+                        "description": "orderId is not valid",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Order not found",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/payments/cashfree/webhook": {
+            "post": {
+                "description": "Server-to-server endpoint called by Cashfree on payment success/failure. Not for client use: there is no bearer auth, trust comes from the ` + "`" + `x-webhook-signature` + "`" + ` HMAC over the raw body, and ` + "`" + `x-idempotency-key` + "`" + ` de-duplicates redeliveries.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "text/plain"
+                ],
+                "tags": [
+                    "payments"
+                ],
+                "summary": "Cashfree payment webhook",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cashfree signature timestamp",
+                        "name": "x-webhook-timestamp",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Base64 HMAC-SHA256 of timestamp+body",
+                        "name": "x-webhook-signature",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Cashfree delivery id, used to drop duplicates",
+                        "name": "x-idempotency-key",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid webhook payload",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid webhook signature",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/ping": {
             "get": {
                 "description": "Reports whether the service is up.",
@@ -964,6 +1401,40 @@ const docTemplate = `{
                             "additionalProperties": {
                                 "type": "string"
                             }
+                        }
+                    }
+                }
+            }
+        },
+        "/products": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the active product catalog with prices. Use a product's ` + "`" + `code` + "`" + ` as the ` + "`" + `productCode` + "`" + ` when creating an order.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "orders"
+                ],
+                "summary": "List purchasable products",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/credit-report-service_internal_models.Product"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
                     }
                 }
@@ -1060,69 +1531,6 @@ const docTemplate = `{
                     }
                 }
             }
-        },
-        "/profile/agent-code": {
-            "put": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Sets or updates the agent code for the authenticated account. Non-admin users can only update once. Admins can update anytime.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "profile"
-                ],
-                "summary": "Update agent code on profile",
-                "parameters": [
-                    {
-                        "description": "Agent code",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/internal_handler.updateAgentCodeReq"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_models.Account"
-                        }
-                    },
-                    "400": {
-                        "description": "Validation failed",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    },
-                    "401": {
-                        "description": "Not authenticated",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    },
-                    "404": {
-                        "description": "Account not found",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    },
-                    "409": {
-                        "description": "Agent code can only be updated once",
-                        "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
-                        }
-                    }
-                }
-            }
         }
     },
     "definitions": {
@@ -1147,12 +1555,6 @@ const docTemplate = `{
         "credit-report-service_internal_models.Account": {
             "type": "object",
             "properties": {
-                "agentCodeUpdated": {
-                    "type": "boolean"
-                },
-                "agentId": {
-                    "type": "integer"
-                },
                 "createdAt": {
                     "type": "string"
                 },
@@ -1177,6 +1579,16 @@ const docTemplate = `{
                 "profileCompleted": {
                     "type": "boolean"
                 },
+                "referredAt": {
+                    "type": "string"
+                },
+                "referredByAccountId": {
+                    "description": "Referral attribution, set once at signup and never changed.",
+                    "type": "integer"
+                },
+                "referredByCode": {
+                    "type": "string"
+                },
                 "role": {
                     "type": "string"
                 },
@@ -1188,36 +1600,28 @@ const docTemplate = `{
                 }
             }
         },
-        "credit-report-service_internal_models.Agent": {
+        "credit-report-service_internal_models.AgentMeta": {
             "type": "object",
             "properties": {
-                "code": {
+                "browser": {
                     "type": "string"
                 },
-                "createdAt": {
+                "browserVersion": {
                     "type": "string"
                 },
-                "email": {
+                "deviceType": {
+                    "description": "mobile | tablet | desktop",
                     "type": "string"
                 },
-                "id": {
-                    "type": "integer"
-                },
-                "name": {
+                "os": {
                     "type": "string"
                 },
-                "phone": {
-                    "type": "string"
-                },
-                "status": {
-                    "type": "string"
-                },
-                "updatedAt": {
+                "osVersion": {
                     "type": "string"
                 }
             }
         },
-        "credit-report-service_internal_models.AgentWithSignupCount": {
+        "credit-report-service_internal_models.Coupon": {
             "type": "object",
             "properties": {
                 "code": {
@@ -1226,25 +1630,42 @@ const docTemplate = `{
                 "createdAt": {
                     "type": "string"
                 },
-                "email": {
-                    "type": "string"
+                "createdBy": {
+                    "description": "CreatedBy is the issuing account — the agent this redemption attributes to.",
+                    "type": "integer"
+                },
+                "discountPercent": {
+                    "type": "number"
                 },
                 "id": {
                     "type": "integer"
                 },
-                "name": {
+                "kind": {
                     "type": "string"
                 },
-                "phone": {
-                    "type": "string"
-                },
-                "signupCount": {
+                "maxRedemptions": {
                     "type": "integer"
                 },
-                "status": {
+                "perAccountLimit": {
+                    "type": "integer"
+                },
+                "productCode": {
+                    "description": "ProductCode nil means the coupon applies to every product.",
+                    "type": "string"
+                },
+                "redemptionCount": {
+                    "type": "integer"
+                },
+                "revokedAt": {
                     "type": "string"
                 },
                 "updatedAt": {
+                    "type": "string"
+                },
+                "validFrom": {
+                    "type": "string"
+                },
+                "validUntil": {
                     "type": "string"
                 }
             }
@@ -1293,6 +1714,26 @@ const docTemplate = `{
                 }
             }
         },
+        "credit-report-service_internal_models.DeviceMeta": {
+            "type": "object",
+            "properties": {
+                "agent": {
+                    "description": "Agent is parsed by the server from the User-Agent header. Best-effort:\nunrecognized agents leave fields empty rather than guessing.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/credit-report-service_internal_models.AgentMeta"
+                        }
+                    ]
+                },
+                "client": {
+                    "description": "Client is whatever the app declared via X-Device-Info: make, model, OS\nversion, app version, and any extra keys it cares to send. Free-form but\nbounded (see middleware.parseDeviceInfoHeader) because it is user input.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "credit-report-service_internal_models.KYCRecord": {
             "type": "object",
             "properties": {
@@ -1337,6 +1778,80 @@ const docTemplate = `{
                 }
             }
         },
+        "credit-report-service_internal_models.Order": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "Amount is what the customer is charged, i.e. already net of any coupon.\nDiscountAmount and CouponCode are snapshots of how it got there, so the\nlist price is Amount + DiscountAmount and later edits to the coupon can\nnever rewrite this order.",
+                    "type": "number"
+                },
+                "cfOrderId": {
+                    "type": "string"
+                },
+                "couponCode": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "discountAmount": {
+                    "type": "number"
+                },
+                "failureReason": {
+                    "type": "string"
+                },
+                "orderId": {
+                    "type": "string"
+                },
+                "paidAt": {
+                    "type": "string"
+                },
+                "paymentMethod": {
+                    "type": "string"
+                },
+                "paymentSessionId": {
+                    "type": "string"
+                },
+                "productCode": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "credit-report-service_internal_models.Product": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "amount": {
+                    "type": "number"
+                },
+                "code": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
         "credit-report-service_internal_service.AuthResult": {
             "type": "object",
             "properties": {
@@ -1344,6 +1859,9 @@ const docTemplate = `{
                     "$ref": "#/definitions/credit-report-service_internal_models.Account"
                 },
                 "expiresAt": {
+                    "type": "string"
+                },
+                "refreshToken": {
                     "type": "string"
                 },
                 "token": {
@@ -1355,6 +1873,68 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "device_ip": {
+                    "type": "string"
+                }
+            }
+        },
+        "credit-report-service_internal_service.PurchaseResult": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "Amount is the charged total, already net of any coupon. OriginalAmount\nand DiscountAmount let the payment screen show the saving without\nrecomputing it — and without being trusted to.",
+                    "type": "number"
+                },
+                "cfOrderId": {
+                    "type": "string"
+                },
+                "couponCode": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "discountAmount": {
+                    "type": "number"
+                },
+                "mode": {
+                    "type": "string"
+                },
+                "orderId": {
+                    "type": "string"
+                },
+                "originalAmount": {
+                    "type": "number"
+                },
+                "paymentSessionId": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "credit-report-service_internal_service.Quote": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "discountAmount": {
+                    "type": "number"
+                },
+                "discountPercent": {
+                    "type": "number"
+                },
+                "originalAmount": {
+                    "type": "number"
+                },
+                "payableAmount": {
+                    "type": "number"
+                },
+                "productCode": {
                     "type": "string"
                 }
             }
@@ -1410,6 +1990,44 @@ const docTemplate = `{
                 }
             }
         },
+        "credit-report-service_internal_service.SessionView": {
+            "type": "object",
+            "properties": {
+                "current": {
+                    "description": "Current marks the session the requesting device is using right now, so\nthe UI can label it and warn before revoking it.",
+                    "type": "boolean"
+                },
+                "deviceInfo": {
+                    "description": "DeviceInfo is the make/model/OS breakdown, split into what the client\ndeclared and what the server parsed from the User-Agent.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/credit-report-service_internal_models.DeviceMeta"
+                        }
+                    ]
+                },
+                "deviceName": {
+                    "type": "string"
+                },
+                "expiresAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "ip": {
+                    "type": "string"
+                },
+                "lastUsedAt": {
+                    "type": "string"
+                },
+                "platform": {
+                    "type": "string"
+                },
+                "signedInAt": {
+                    "type": "string"
+                }
+            }
+        },
         "credit-report-service_internal_service.SignupResult": {
             "type": "object",
             "properties": {
@@ -1424,24 +2042,50 @@ const docTemplate = `{
                 }
             }
         },
-        "internal_handler.createAgentReq": {
+        "internal_handler.createCouponReq": {
             "type": "object",
             "properties": {
                 "code": {
                     "type": "string",
-                    "example": "AGENT001"
+                    "example": "SAVE20"
                 },
-                "email": {
-                    "type": "string",
-                    "example": "john@example.com"
+                "discountPercent": {
+                    "type": "number",
+                    "example": 20
                 },
-                "name": {
-                    "type": "string",
-                    "example": "John Doe"
+                "maxRedemptions": {
+                    "type": "integer",
+                    "example": 100
                 },
-                "phone": {
+                "perAccountLimit": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "productCode": {
                     "type": "string",
-                    "example": "+919876543210"
+                    "example": "CREDIT_ANALYSIS"
+                },
+                "validFrom": {
+                    "type": "string",
+                    "example": "2026-08-01T00:00:00Z"
+                },
+                "validUntil": {
+                    "type": "string",
+                    "example": "2026-12-31T23:59:59Z"
+                }
+            }
+        },
+        "internal_handler.createOrderReq": {
+            "type": "object",
+            "properties": {
+                "couponCode": {
+                    "description": "CouponCode is optional. Only the code is accepted — the discount and the\nresulting total are computed server-side from the catalog price, so a\ntampered request cannot change what is charged.",
+                    "type": "string",
+                    "example": "SAVE20"
+                },
+                "productCode": {
+                    "type": "string",
+                    "example": "CREDIT_ANALYSIS"
                 }
             }
         },
@@ -1451,6 +2095,11 @@ const docTemplate = `{
                 "idToken": {
                     "type": "string",
                     "example": "eyJhbGciOiJSUzI1NiIs..."
+                },
+                "referralCode": {
+                    "description": "ReferralCode is only honoured when this login creates a new account.",
+                    "type": "string",
+                    "example": "REF-7K2QM4XZ"
                 }
             }
         },
@@ -1467,6 +2116,15 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_handler.refreshReq": {
+            "type": "object",
+            "properties": {
+                "refreshToken": {
+                    "type": "string",
+                    "example": "rt_8Kx3..."
+                }
+            }
+        },
         "internal_handler.resendReq": {
             "type": "object",
             "properties": {
@@ -1476,22 +2134,18 @@ const docTemplate = `{
                 }
             }
         },
-        "internal_handler.setAgentStatusReq": {
+        "internal_handler.setRoleReq": {
             "type": "object",
             "properties": {
-                "status": {
+                "role": {
                     "type": "string",
-                    "example": "ACTIVE"
+                    "example": "agent"
                 }
             }
         },
         "internal_handler.signupReq": {
             "type": "object",
             "properties": {
-                "agentCode": {
-                    "type": "string",
-                    "example": "AGENT001"
-                },
                 "email": {
                     "type": "string",
                     "example": "user@example.com"
@@ -1499,6 +2153,11 @@ const docTemplate = `{
                 "password": {
                     "type": "string",
                     "example": "hunter2pass"
+                },
+                "referralCode": {
+                    "description": "ReferralCode is optional and attributes the new account to whoever owns\nit. An invalid code fails the signup rather than being ignored.",
+                    "type": "string",
+                    "example": "REF-7K2QM4XZ"
                 }
             }
         },
@@ -1508,32 +2167,6 @@ const docTemplate = `{
                 "pan": {
                     "type": "string",
                     "example": "ABCDE1234F"
-                }
-            }
-        },
-        "internal_handler.updateAgentCodeReq": {
-            "type": "object",
-            "properties": {
-                "agentCode": {
-                    "type": "string",
-                    "example": "AGENT001"
-                }
-            }
-        },
-        "internal_handler.updateAgentReq": {
-            "type": "object",
-            "properties": {
-                "email": {
-                    "type": "string",
-                    "example": "jane@example.com"
-                },
-                "name": {
-                    "type": "string",
-                    "example": "Jane Doe"
-                },
-                "phone": {
-                    "type": "string",
-                    "example": "+919876543210"
                 }
             }
         },

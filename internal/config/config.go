@@ -25,6 +25,21 @@ type Config struct {
 	Registration RegistrationConfig `mapstructure:"registration"`
 	Digitap      DigitapConfig      `mapstructure:"digitap"`
 	Log          LogConfig          `mapstructure:"log"`
+	Cashfree     CashfreeConfig     `mapstructure:"cashfree"`
+}
+
+// CashfreeConfig holds Cashfree Payment Gateway credentials and endpoints.
+// When ClientID is empty the service falls back to a log-only stub gateway
+// (mirroring the mail stub) so local dev works without credentials.
+type CashfreeConfig struct {
+	Mode         string        `mapstructure:"mode"`     // sandbox | production
+	BaseURL      string        `mapstructure:"base-url"` // optional; derived from mode when empty
+	ClientID     string        `mapstructure:"client-id"`
+	ClientSecret string        `mapstructure:"client-secret"`
+	APIVersion   string        `mapstructure:"api-version"`
+	ReturnURL    string        `mapstructure:"return-url"` // browser redirect after payment
+	NotifyURL    string        `mapstructure:"notify-url"` // public URL of our webhook endpoint
+	Timeout      time.Duration `mapstructure:"timeout"`
 }
 
 // LogConfig holds structured-logging settings (log/slog). Level is one of
@@ -44,13 +59,23 @@ type DigitapConfig struct {
 	Timeout      time.Duration `mapstructure:"timeout"`
 }
 
-// AuthConfig holds JWT signing settings for the email/password auth flow.
+// AuthConfig holds token and session settings for the auth flows.
+//
+// Sessions are a two-token scheme: a stateless access JWT that lives for
+// AccessTTL (minutes — this bounds how long a revoked device keeps working)
+// and an opaque refresh token that lives for RefreshTTL and is revocable per
+// device. Keep AccessTTL short; it is the revocation lag.
 type AuthConfig struct {
-	JWTSecret   string        `mapstructure:"jwt-secret"`
-	JWTTTL      time.Duration `mapstructure:"jwt-ttl"`
-	OTP         OTPConfig     `mapstructure:"otp"`
-	AdminEmails []string      `mapstructure:"admin-emails"`
-	Google      GoogleConfig  `mapstructure:"google"`
+	JWTSecret  string        `mapstructure:"jwt-secret"`
+	AccessTTL  time.Duration `mapstructure:"access-ttl"`
+	RefreshTTL time.Duration `mapstructure:"refresh-ttl"`
+	// CookieSecure sets the Secure flag on the web refresh-token cookie. Must
+	// stay true in production; set false only for plain-http local dev, where
+	// the browser would otherwise drop the cookie.
+	CookieSecure bool         `mapstructure:"cookie-secure"`
+	OTP          OTPConfig    `mapstructure:"otp"`
+	AdminEmails  []string     `mapstructure:"admin-emails"`
+	Google       GoogleConfig `mapstructure:"google"`
 }
 
 // GoogleConfig holds settings for the Google OAuth ID-token login flow. The
@@ -65,6 +90,19 @@ type GoogleConfig struct {
 type ServerConfig struct {
 	Port           int    `mapstructure:"port"`
 	MaxRequestBody string `mapstructure:"max-request-body"`
+	// Comma-separated list of allowed CORS origins, or "*" for any.
+	CORSOrigins string `mapstructure:"cors-origins"`
+	// TrustedProxies lists the IPs or CIDRs of load balancers / reverse proxies
+	// in front of this service. Only when the peer is on this list does the
+	// server believe X-Forwarded-For and report the real client IP; otherwise
+	// c.IP() is the socket peer, which behind a proxy means every session
+	// records the balancer's address.
+	//
+	// Empty (the default) means "no proxy" — correct for local dev and direct
+	// exposure, wrong the moment you deploy behind an ALB / nginx / Cloudflare.
+	// Never set this to 0.0.0.0/0: that lets any client forge its own IP.
+	// Set via SERVER_TRUSTED_PROXIES=10.0.0.0/8,192.168.1.5
+	TrustedProxies []string `mapstructure:"trusted-proxies"`
 }
 
 type DBConfig struct {
@@ -157,25 +195,37 @@ func Load(profile string) (*Config, error) {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
 
-	// Viper won't split a comma-separated env value into a slice, so handle
-	// AUTH_ADMIN_EMAILS explicitly. The file form is already a YAML list.
+	// Viper won't split a comma-separated env value into a slice, so handle the
+	// list-valued keys explicitly. The file form is already a YAML list.
 	if raw := os.Getenv("AUTH_ADMIN_EMAILS"); raw != "" {
-		parts := strings.Split(raw, ",")
-		out := make([]string, 0, len(parts))
-		for _, p := range parts {
-			if t := strings.TrimSpace(p); t != "" {
-				out = append(out, t)
-			}
-		}
-		cfg.Auth.AdminEmails = out
+		cfg.Auth.AdminEmails = splitList(raw)
+	}
+	if raw := os.Getenv("SERVER_TRUSTED_PROXIES"); raw != "" {
+		cfg.Server.TrustedProxies = splitList(raw)
 	}
 
 	return &cfg, nil
 }
 
+// splitList parses a comma-separated env value, dropping blanks.
+func splitList(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.port", 8080)
 	v.SetDefault("server.max-request-body", "10MB")
+	v.SetDefault("server.cors-origins", "*")
+	// No proxy trusted by default: X-Forwarded-For is ignored and the socket
+	// peer is the client IP. Set this in any environment behind a load balancer.
+	v.SetDefault("server.trusted-proxies", []string{})
 
 	v.SetDefault("db.max-pool-size", 10)
 	v.SetDefault("db.min-idle", 2)
@@ -184,7 +234,14 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("mail.from", "Scorr.club <noreply@scorr.club>")
 
 	v.SetDefault("auth.jwt-secret", "dev-insecure-change-me")
-	v.SetDefault("auth.jwt-ttl", "720h") // 30 days
+	// Access token: short by design. This is the window in which a revoked
+	// device can still call the API, so don't stretch it for convenience —
+	// clients refresh silently on 401.
+	v.SetDefault("auth.access-ttl", "15m")
+	// Refresh token: how long a device stays signed in without re-entering
+	// credentials. Rotated on every use.
+	v.SetDefault("auth.refresh-ttl", "720h") // 30 days
+	v.SetDefault("auth.cookie-secure", true)
 	v.SetDefault("auth.otp.length", 6)
 	v.SetDefault("auth.otp.ttl", "10m")
 	v.SetDefault("auth.otp.resend-cooldown", "60s")
@@ -221,14 +278,19 @@ func setDefaults(v *viper.Viper) {
 	// unrecognized value; set "json" for production/structured ingestion.
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "text")
+
+	v.SetDefault("cashfree.mode", "sandbox")
+	v.SetDefault("cashfree.api-version", "2025-01-01")
+	v.SetDefault("cashfree.timeout", "15s")
 }
 
 func allKeys() []string {
 	return []string{
-		"server.port", "server.max-request-body",
+		"server.port", "server.max-request-body", "server.cors-origins",
+		"server.trusted-proxies",
 		"db.url", "db.username", "db.password", "db.dsn", "db.max-pool-size", "db.min-idle",
 		"mail.host", "mail.port", "mail.username", "mail.password", "mail.from",
-		"auth.jwt-secret", "auth.jwt-ttl",
+		"auth.jwt-secret", "auth.access-ttl", "auth.refresh-ttl", "auth.cookie-secure",
 		"auth.otp.length", "auth.otp.ttl", "auth.otp.resend-cooldown",
 		"auth.otp.max-attempts", "auth.otp.max-sends",
 		"auth.admin-emails",
@@ -242,6 +304,9 @@ func allKeys() []string {
 		"registration.ocr.provider", "registration.ocr.min-confidence",
 		"digitap.base-url", "digitap.client-id", "digitap.client-secret", "digitap.timeout",
 		"log.level", "log.format",
+		"cashfree.mode", "cashfree.base-url", "cashfree.client-id",
+		"cashfree.client-secret", "cashfree.api-version",
+		"cashfree.return-url", "cashfree.notify-url", "cashfree.timeout",
 	}
 }
 
