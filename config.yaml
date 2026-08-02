@@ -23,7 +23,13 @@ mail:
 auth:
   # HS256 signing secret for login JWTs. OVERRIDE in prod via AUTH_JWT_SECRET.
   jwt-secret: "dev-insecure-change-me"
-  jwt-ttl: 720h   # 30 days
+  # Access JWT lifetime. This is also the revocation lag (a revoked device keeps
+  # working until its access token expires), so keep it SHORT in production —
+  # clients refresh silently on 401. Lengthened to 1 week here for convenient
+  # manual testing. Override in prod via AUTH_ACCESS_TTL (e.g. 15m).
+  access-ttl: 168h   # 1 week
+  # Refresh token lifetime: how long a device stays signed in without re-login.
+  refresh-ttl: 720h  # 30 days
   # Google OAuth ID-token login. Set to the "Web application" OAuth client ID
   # from Google Cloud Console; both the Android and iOS Google Sign-In SDKs
   # must use it as serverClientID so all ID tokens share one `aud`.

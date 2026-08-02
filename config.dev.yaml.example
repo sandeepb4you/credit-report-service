@@ -34,7 +34,11 @@ mail:
 auth:
   # HS256 signing secret for login JWTs. OVERRIDE in prod via AUTH_JWT_SECRET.
   jwt-secret: ""
-  jwt-ttl: 720h   # 30 days
+  # Access JWT lifetime = the revocation lag. Keep it SHORT in production
+  # (clients refresh silently on 401); 1 week here for convenient dev/testing.
+  access-ttl: 168h   # 1 week
+  # Refresh token lifetime: how long a device stays signed in without re-login.
+  refresh-ttl: 720h  # 30 days
   otp:
     length: 6
     ttl: 10m
