@@ -35,6 +35,9 @@ var otpCodeRE = regexp.MustCompile(`^\d{4,8}$`)
 type signupReq struct {
 	Email    string `json:"email"    example:"user@example.com"`
 	Password string `json:"password" example:"hunter2pass"`
+	// ReferralCode is optional and attributes the new account to whoever owns
+	// it. An invalid code fails the signup rather than being ignored.
+	ReferralCode string `json:"referralCode" example:"REF-7K2QM4XZ"`
 }
 
 // Signup godoc
@@ -59,7 +62,7 @@ func (h *AuthHandler) Signup(c *fiber.Ctx) error {
 		return apperr.NewValidationWith("Validation failed",
 			map[string]string{"email": "email must be valid"})
 	}
-	res, err := h.svc.Signup(c.Context(), req.Email, req.Password)
+	res, err := h.svc.Signup(c.Context(), req.Email, req.Password, req.ReferralCode)
 	if err != nil {
 		return err
 	}
@@ -194,6 +197,8 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 
 type googleLoginReq struct {
 	IDToken string `json:"idToken" example:"eyJhbGciOiJSUzI1NiIs..."`
+	// ReferralCode is only honoured when this login creates a new account.
+	ReferralCode string `json:"referralCode" example:"REF-7K2QM4XZ"`
 }
 
 // GoogleLogin godoc
@@ -219,7 +224,7 @@ func (h *AuthHandler) GoogleLogin(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return apperr.NewValidation("invalid JSON body")
 	}
-	res, err := h.svc.GoogleLogin(c.Context(), req.IDToken, middleware.Device(c))
+	res, err := h.svc.GoogleLogin(c.Context(), req.IDToken, req.ReferralCode, middleware.Device(c))
 	if err != nil {
 		return err
 	}

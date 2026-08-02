@@ -28,8 +28,11 @@ import (
 // Because Google is the identity provider, the google identity is created as
 // verified=true; no email OTP is sent. Email verification only governs the
 // password provider.
+// An optional referralCode attributes a newly created account to whoever owns
+// that code. It is ignored on subsequent logins: attribution is a fact about
+// how an account came to exist, so it is only ever set at creation.
 func (s *AuthService) GoogleLogin(
-	ctx context.Context, idToken string, dev models.DeviceInfo,
+	ctx context.Context, idToken, referralCode string, dev models.DeviceInfo,
 ) (*AuthResult, error) {
 	if s.googleClientID == "" {
 		// Not configured: surface as 503 so the client can distinguish a disabled
@@ -58,7 +61,13 @@ func (s *AuthService) GoogleLogin(
 	first, _ := payload.Claims["given_name"].(string)
 	last, _ := payload.Claims["family_name"].(string)
 
-	acc, err := s.resolveGoogleAccount(ctx, sub, email, emailVerified, first, last)
+	referrerID, referrerCode, err := s.coupons.ResolveReferral(ctx, referralCode)
+	if err != nil {
+		return nil, err
+	}
+
+	acc, err := s.resolveGoogleAccount(ctx, sub, email, emailVerified, first, last,
+		referrerID, referrerCode)
 	if err != nil {
 		return nil, err
 	}
@@ -71,6 +80,7 @@ func (s *AuthService) GoogleLogin(
 // verified Google payload, following the linking rules in GoogleLogin.
 func (s *AuthService) resolveGoogleAccount(
 	ctx context.Context, sub, email string, emailVerified bool, first, last string,
+	referrerID int64, referrerCode string,
 ) (*models.Account, error) {
 	// 1. Existing google identity for this subject -> reuse its account.
 	if googleIdent, err := s.accounts.FindIdentity(ctx, models.ProviderGoogle, sub); err == nil {
@@ -108,6 +118,12 @@ func (s *AuthService) resolveGoogleAccount(
 		FirstName:        nullable(first),
 		LastName:         nullable(last),
 		ProfileCompleted: strings.TrimSpace(first) != "" && strings.TrimSpace(last) != "",
+	}
+	// Only a brand-new account is attributed; the two paths above reuse an
+	// existing one and leave its original attribution alone.
+	if referrerID != 0 {
+		acc.ReferredByAccountID = &referrerID
+		acc.ReferredByCode = &referrerCode
 	}
 	if emailVerified && email != "" {
 		acc.PrimaryEmail = &email

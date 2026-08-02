@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"log/slog"
 	"regexp"
@@ -108,6 +109,7 @@ func (s *CouponService) Create(
 	}
 
 	c := &models.Coupon{
+		Kind:            models.CouponDiscount,
 		Code:            code,
 		CreatedBy:       creatorID,
 		DiscountPercent: in.DiscountPercent,
@@ -187,6 +189,8 @@ func (s *CouponService) Quote(ctx context.Context, code, productCode string) (*Q
 	if err != nil {
 		return nil, err
 	}
+	// AppliesTo already rejects referral codes — they attribute signups, they
+	// are not spendable at checkout.
 	if !c.UsableAt(time.Now().UTC()) || c.Exhausted() || !c.AppliesTo(product.Code) {
 		return nil, couponRejected()
 	}
@@ -275,6 +279,115 @@ func (s *CouponService) Release(ctx context.Context, orderUID string) {
 	if released {
 		slog.Info("coupon redemption released", "order_uid", orderUID)
 	}
+}
+
+// ---- referral codes ------------------------------------------------------
+
+// referralCodeAttempts bounds the retry loop when a generated code collides.
+// With 40 bits of randomness a collision is already remote; three attempts
+// makes exhausting them effectively impossible while keeping the failure
+// bounded rather than looping forever.
+const referralCodeAttempts = 3
+
+// ReferralCode returns the account's referral code, minting one on first use.
+//
+// Codes are permanent and unique per account, so this is safe to call on every
+// page load — the second and later calls are a plain lookup. Minting is
+// racy-by-nature (two concurrent first calls), which the partial unique index
+// on (created_by) WHERE kind='referral' settles: the loser sees a conflict and
+// re-reads the winner's code rather than creating a second one.
+func (s *CouponService) ReferralCode(ctx context.Context, accountID int64) (*models.Coupon, error) {
+	existing, err := s.coupons.FindLiveReferralByOwner(ctx, accountID)
+	if err == nil {
+		return existing, nil
+	}
+	if !errors.Is(err, repository.ErrNotFound) {
+		return nil, err
+	}
+
+	for attempt := 0; attempt < referralCodeAttempts; attempt++ {
+		code, err := generateReferralCode()
+		if err != nil {
+			return nil, err
+		}
+		c := &models.Coupon{
+			Kind:            models.CouponReferral,
+			Code:            code,
+			CreatedBy:       accountID,
+			DiscountPercent: 0,
+			PerAccountLimit: 1,
+			ValidFrom:       time.Now().UTC(),
+		}
+		err = s.coupons.Create(ctx, c)
+		if err == nil {
+			slog.Info("referral code minted", "account_id", accountID, "code", c.Code)
+			return c, nil
+		}
+		if !errors.Is(err, repository.ErrConflict) {
+			return nil, err
+		}
+		// Either the generated code collided, or another request minted this
+		// account's code first. Re-read: if the account now has one, that is
+		// the answer; otherwise it was a code collision, so try again.
+		if owned, rerr := s.coupons.FindLiveReferralByOwner(ctx, accountID); rerr == nil {
+			return owned, nil
+		} else if !errors.Is(rerr, repository.ErrNotFound) {
+			return nil, rerr
+		}
+	}
+	return nil, apperr.NewConflict("Could not allocate a referral code; please retry")
+}
+
+// ResolveReferral maps a referral code to the account it credits, for use at
+// signup. Returns (0, nil) when no code was supplied — referral is optional
+// and a blank field must not fail a signup.
+//
+// An unknown or revoked code is rejected outright rather than ignored: silently
+// dropping it would tell the new user their friend got credit when nobody did.
+func (s *CouponService) ResolveReferral(ctx context.Context, code string) (int64, string, error) {
+	if strings.TrimSpace(code) == "" {
+		return 0, "", nil
+	}
+	normalized, err := normalizeCouponCode(code)
+	if err != nil {
+		return 0, "", referralRejected()
+	}
+	c, err := s.coupons.FindLiveReferralByCode(ctx, normalized)
+	if errors.Is(err, repository.ErrNotFound) {
+		return 0, "", referralRejected()
+	}
+	if err != nil {
+		return 0, "", err
+	}
+	return c.CreatedBy, c.Code, nil
+}
+
+// referralAlphabet omits I, O, 0 and 1: referral codes get read aloud, written
+// down, and retyped, and those four are where that goes wrong.
+const referralAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+// generateReferralCode builds REF-XXXXXXXX from crypto/rand.
+//
+// Randomness rather than a derivation from the account id: a sequential or
+// hashed code would let anyone enumerate other people's referral codes, and
+// the code is the only thing standing between a stranger and mis-attributed
+// signups.
+func generateReferralCode() (string, error) {
+	const n = 8
+	buf := make([]byte, n)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	out := make([]byte, n)
+	for i, b := range buf {
+		out[i] = referralAlphabet[int(b)%len(referralAlphabet)]
+	}
+	return models.ReferralCodePrefix + "-" + string(out), nil
+}
+
+func referralRejected() error {
+	return apperr.NewValidationWith("Validation failed",
+		map[string]string{"referralCode": "this referral code is not valid"})
 }
 
 // ---- helpers -------------------------------------------------------------

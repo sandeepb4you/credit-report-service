@@ -20,20 +20,47 @@ func NewCouponRepo(pool *pgxpool.Pool) *CouponRepo { return &CouponRepo{pool: po
 // claim a coupon atomically without importing pgxpool.
 func (r *CouponRepo) BeginTx(ctx context.Context) (pgx.Tx, error) { return r.pool.Begin(ctx) }
 
-const couponCols = `id, code, created_by, discount_percent, product_code,
+const couponCols = `id, kind, code, created_by, discount_percent, product_code,
     max_redemptions, redemption_count, per_account_limit,
     valid_from, valid_until, revoked_at, created_at, updated_at`
 
 func (r *CouponRepo) Create(ctx context.Context, c *models.Coupon) error {
 	err := pgxscan.Get(ctx, r.pool, c,
 		`INSERT INTO coupons
-		     (code, created_by, discount_percent, product_code,
+		     (kind, code, created_by, discount_percent, product_code,
 		      max_redemptions, per_account_limit, valid_from, valid_until)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		 RETURNING `+couponCols,
-		c.Code, c.CreatedBy, c.DiscountPercent, c.ProductCode,
+		c.Kind, c.Code, c.CreatedBy, c.DiscountPercent, c.ProductCode,
 		c.MaxRedemptions, c.PerAccountLimit, c.ValidFrom, c.ValidUntil)
 	return classifyPgErr(err)
+}
+
+// FindLiveReferralByOwner returns an account's referral code, if it has one.
+func (r *CouponRepo) FindLiveReferralByOwner(ctx context.Context, accountID int64) (*models.Coupon, error) {
+	var c models.Coupon
+	err := pgxscan.Get(ctx, r.pool, &c,
+		`SELECT `+couponCols+` FROM coupons
+		  WHERE created_by = $1 AND kind = 'referral' AND revoked_at IS NULL`,
+		accountID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &c, err
+}
+
+// FindLiveReferralByCode resolves a referral code to its owner. Referral codes
+// have no expiry or cap, so "live" means only "not revoked".
+func (r *CouponRepo) FindLiveReferralByCode(ctx context.Context, code string) (*models.Coupon, error) {
+	var c models.Coupon
+	err := pgxscan.Get(ctx, r.pool, &c,
+		`SELECT `+couponCols+` FROM coupons
+		  WHERE code = $1 AND kind = 'referral' AND revoked_at IS NULL`,
+		code)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &c, err
 }
 
 func (r *CouponRepo) FindByCode(ctx context.Context, code string) (*models.Coupon, error) {
@@ -93,8 +120,9 @@ func (r *CouponRepo) Revoke(ctx context.Context, code string, onlyCreator int64)
 // redemption of this coupon blocks until this transaction ends.
 //
 // Returns ErrNotFound when the coupon is unknown, revoked, outside its window,
-// or exhausted — the caller cannot distinguish these, and should not, since
-// probing which is which leaks the state of other people's coupons.
+// exhausted, or is a referral code rather than a discount one — the caller
+// cannot distinguish these, and should not, since probing which is which leaks
+// the state of other people's coupons.
 func (r *CouponRepo) Claim(ctx context.Context, tx pgx.Tx, code string) (*models.Coupon, error) {
 	var c models.Coupon
 	err := pgxscan.Get(ctx, tx, &c,
@@ -102,6 +130,7 @@ func (r *CouponRepo) Claim(ctx context.Context, tx pgx.Tx, code string) (*models
 		    SET redemption_count = redemption_count + 1,
 		        updated_at = now()
 		  WHERE code = $1
+		    AND kind = 'discount'
 		    AND revoked_at IS NULL
 		    AND now() >= valid_from
 		    AND (valid_until IS NULL OR now() < valid_until)

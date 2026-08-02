@@ -135,6 +135,9 @@ func New(
 	// when a code is typed in.
 	cp := api.Group("/coupons")
 	cp.Get("/quote", requireAuth, coupons.QuoteCoupon)
+	// Every account has a referral code, not just agents, so this is plain
+	// RequireAuth. Registered before "/:code" so it is not swallowed by it.
+	cp.Get("/referral", requireAuth, coupons.MyReferralCode)
 	cp.Post("/", middleware.RequirePermission(tokens, models.PermCouponCreate), coupons.CreateCoupon)
 	cp.Get("/", middleware.RequirePermission(tokens, models.PermCouponManage), coupons.ListCoupons)
 	cp.Delete("/:code", middleware.RequirePermission(tokens, models.PermCouponManage), coupons.RevokeCoupon)

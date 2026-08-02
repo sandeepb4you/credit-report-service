@@ -141,6 +141,31 @@ func (h *CouponHandler) RevokeCoupon(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "Coupon revoked"})
 }
 
+// ---- GET /api/coupons/referral --------------------------------------------
+
+// MyReferralCode godoc
+//
+// @Summary      Get your referral code
+// @Description  Returns the caller's permanent referral code, creating it on the first call. Anyone new who signs up with this code is attributed to the caller — mainly how agents recruit users. Referral codes carry no discount, never expire, and can be used any number of times; each account has exactly one. Safe to call repeatedly: after the first call it is a plain lookup.
+// @Tags         coupons
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  models.Coupon
+// @Failure      401  {object}  apperr.ErrorBody  "Not authenticated"
+// @Failure      409  {object}  apperr.ErrorBody  "Could not allocate a code; retry"
+// @Router       /coupons/referral [get]
+func (h *CouponHandler) MyReferralCode(c *fiber.Ctx) error {
+	accountID, ok := middleware.AccountID(c)
+	if !ok {
+		return apperr.NewUnauthorized("Not authenticated")
+	}
+	code, err := h.svc.ReferralCode(c.Context(), accountID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(code)
+}
+
 // ---- GET /api/coupons/quote -----------------------------------------------
 
 // QuoteCoupon godoc

@@ -5,11 +5,27 @@ import (
 	"time"
 )
 
+// Coupon kinds. Both share the coupons table, and therefore one code
+// namespace, so a referral code can never collide with a discount code.
+const (
+	// CouponDiscount is spent at checkout for a percentage off, once per
+	// account, optionally capped and time-boxed.
+	CouponDiscount = "discount"
+	// CouponReferral is a permanent code identifying its owner. It is consumed
+	// at signup to attribute the new account, carries no discount, and never
+	// expires or runs out.
+	CouponReferral = "referral"
+)
+
 // Coupon code bounds. Codes are stored upper-cased so lookups are exact.
 const (
 	CouponCodeMinLen = 3
 	CouponCodeMaxLen = 32
 )
+
+// ReferralCodePrefix marks generated referral codes so a user can tell at a
+// glance which kind of code they are holding.
+const ReferralCodePrefix = "REF"
 
 // MinChargeableAmount is the smallest total the payment gateway will accept.
 // A coupon that discounts an order below this is rejected at checkout rather
@@ -21,6 +37,7 @@ const MinChargeableAmount = 1.00
 // by an agent or admin.
 type Coupon struct {
 	ID   int64  `json:"id"   db:"id"`
+	Kind string `json:"kind" db:"kind"`
 	Code string `json:"code" db:"code"`
 	// CreatedBy is the issuing account — the agent this redemption attributes to.
 	CreatedBy       int64   `json:"createdBy"       db:"created_by"`
@@ -52,9 +69,17 @@ type CouponRedemption struct {
 	ReleasedAt     *time.Time `json:"releasedAt"     db:"released_at"`
 }
 
-// AppliesTo reports whether the coupon can be used for a product. A coupon
-// with no product scope applies to all of them.
+// IsReferral reports whether this is a signup-attribution code rather than a
+// checkout discount.
+func (c *Coupon) IsReferral() bool { return c.Kind == CouponReferral }
+
+// AppliesTo reports whether the coupon can be used for a product. A referral
+// code is never spendable at checkout; a discount coupon with no product scope
+// applies to all of them.
 func (c *Coupon) AppliesTo(productCode string) bool {
+	if c.IsReferral() {
+		return false
+	}
 	return c.ProductCode == nil || *c.ProductCode == productCode
 }
 

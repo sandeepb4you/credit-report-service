@@ -30,6 +30,13 @@ definitions:
         type: string
       profileCompleted:
         type: boolean
+      referredAt:
+        type: string
+      referredByAccountId:
+        description: Referral attribution, set once at signup and never changed.
+        type: integer
+      referredByCode:
+        type: string
       role:
         type: string
       status:
@@ -65,6 +72,8 @@ definitions:
         type: number
       id:
         type: integer
+      kind:
+        type: string
       maxRedemptions:
         type: integer
       perAccountLimit:
@@ -383,6 +392,10 @@ definitions:
       idToken:
         example: eyJhbGciOiJSUzI1NiIs...
         type: string
+      referralCode:
+        description: ReferralCode is only honoured when this login creates a new account.
+        example: REF-7K2QM4XZ
+        type: string
     type: object
   internal_handler.loginReq:
     properties:
@@ -418,6 +431,12 @@ definitions:
         type: string
       password:
         example: hunter2pass
+        type: string
+      referralCode:
+        description: |-
+          ReferralCode is optional and attributes the new account to whoever owns
+          it. An invalid code fails the signup rather than being ignored.
+        example: REF-7K2QM4XZ
         type: string
     type: object
   internal_handler.submitPanReq:
@@ -1060,6 +1079,33 @@ paths:
       security:
       - BearerAuth: []
       summary: Price a product with a coupon applied
+      tags:
+      - coupons
+  /coupons/referral:
+    get:
+      description: 'Returns the caller''s permanent referral code, creating it on
+        the first call. Anyone new who signs up with this code is attributed to the
+        caller — mainly how agents recruit users. Referral codes carry no discount,
+        never expire, and can be used any number of times; each account has exactly
+        one. Safe to call repeatedly: after the first call it is a plain lookup.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.Coupon'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "409":
+          description: Could not allocate a code; retry
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Get your referral code
       tags:
       - coupons
   /credit-analytics/latest-insights:

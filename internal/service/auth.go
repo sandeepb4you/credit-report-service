@@ -28,8 +28,9 @@ type AuthService struct {
 	mailer         Mailer
 	tokens         *TokenService
 	sessions       *SessionService
-	admins         []string // auth.admin-emails allowlist; lowercase
-	googleClientID string   // "Web application" OAuth client ID; empty -> disabled
+	coupons        *CouponService // resolves referral codes at signup
+	admins         []string       // auth.admin-emails allowlist; lowercase
+	googleClientID string         // "Web application" OAuth client ID; empty -> disabled
 }
 
 func NewAuthService(
@@ -38,6 +39,7 @@ func NewAuthService(
 	mailer Mailer,
 	tokens *TokenService,
 	sessions *SessionService,
+	coupons *CouponService,
 	authCfg config.AuthConfig,
 ) *AuthService {
 	admins := make([]string, 0, len(authCfg.AdminEmails))
@@ -52,6 +54,7 @@ func NewAuthService(
 		mailer:         mailer,
 		tokens:         tokens,
 		sessions:       sessions,
+		coupons:        coupons,
 		admins:         admins,
 		googleClientID: authCfg.Google.ClientID,
 	}
@@ -85,9 +88,23 @@ type AuthResult struct {
 // Signup creates a PENDING account with an unverified password identity and
 // mails a verification OTP. Re-signing up for an unverified email updates the
 // password and re-issues the OTP.
-func (s *AuthService) Signup(ctx context.Context, email, password string) (*SignupResult, error) {
+//
+// An optional referralCode attributes the new account to whoever owns that
+// code. It is resolved before anything is written, so a bad code fails the
+// signup outright rather than silently creating an unattributed account — the
+// referrer would otherwise never know they lost the credit. Attribution only
+// applies to accounts created here; re-signing up on an existing unverified
+// account keeps whatever attribution it already had.
+func (s *AuthService) Signup(
+	ctx context.Context, email, password, referralCode string,
+) (*SignupResult, error) {
 	email = normalizeEmail(email)
 	if err := validatePassword(password); err != nil {
+		return nil, err
+	}
+
+	referrerID, referrerCode, err := s.coupons.ResolveReferral(ctx, referralCode)
+	if err != nil {
 		return nil, err
 	}
 
@@ -122,6 +139,10 @@ func (s *AuthService) Signup(ctx context.Context, email, password string) (*Sign
 		accountID = existing.AccountID
 	default:
 		acc := &models.Account{Status: models.AccountPending}
+		if referrerID != 0 {
+			acc.ReferredByAccountID = &referrerID
+			acc.ReferredByCode = &referrerCode
+		}
 		if err := s.accounts.CreateAccount(ctx, tx, acc); err != nil {
 			return nil, err
 		}

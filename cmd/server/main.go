@@ -95,11 +95,11 @@ func main() {
 	mailSvc := service.NewMailService(cfg.Mail, cfg.Auth.OTP.TTL)
 	tokenSvc := service.NewTokenService(cfg.Auth)
 	sessionSvc := service.NewSessionService(sessionRepo, cfg.Auth)
+	couponSvc := service.NewCouponService(couponRepo, orderRepo)
 	authSvc := service.NewAuthService(
-		accountRepo, otpSvc, mailSvc, tokenSvc, sessionSvc, cfg.Auth)
+		accountRepo, otpSvc, mailSvc, tokenSvc, sessionSvc, couponSvc, cfg.Auth)
 	analyticsSvc := service.NewCreditAnalyticsService(digitapClient, analyticsRepo, accountRepo)
 	kycSvc := service.NewKycService(accountRepo)
-	couponSvc := service.NewCouponService(couponRepo, orderRepo)
 	orderSvc := service.NewOrderService(orderRepo, accountRepo, couponSvc, gateway, cfg.Cashfree)
 
 	// Handlers.

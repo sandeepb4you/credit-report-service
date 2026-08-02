@@ -76,6 +76,29 @@ func TestCoupon_AppliesTo(t *testing.T) {
 	}
 }
 
+// A referral code is never spendable at checkout, whatever product is asked
+// for and even though it lives in the same table as discount coupons.
+func TestCoupon_ReferralNeverAppliesAtCheckout(t *testing.T) {
+	ref := &Coupon{Kind: CouponReferral}
+	for _, p := range []string{"CREDIT_ANALYSIS", "BANK_STATEMENT_ANALYSIS", ""} {
+		if ref.AppliesTo(p) {
+			t.Errorf("referral code must not apply to product %q", p)
+		}
+	}
+	if !ref.IsReferral() {
+		t.Error("IsReferral should be true for a referral coupon")
+	}
+
+	// The discount kind is unaffected.
+	disc := &Coupon{Kind: CouponDiscount}
+	if !disc.AppliesTo("CREDIT_ANALYSIS") {
+		t.Error("unscoped discount coupon should still apply")
+	}
+	if disc.IsReferral() {
+		t.Error("IsReferral should be false for a discount coupon")
+	}
+}
+
 func TestCoupon_UsableAt(t *testing.T) {
 	now := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
 	hourAgo := now.Add(-time.Hour)

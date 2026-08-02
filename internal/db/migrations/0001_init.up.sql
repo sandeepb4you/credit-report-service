@@ -51,9 +51,24 @@ CREATE TABLE accounts (
     date_of_birth      DATE,
     profile_completed  BOOLEAN      NOT NULL DEFAULT false,
 
+    -- Referral attribution, set once at signup from a referral coupon and
+    -- never changed afterwards. The FK points at another account (usually an
+    -- agent); referred_by_code is a snapshot so the attribution stays readable
+    -- if that code is later revoked or reissued.
+    referred_by_account_id BIGINT   REFERENCES accounts (id) ON DELETE SET NULL,
+    referred_by_code       VARCHAR(32),
+    referred_at            TIMESTAMPTZ,
+
     created_at         TIMESTAMPTZ  NOT NULL DEFAULT now(),
-    updated_at         TIMESTAMPTZ  NOT NULL DEFAULT now()
+    updated_at         TIMESTAMPTZ  NOT NULL DEFAULT now(),
+
+    -- An account cannot refer itself.
+    CONSTRAINT accounts_no_self_referral CHECK (referred_by_account_id IS NULL
+                                                OR referred_by_account_id <> id)
 );
+
+CREATE INDEX idx_accounts_referred_by ON accounts (referred_by_account_id)
+    WHERE referred_by_account_id IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- auth_identities: each way an account can authenticate. One account -> many.
@@ -323,23 +338,36 @@ CREATE TABLE payment_webhook_events (
 CREATE INDEX idx_webhook_events_order ON payment_webhook_events (order_uid);
 
 -- ---------------------------------------------------------------------------
--- coupons: percentage discounts issued by accounts holding the 'agent' role
--- (or admins).
+-- coupons: two kinds of code, sharing one table and therefore one namespace.
 --
--- The discount is stored as a percentage and applied server-side at order
--- creation. Nothing about the price is ever accepted from the client.
+--   'discount'  a percentage off a purchase, issued by agents and admins,
+--               consumed at checkout, one use per account, optionally capped
+--               and time-boxed.
+--   'referral'  a permanent code identifying its owner. Consumed at *signup*
+--               to attribute the new account to whoever owns it -- usually an
+--               agent. Carries no discount, never expires, has no usage cap,
+--               and there is at most one live one per account.
+--
+-- They live together because both are codes a human types into a box: a single
+-- UNIQUE(code) is what guarantees a referral code and a discount code can
+-- never collide. Their differing rules are enforced by the kind-conditional
+-- CHECK below rather than by separate tables.
 -- ---------------------------------------------------------------------------
 CREATE TABLE coupons (
     id                 BIGSERIAL     PRIMARY KEY,
+
+    kind               VARCHAR(16)   NOT NULL DEFAULT 'discount',  -- 'discount' | 'referral'
 
     -- Normalized to upper case on write so lookups are exact and
     -- 'SAVE20' / 'save20' cannot become two different coupons.
     code               VARCHAR(32)   NOT NULL UNIQUE,
 
-    -- The agent (or admin) who issued it. Kept on delete so redemption
-    -- history stays attributable; deactivate via revoked_at instead.
+    -- Who owns it: the issuing agent/admin for a discount code, the referrer
+    -- for a referral code. Kept on delete so history stays attributable;
+    -- deactivate via revoked_at instead.
     created_by         BIGINT        NOT NULL REFERENCES accounts (id),
 
+    -- Always 0 for referral codes -- they attribute, they do not discount.
     discount_percent   NUMERIC(5,2)  NOT NULL,
 
     -- NULL scopes the coupon to every product; a code restricts it to one.
@@ -359,9 +387,20 @@ CREATE TABLE coupons (
     created_at         TIMESTAMPTZ   NOT NULL DEFAULT now(),
     updated_at         TIMESTAMPTZ   NOT NULL DEFAULT now(),
 
-    -- 100% is allowed, but an order that nets to zero is rejected at checkout
-    -- because the gateway will not accept it.
-    CONSTRAINT coupons_percent_range   CHECK (discount_percent > 0 AND discount_percent <= 100),
+    CONSTRAINT coupons_kind_known      CHECK (kind IN ('discount', 'referral')),
+
+    -- A discount code must actually discount something. 100% is allowed, but
+    -- an order that nets to zero is rejected at checkout because the gateway
+    -- will not accept it. A referral code discounts nothing and is unbounded:
+    -- no cap, no expiry, reusable by every new signup.
+    CONSTRAINT coupons_discount_shape  CHECK (
+        kind <> 'discount' OR (discount_percent > 0 AND discount_percent <= 100)),
+    CONSTRAINT coupons_referral_shape  CHECK (
+        kind <> 'referral' OR (discount_percent = 0
+                               AND product_code IS NULL
+                               AND max_redemptions IS NULL
+                               AND valid_until IS NULL)),
+
     CONSTRAINT coupons_max_positive    CHECK (max_redemptions IS NULL OR max_redemptions > 0),
     CONSTRAINT coupons_count_in_range  CHECK (redemption_count >= 0
                                               AND (max_redemptions IS NULL OR redemption_count <= max_redemptions)),
@@ -370,6 +409,12 @@ CREATE TABLE coupons (
 );
 
 CREATE INDEX idx_coupons_created_by ON coupons (created_by, created_at DESC);
+
+-- At most one live referral code per account. Revoked rows are excluded so a
+-- code can be rotated: revoke the old one, mint a new one, history intact.
+CREATE UNIQUE INDEX idx_coupons_one_referral_per_account
+    ON coupons (created_by)
+    WHERE kind = 'referral' AND revoked_at IS NULL;
 
 -- ---------------------------------------------------------------------------
 -- coupon_redemptions: one row per order that applied a coupon.

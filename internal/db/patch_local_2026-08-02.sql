@@ -22,12 +22,25 @@ BEGIN;
 SET search_path = report;
 
 -- ---------------------------------------------------------------------------
--- 1. accounts: ensure role, drop the agent linkage
+-- 1. accounts: ensure role, drop the agent linkage, add referral attribution
 -- ---------------------------------------------------------------------------
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS role VARCHAR(20) NOT NULL DEFAULT 'user';
 ALTER TABLE accounts DROP COLUMN IF EXISTS agent_id;
 ALTER TABLE accounts DROP COLUMN IF EXISTS agent_code_updated;
 DROP TABLE IF EXISTS agents;
+
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS referred_by_account_id BIGINT
+    REFERENCES accounts (id) ON DELETE SET NULL;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS referred_by_code VARCHAR(32);
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS referred_at      TIMESTAMPTZ;
+
+-- ADD CONSTRAINT has no IF NOT EXISTS, so drop-then-add keeps this replayable.
+ALTER TABLE accounts DROP CONSTRAINT IF EXISTS accounts_no_self_referral;
+ALTER TABLE accounts ADD  CONSTRAINT accounts_no_self_referral
+    CHECK (referred_by_account_id IS NULL OR referred_by_account_id <> id);
+
+CREATE INDEX IF NOT EXISTS idx_accounts_referred_by ON accounts (referred_by_account_id)
+    WHERE referred_by_account_id IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- 2. sessions: one row per signed-in device
@@ -73,6 +86,7 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS coupon_code     VARCHAR(32);
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS coupons (
     id                 BIGSERIAL     PRIMARY KEY,
+    kind               VARCHAR(16)   NOT NULL DEFAULT 'discount',
     code               VARCHAR(32)   NOT NULL UNIQUE,
     created_by         BIGINT        NOT NULL REFERENCES accounts (id),
     discount_percent   NUMERIC(5,2)  NOT NULL,
@@ -89,7 +103,6 @@ CREATE TABLE IF NOT EXISTS coupons (
     created_at         TIMESTAMPTZ   NOT NULL DEFAULT now(),
     updated_at         TIMESTAMPTZ   NOT NULL DEFAULT now(),
 
-    CONSTRAINT coupons_percent_range   CHECK (discount_percent > 0 AND discount_percent <= 100),
     CONSTRAINT coupons_max_positive    CHECK (max_redemptions IS NULL OR max_redemptions > 0),
     CONSTRAINT coupons_count_in_range  CHECK (redemption_count >= 0
                                               AND (max_redemptions IS NULL OR redemption_count <= max_redemptions)),
@@ -97,7 +110,31 @@ CREATE TABLE IF NOT EXISTS coupons (
     CONSTRAINT coupons_window_ordered  CHECK (valid_until IS NULL OR valid_until > valid_from)
 );
 
+-- If coupons already existed from an earlier run of this script, it predates
+-- the referral kind. CREATE TABLE IF NOT EXISTS would have skipped it, so the
+-- column and the kind-conditional constraints are applied separately.
+ALTER TABLE coupons ADD COLUMN IF NOT EXISTS kind VARCHAR(16) NOT NULL DEFAULT 'discount';
+
+ALTER TABLE coupons DROP CONSTRAINT IF EXISTS coupons_percent_range;  -- superseded
+ALTER TABLE coupons DROP CONSTRAINT IF EXISTS coupons_kind_known;
+ALTER TABLE coupons ADD  CONSTRAINT coupons_kind_known
+    CHECK (kind IN ('discount', 'referral'));
+ALTER TABLE coupons DROP CONSTRAINT IF EXISTS coupons_discount_shape;
+ALTER TABLE coupons ADD  CONSTRAINT coupons_discount_shape
+    CHECK (kind <> 'discount' OR (discount_percent > 0 AND discount_percent <= 100));
+ALTER TABLE coupons DROP CONSTRAINT IF EXISTS coupons_referral_shape;
+ALTER TABLE coupons ADD  CONSTRAINT coupons_referral_shape
+    CHECK (kind <> 'referral' OR (discount_percent = 0
+                                  AND product_code IS NULL
+                                  AND max_redemptions IS NULL
+                                  AND valid_until IS NULL));
+
 CREATE INDEX IF NOT EXISTS idx_coupons_created_by ON coupons (created_by, created_at DESC);
+
+-- At most one live referral code per account.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_coupons_one_referral_per_account
+    ON coupons (created_by)
+    WHERE kind = 'referral' AND revoked_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS coupon_redemptions (
     id              BIGSERIAL     PRIMARY KEY,

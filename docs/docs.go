@@ -832,6 +832,43 @@ const docTemplate = `{
                 }
             }
         },
+        "/coupons/referral": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the caller's permanent referral code, creating it on the first call. Anyone new who signs up with this code is attributed to the caller — mainly how agents recruit users. Referral codes carry no discount, never expire, and can be used any number of times; each account has exactly one. Safe to call repeatedly: after the first call it is a plain lookup.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "coupons"
+                ],
+                "summary": "Get your referral code",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.Coupon"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Could not allocate a code; retry",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/coupons/{code}": {
             "delete": {
                 "security": [
@@ -1542,6 +1579,16 @@ const docTemplate = `{
                 "profileCompleted": {
                     "type": "boolean"
                 },
+                "referredAt": {
+                    "type": "string"
+                },
+                "referredByAccountId": {
+                    "description": "Referral attribution, set once at signup and never changed.",
+                    "type": "integer"
+                },
+                "referredByCode": {
+                    "type": "string"
+                },
                 "role": {
                     "type": "string"
                 },
@@ -1592,6 +1639,9 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "integer"
+                },
+                "kind": {
+                    "type": "string"
                 },
                 "maxRedemptions": {
                     "type": "integer"
@@ -2045,6 +2095,11 @@ const docTemplate = `{
                 "idToken": {
                     "type": "string",
                     "example": "eyJhbGciOiJSUzI1NiIs..."
+                },
+                "referralCode": {
+                    "description": "ReferralCode is only honoured when this login creates a new account.",
+                    "type": "string",
+                    "example": "REF-7K2QM4XZ"
                 }
             }
         },
@@ -2098,6 +2153,11 @@ const docTemplate = `{
                 "password": {
                     "type": "string",
                     "example": "hunter2pass"
+                },
+                "referralCode": {
+                    "description": "ReferralCode is optional and attributes the new account to whoever owns\nit. An invalid code fails the signup rather than being ignored.",
+                    "type": "string",
+                    "example": "REF-7K2QM4XZ"
                 }
             }
         },
