@@ -13,13 +13,18 @@ import (
 	"credit-report-service/internal/service"
 )
 
-// AuthHandler serves the email/password + OTP auth and profile endpoints.
+// AuthHandler serves the auth, session/device, and profile endpoints.
 type AuthHandler struct {
-	svc *service.AuthService
+	svc      *service.AuthService
+	sessions *service.SessionService
+	// cookieSecure mirrors auth.cookie-secure; see setRefreshCookie.
+	cookieSecure bool
 }
 
-func NewAuthHandler(svc *service.AuthService) *AuthHandler {
-	return &AuthHandler{svc: svc}
+func NewAuthHandler(
+	svc *service.AuthService, sessions *service.SessionService, cookieSecure bool,
+) *AuthHandler {
+	return &AuthHandler{svc: svc, sessions: sessions, cookieSecure: cookieSecure}
 }
 
 var otpCodeRE = regexp.MustCompile(`^\d{4,8}$`)
@@ -71,10 +76,14 @@ type verifyEmailReq struct {
 // VerifyEmail godoc
 //
 // @Summary      Verify email with OTP
-// @Description  Checks the signup OTP; on success verifies the identity, activates the account, and returns a session JWT.
+// @Description  Checks the signup OTP; on success verifies the identity, activates the account, and opens a session for the calling device. Token delivery follows the same rules as POST /auth/login.
 // @Tags         auth
 // @Accept       json
 // @Produce      json
+// @Param        X-Device-Id        header  string  false  "Stable per-device UUID"
+// @Param        X-Device-Name      header  string  false  "Human-readable device name shown in the device list"
+// @Param        X-Device-Platform  header  string  false  "ios | android | web"
+// @Param        X-Device-Info      header  string  false  "JSON device description, e.g. {\"manufacturer\":\"Apple\",\"model\":\"iPhone15,3\",\"osVersion\":\"17.4\"}"
 // @Param        request  body      verifyEmailReq  true  "Email + OTP"
 // @Success      200      {object}  service.AuthResult
 // @Failure      400      {object}  apperr.ErrorBody  "Wrong / expired / locked OTP"
@@ -99,11 +108,11 @@ func (h *AuthHandler) VerifyEmail(c *fiber.Ctx) error {
 		return apperr.NewValidationWith("Validation failed", details)
 	}
 
-	res, err := h.svc.VerifyEmail(c.Context(), req.Email, req.OTP)
+	res, err := h.svc.VerifyEmail(c.Context(), req.Email, req.OTP, middleware.Device(c))
 	if err != nil {
 		return err
 	}
-	return c.JSON(res)
+	return h.respondAuth(c, res, middleware.Device(c).IsWeb())
 }
 
 // ---- POST /api/auth/otp/resend ------------------------------------------
@@ -151,10 +160,14 @@ type loginReq struct {
 // Login godoc
 //
 // @Summary      Log in with email + password
-// @Description  Verifies email + password and returns a session JWT. Requires the email to be verified.
+// @Description  Verifies email + password and opens a session for the calling device. Returns a short-lived access JWT plus a refresh token — in the JSON body for mobile clients, or as an httpOnly `refresh_token` cookie when `X-Device-Platform: web`. Send `X-Device-Id` (a stable per-device UUID) so repeat logins update one entry in the device list instead of creating a new one.
 // @Tags         auth
 // @Accept       json
 // @Produce      json
+// @Param        X-Device-Id        header  string  false  "Stable per-device UUID"
+// @Param        X-Device-Name      header  string  false  "Human-readable device name shown in the device list"
+// @Param        X-Device-Platform  header  string  false  "ios | android | web"
+// @Param        X-Device-Info      header  string  false  "JSON device description, e.g. {\"manufacturer\":\"Apple\",\"model\":\"iPhone15,3\",\"osVersion\":\"17.4\"}"
 // @Param        request  body      loginReq  true  "Login credentials"
 // @Success      200      {object}  service.AuthResult
 // @Failure      400      {object}  apperr.ErrorBody  "Validation failed"
@@ -170,11 +183,11 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 		return apperr.NewValidationWith("Validation failed",
 			map[string]string{"email": "email and password are required"})
 	}
-	res, err := h.svc.Login(c.Context(), req.Email, req.Password)
+	res, err := h.svc.Login(c.Context(), req.Email, req.Password, middleware.Device(c))
 	if err != nil {
 		return err
 	}
-	return c.JSON(res)
+	return h.respondAuth(c, res, middleware.Device(c).IsWeb())
 }
 
 // ---- POST /api/auth/google -----------------------------------------------
@@ -190,6 +203,10 @@ type googleLoginReq struct {
 // @Tags         auth
 // @Accept       json
 // @Produce      json
+// @Param        X-Device-Id        header  string  false  "Stable per-device UUID"
+// @Param        X-Device-Name      header  string  false  "Human-readable device name shown in the device list"
+// @Param        X-Device-Platform  header  string  false  "ios | android | web"
+// @Param        X-Device-Info      header  string  false  "JSON device description, e.g. {\"manufacturer\":\"Apple\",\"model\":\"iPhone15,3\",\"osVersion\":\"17.4\"}"
 // @Param        request  body      googleLoginReq  true  "Google ID token"
 // @Success      200      {object}  service.AuthResult
 // @Failure      400      {object}  apperr.ErrorBody  "Validation failed (missing idToken)"
@@ -202,11 +219,11 @@ func (h *AuthHandler) GoogleLogin(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return apperr.NewValidation("invalid JSON body")
 	}
-	res, err := h.svc.GoogleLogin(c.Context(), req.IDToken)
+	res, err := h.svc.GoogleLogin(c.Context(), req.IDToken, middleware.Device(c))
 	if err != nil {
 		return err
 	}
-	return c.JSON(res)
+	return h.respondAuth(c, res, middleware.Device(c).IsWeb())
 }
 
 // ---- GET /api/profile ----------------------------------------------------

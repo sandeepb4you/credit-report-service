@@ -10,8 +10,8 @@ import (
 )
 
 func TestToken_IssueAndParse_RoundTrip(t *testing.T) {
-	svc := NewTokenService(config.AuthConfig{JWTSecret: "test-secret-key", JWTTTL: time.Hour})
-	issued, err := svc.Issue(42, "admin")
+	svc := NewTokenService(config.AuthConfig{JWTSecret: "test-secret-key", AccessTTL: time.Hour})
+	issued, err := svc.Issue(42, "admin", 0)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
@@ -22,7 +22,7 @@ func TestToken_IssueAndParse_RoundTrip(t *testing.T) {
 		t.Fatal("ExpiresAt should be in the future")
 	}
 
-	accountID, role, err := svc.Parse(issued.Token)
+	accountID, role, _, err := svc.Parse(issued.Token)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -35,87 +35,120 @@ func TestToken_IssueAndParse_RoundTrip(t *testing.T) {
 }
 
 func TestToken_IssueAndParse_UserRole(t *testing.T) {
-	svc := NewTokenService(config.AuthConfig{JWTSecret: "secret", JWTTTL: time.Hour})
-	issued, _ := svc.Issue(7, "user")
-	_, role, _ := svc.Parse(issued.Token)
+	svc := NewTokenService(config.AuthConfig{JWTSecret: "secret", AccessTTL: time.Hour})
+	issued, _ := svc.Issue(7, "user", 0)
+	_, role, _, _ := svc.Parse(issued.Token)
 	if role != "user" {
 		t.Errorf("role = %q, want user", role)
 	}
 }
 
 func TestToken_IssueAndParse_EmptyRole(t *testing.T) {
-	svc := NewTokenService(config.AuthConfig{JWTSecret: "secret", JWTTTL: time.Hour})
-	issued, _ := svc.Issue(1, "")
-	_, role, _ := svc.Parse(issued.Token)
+	svc := NewTokenService(config.AuthConfig{JWTSecret: "secret", AccessTTL: time.Hour})
+	issued, _ := svc.Issue(1, "", 0)
+	_, role, _, _ := svc.Parse(issued.Token)
 	if role != "" {
 		t.Errorf("role = %q, want empty", role)
 	}
 }
 
 func TestToken_Parse_Expired(t *testing.T) {
-	svc := NewTokenService(config.AuthConfig{JWTSecret: "test-secret", JWTTTL: time.Millisecond})
-	issued, err := svc.Issue(1, "user")
+	svc := NewTokenService(config.AuthConfig{JWTSecret: "test-secret", AccessTTL: time.Millisecond})
+	issued, err := svc.Issue(1, "user", 0)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
 	time.Sleep(5 * time.Millisecond) // ensure expiry
-	_, _, err = svc.Parse(issued.Token)
+	_, _, _, err = svc.Parse(issued.Token)
 	if !isUnauthorized(err) {
 		t.Fatalf("expired token should be Unauthorized, got %v", err)
 	}
 }
 
 func TestToken_Parse_WrongKey(t *testing.T) {
-	svc1 := NewTokenService(config.AuthConfig{JWTSecret: "secret-one", JWTTTL: time.Hour})
-	svc2 := NewTokenService(config.AuthConfig{JWTSecret: "secret-two", JWTTTL: time.Hour})
-	issued, err := svc1.Issue(1, "user")
+	svc1 := NewTokenService(config.AuthConfig{JWTSecret: "secret-one", AccessTTL: time.Hour})
+	svc2 := NewTokenService(config.AuthConfig{JWTSecret: "secret-two", AccessTTL: time.Hour})
+	issued, err := svc1.Issue(1, "user", 0)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
-	_, _, err = svc2.Parse(issued.Token)
+	_, _, _, err = svc2.Parse(issued.Token)
 	if !isUnauthorized(err) {
 		t.Fatalf("wrong key should be Unauthorized, got %v", err)
 	}
 }
 
 func TestToken_Parse_Garbage(t *testing.T) {
-	svc := NewTokenService(config.AuthConfig{JWTSecret: "test-secret", JWTTTL: time.Hour})
-	_, _, err := svc.Parse("not-a-jwt")
+	svc := NewTokenService(config.AuthConfig{JWTSecret: "test-secret", AccessTTL: time.Hour})
+	_, _, _, err := svc.Parse("not-a-jwt")
 	if !isUnauthorized(err) {
 		t.Fatalf("garbage should be Unauthorized, got %v", err)
 	}
 }
 
 func TestToken_Parse_Empty(t *testing.T) {
-	svc := NewTokenService(config.AuthConfig{JWTSecret: "test-secret", JWTTTL: time.Hour})
-	_, _, err := svc.Parse("")
+	svc := NewTokenService(config.AuthConfig{JWTSecret: "test-secret", AccessTTL: time.Hour})
+	_, _, _, err := svc.Parse("")
 	if !isUnauthorized(err) {
 		t.Fatalf("empty should be Unauthorized, got %v", err)
 	}
 }
 
+// An unset TTL must fall back to the short access lifetime, never to a
+// long-lived one — a misconfiguration should fail safe.
 func TestToken_DefaultTTL(t *testing.T) {
-	svc := NewTokenService(config.AuthConfig{JWTSecret: "secret", JWTTTL: 0})
-	issued, err := svc.Issue(1, "user")
+	svc := NewTokenService(config.AuthConfig{JWTSecret: "secret", AccessTTL: 0})
+	issued, err := svc.Issue(1, "user", 0)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
 	diff := time.Until(issued.ExpiresAt)
-	expected := 720 * time.Hour
+	expected := 15 * time.Minute
 	if diff < expected-time.Minute || diff > expected+time.Minute {
 		t.Errorf("ExpiresAt diff = %v, expected ~%v", diff, expected)
 	}
 }
 
 func TestToken_DefaultTTL_NegativeInput(t *testing.T) {
-	svc := NewTokenService(config.AuthConfig{JWTSecret: "secret", JWTTTL: -time.Hour})
-	issued, err := svc.Issue(1, "user")
+	svc := NewTokenService(config.AuthConfig{JWTSecret: "secret", AccessTTL: -time.Hour})
+	issued, err := svc.Issue(1, "user", 0)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
 	diff := time.Until(issued.ExpiresAt)
-	if diff < 719*time.Hour {
-		t.Errorf("negative TTL should default to 720h, got diff=%v", diff)
+	if diff <= 0 || diff > 16*time.Minute {
+		t.Errorf("negative TTL should default to 15m, got diff=%v", diff)
+	}
+}
+
+// The session id must survive the round trip: it is how a request knows which
+// device it came from, and every device-management endpoint depends on it.
+func TestToken_SessionIDRoundTrip(t *testing.T) {
+	svc := NewTokenService(config.AuthConfig{JWTSecret: "secret", AccessTTL: time.Hour})
+	issued, err := svc.Issue(42, "user", 987)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	accountID, role, sid, err := svc.Parse(issued.Token)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if accountID != 42 || role != "user" || sid != 987 {
+		t.Errorf("got (%d, %q, %d), want (42, \"user\", 987)", accountID, role, sid)
+	}
+}
+
+// A token minted before session tracking has no sid claim; it must parse with
+// a zero session id rather than failing.
+func TestToken_MissingSessionIDParsesAsZero(t *testing.T) {
+	svc := NewTokenService(config.AuthConfig{JWTSecret: "secret", AccessTTL: time.Hour})
+	issued, _ := svc.Issue(5, "user", 0)
+	_, _, sid, err := svc.Parse(issued.Token)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if sid != 0 {
+		t.Errorf("sid = %d, want 0", sid)
 	}
 }
 

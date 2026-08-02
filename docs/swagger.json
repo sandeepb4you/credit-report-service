@@ -82,6 +82,30 @@
                 "summary": "Log in with Google",
                 "parameters": [
                     {
+                        "type": "string",
+                        "description": "Stable per-device UUID",
+                        "name": "X-Device-Id",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Human-readable device name shown in the device list",
+                        "name": "X-Device-Name",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "ios | android | web",
+                        "name": "X-Device-Platform",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "JSON device description, e.g. {\\",
+                        "name": "X-Device-Info",
+                        "in": "header"
+                    },
+                    {
                         "description": "Google ID token",
                         "name": "request",
                         "in": "body",
@@ -127,7 +151,7 @@
         },
         "/auth/login": {
             "post": {
-                "description": "Verifies email + password and returns a session JWT. Requires the email to be verified.",
+                "description": "Verifies email + password and opens a session for the calling device. Returns a short-lived access JWT plus a refresh token — in the JSON body for mobile clients, or as an httpOnly `refresh_token` cookie when `X-Device-Platform: web`. Send `X-Device-Id` (a stable per-device UUID) so repeat logins update one entry in the device list instead of creating a new one.",
                 "consumes": [
                     "application/json"
                 ],
@@ -139,6 +163,30 @@
                 ],
                 "summary": "Log in with email + password",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Stable per-device UUID",
+                        "name": "X-Device-Id",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Human-readable device name shown in the device list",
+                        "name": "X-Device-Name",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "ios | android | web",
+                        "name": "X-Device-Platform",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "JSON device description, e.g. {\\",
+                        "name": "X-Device-Info",
+                        "in": "header"
+                    },
                     {
                         "description": "Login credentials",
                         "name": "request",
@@ -164,6 +212,40 @@
                     },
                     "401": {
                         "description": "Invalid email or password / email not verified",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/logout": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Revokes the session the access token was issued for and clears the web refresh cookie. The access token itself stays valid until it expires (minutes), so clients should discard it too.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Sign out of the current device",
+                "responses": {
+                    "200": {
+                        "description": "{\\\"message\\\": \\\"Signed out\\\"}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
                         "schema": {
                             "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
@@ -226,6 +308,184 @@
                 }
             }
         },
+        "/auth/refresh": {
+            "post": {
+                "description": "Rotates the refresh token and issues a fresh access token. Mobile clients send the token in the JSON body; web clients send nothing — the httpOnly `refresh_token` cookie is read automatically. The old refresh token is invalidated on every call, so replaying one revokes the whole session as a theft signal. Public endpoint: the refresh token itself is the credential.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Exchange a refresh token for a new token pair",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Stable per-device UUID",
+                        "name": "X-Device-Id",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "ios | android | web",
+                        "name": "X-Device-Platform",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "JSON device description, e.g. {\\",
+                        "name": "X-Device-Info",
+                        "in": "header"
+                    },
+                    {
+                        "description": "Refresh token (omit for web cookie clients)",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.refreshReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_service.AuthResult"
+                        }
+                    },
+                    "401": {
+                        "description": "Missing, expired, replayed, or unknown refresh token",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/sessions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the account's active sessions, most recently used first. The entry matching the caller's own access token is flagged with `current: true`.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "List signed-in devices",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/credit-report-service_internal_service.SessionView"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Revokes all of the account's sessions except the caller's own. Use after a password change or when a device is lost.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Sign out every other device",
+                "responses": {
+                    "200": {
+                        "description": "{\\\"revoked\\\": 3}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "integer"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/sessions/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Revokes a single session by id. Only the caller's own sessions are reachable — an id belonging to another account returns 404, not 403, so session ids cannot be probed.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Sign out one device",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Session id from GET /auth/sessions",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{\\\"message\\\": \\\"Device signed out\\\"}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "id must be an integer",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No such active session",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/signup": {
             "post": {
                 "description": "Creates a PENDING account with an unverified password identity and emails a verification OTP. Re-signing up for an unverified email updates the password and re-issues the OTP.",
@@ -274,7 +534,7 @@
         },
         "/auth/verify-email": {
             "post": {
-                "description": "Checks the signup OTP; on success verifies the identity, activates the account, and returns a session JWT.",
+                "description": "Checks the signup OTP; on success verifies the identity, activates the account, and opens a session for the calling device. Token delivery follows the same rules as POST /auth/login.",
                 "consumes": [
                     "application/json"
                 ],
@@ -286,6 +546,30 @@
                 ],
                 "summary": "Verify email with OTP",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Stable per-device UUID",
+                        "name": "X-Device-Id",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Human-readable device name shown in the device list",
+                        "name": "X-Device-Name",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "ios | android | web",
+                        "name": "X-Device-Platform",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "JSON device description, e.g. {\\",
+                        "name": "X-Device-Info",
+                        "in": "header"
+                    },
                     {
                         "description": "Email + OTP",
                         "name": "request",
@@ -941,6 +1225,27 @@
                 }
             }
         },
+        "credit-report-service_internal_models.AgentMeta": {
+            "type": "object",
+            "properties": {
+                "browser": {
+                    "type": "string"
+                },
+                "browserVersion": {
+                    "type": "string"
+                },
+                "deviceType": {
+                    "description": "mobile | tablet | desktop",
+                    "type": "string"
+                },
+                "os": {
+                    "type": "string"
+                },
+                "osVersion": {
+                    "type": "string"
+                }
+            }
+        },
         "credit-report-service_internal_models.CreditAnalyticsRequest": {
             "type": "object",
             "properties": {
@@ -982,6 +1287,26 @@
                 },
                 "resultCode": {
                     "type": "integer"
+                }
+            }
+        },
+        "credit-report-service_internal_models.DeviceMeta": {
+            "type": "object",
+            "properties": {
+                "agent": {
+                    "description": "Agent is parsed by the server from the User-Agent header. Best-effort:\nunrecognized agents leave fields empty rather than guessing.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/credit-report-service_internal_models.AgentMeta"
+                        }
+                    ]
+                },
+                "client": {
+                    "description": "Client is whatever the app declared via X-Device-Info: make, model, OS\nversion, app version, and any extra keys it cares to send. Free-form but\nbounded (see middleware.parseDeviceInfoHeader) because it is user input.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -1105,6 +1430,9 @@
                 "expiresAt": {
                     "type": "string"
                 },
+                "refreshToken": {
+                    "type": "string"
+                },
                 "token": {
                     "type": "string"
                 }
@@ -1175,6 +1503,44 @@
                 }
             }
         },
+        "credit-report-service_internal_service.SessionView": {
+            "type": "object",
+            "properties": {
+                "current": {
+                    "description": "Current marks the session the requesting device is using right now, so\nthe UI can label it and warn before revoking it.",
+                    "type": "boolean"
+                },
+                "deviceInfo": {
+                    "description": "DeviceInfo is the make/model/OS breakdown, split into what the client\ndeclared and what the server parsed from the User-Agent.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/credit-report-service_internal_models.DeviceMeta"
+                        }
+                    ]
+                },
+                "deviceName": {
+                    "type": "string"
+                },
+                "expiresAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "ip": {
+                    "type": "string"
+                },
+                "lastUsedAt": {
+                    "type": "string"
+                },
+                "platform": {
+                    "type": "string"
+                },
+                "signedInAt": {
+                    "type": "string"
+                }
+            }
+        },
         "credit-report-service_internal_service.SignupResult": {
             "type": "object",
             "properties": {
@@ -1217,6 +1583,15 @@
                 "password": {
                     "type": "string",
                     "example": "hunter2pass"
+                }
+            }
+        },
+        "internal_handler.refreshReq": {
+            "type": "object",
+            "properties": {
+                "refreshToken": {
+                    "type": "string",
+                    "example": "rt_8Kx3..."
                 }
             }
         },

@@ -190,7 +190,7 @@ func TestUpdateAgentCode_Validation(t *testing.T) {
 }
 
 func TestSignupWithAgentCode_Validation(t *testing.T) {
-	h := NewAuthHandler(nil)
+	h := NewAuthHandler(nil, nil, false)
 	app := newAgentApp()
 	app.Post("/api/auth/signup", h.Signup)
 

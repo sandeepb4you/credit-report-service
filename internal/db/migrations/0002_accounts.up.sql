@@ -77,7 +77,7 @@ CREATE TABLE otp_challenges (
     destination   VARCHAR(255) NOT NULL,   -- the email or phone the OTP was sent to
     purpose       VARCHAR(32)  NOT NULL,   -- 'signup' | 'login' | 'add_identity' | 'reset'
 
-    otp_hash      VARCHAR(255) NOT NULL,   -- bcrypt hash of the code
+    otp_hash      VARCHAR(255),            -- bcrypt hash of the code; scrubbed to NULL once consumed
     expires_at    TIMESTAMPTZ  NOT NULL,
     attempts      INTEGER      NOT NULL DEFAULT 0,
     send_count    INTEGER      NOT NULL DEFAULT 0,

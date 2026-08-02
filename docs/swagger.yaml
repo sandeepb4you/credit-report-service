@@ -37,6 +37,20 @@ definitions:
       updatedAt:
         type: string
     type: object
+  credit-report-service_internal_models.AgentMeta:
+    properties:
+      browser:
+        type: string
+      browserVersion:
+        type: string
+      deviceType:
+        description: mobile | tablet | desktop
+        type: string
+      os:
+        type: string
+      osVersion:
+        type: string
+    type: object
   credit-report-service_internal_models.CreditAnalyticsRequest:
     properties:
       accountId:
@@ -65,6 +79,23 @@ definitions:
         type: array
       resultCode:
         type: integer
+    type: object
+  credit-report-service_internal_models.DeviceMeta:
+    properties:
+      agent:
+        allOf:
+        - $ref: '#/definitions/credit-report-service_internal_models.AgentMeta'
+        description: |-
+          Agent is parsed by the server from the User-Agent header. Best-effort:
+          unrecognized agents leave fields empty rather than guessing.
+      client:
+        additionalProperties:
+          type: string
+        description: |-
+          Client is whatever the app declared via X-Device-Info: make, model, OS
+          version, app version, and any extra keys it cares to send. Free-form but
+          bounded (see middleware.parseDeviceInfoHeader) because it is user input.
+        type: object
     type: object
   credit-report-service_internal_models.KYCRecord:
     properties:
@@ -145,6 +176,8 @@ definitions:
         $ref: '#/definitions/credit-report-service_internal_models.Account'
       expiresAt:
         type: string
+      refreshToken:
+        type: string
       token:
         type: string
     type: object
@@ -190,6 +223,34 @@ definitions:
       id:
         type: integer
     type: object
+  credit-report-service_internal_service.SessionView:
+    properties:
+      current:
+        description: |-
+          Current marks the session the requesting device is using right now, so
+          the UI can label it and warn before revoking it.
+        type: boolean
+      deviceInfo:
+        allOf:
+        - $ref: '#/definitions/credit-report-service_internal_models.DeviceMeta'
+        description: |-
+          DeviceInfo is the make/model/OS breakdown, split into what the client
+          declared and what the server parsed from the User-Agent.
+      deviceName:
+        type: string
+      expiresAt:
+        type: string
+      id:
+        type: integer
+      ip:
+        type: string
+      lastUsedAt:
+        type: string
+      platform:
+        type: string
+      signedInAt:
+        type: string
+    type: object
   credit-report-service_internal_service.SignupResult:
     properties:
       accountId:
@@ -218,6 +279,12 @@ definitions:
         type: string
       password:
         example: hunter2pass
+        type: string
+    type: object
+  internal_handler.refreshReq:
+    properties:
+      refreshToken:
+        example: rt_8Kx3...
         type: string
     type: object
   internal_handler.resendReq:
@@ -321,6 +388,22 @@ paths:
         OAuth client ID to be configured (AUTH_GOOGLE_CLIENT_ID); otherwise returns
         503.
       parameters:
+      - description: Stable per-device UUID
+        in: header
+        name: X-Device-Id
+        type: string
+      - description: Human-readable device name shown in the device list
+        in: header
+        name: X-Device-Name
+        type: string
+      - description: ios | android | web
+        in: header
+        name: X-Device-Platform
+        type: string
+      - description: JSON device description, e.g. {\
+        in: header
+        name: X-Device-Info
+        type: string
       - description: Google ID token
         in: body
         name: request
@@ -357,9 +440,28 @@ paths:
     post:
       consumes:
       - application/json
-      description: Verifies email + password and returns a session JWT. Requires the
-        email to be verified.
+      description: 'Verifies email + password and opens a session for the calling
+        device. Returns a short-lived access JWT plus a refresh token — in the JSON
+        body for mobile clients, or as an httpOnly `refresh_token` cookie when `X-Device-Platform:
+        web`. Send `X-Device-Id` (a stable per-device UUID) so repeat logins update
+        one entry in the device list instead of creating a new one.'
       parameters:
+      - description: Stable per-device UUID
+        in: header
+        name: X-Device-Id
+        type: string
+      - description: Human-readable device name shown in the device list
+        in: header
+        name: X-Device-Name
+        type: string
+      - description: ios | android | web
+        in: header
+        name: X-Device-Platform
+        type: string
+      - description: JSON device description, e.g. {\
+        in: header
+        name: X-Device-Info
+        type: string
       - description: Login credentials
         in: body
         name: request
@@ -382,6 +484,29 @@ paths:
           schema:
             $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
       summary: Log in with email + password
+      tags:
+      - auth
+  /auth/logout:
+    post:
+      description: Revokes the session the access token was issued for and clears
+        the web refresh cookie. The access token itself stays valid until it expires
+        (minutes), so clients should discard it too.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{\"message\": \"Signed out\"}'
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Sign out of the current device
       tags:
       - auth
   /auth/otp/resend:
@@ -421,6 +546,128 @@ paths:
       summary: Resend signup verification OTP
       tags:
       - auth
+  /auth/refresh:
+    post:
+      consumes:
+      - application/json
+      description: 'Rotates the refresh token and issues a fresh access token. Mobile
+        clients send the token in the JSON body; web clients send nothing — the httpOnly
+        `refresh_token` cookie is read automatically. The old refresh token is invalidated
+        on every call, so replaying one revokes the whole session as a theft signal.
+        Public endpoint: the refresh token itself is the credential.'
+      parameters:
+      - description: Stable per-device UUID
+        in: header
+        name: X-Device-Id
+        type: string
+      - description: ios | android | web
+        in: header
+        name: X-Device-Platform
+        type: string
+      - description: JSON device description, e.g. {\
+        in: header
+        name: X-Device-Info
+        type: string
+      - description: Refresh token (omit for web cookie clients)
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/internal_handler.refreshReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_service.AuthResult'
+        "401":
+          description: Missing, expired, replayed, or unknown refresh token
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      summary: Exchange a refresh token for a new token pair
+      tags:
+      - auth
+  /auth/sessions:
+    delete:
+      description: Revokes all of the account's sessions except the caller's own.
+        Use after a password change or when a device is lost.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{\"revoked\": 3}'
+          schema:
+            additionalProperties:
+              type: integer
+            type: object
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Sign out every other device
+      tags:
+      - auth
+    get:
+      description: 'Returns the account''s active sessions, most recently used first.
+        The entry matching the caller''s own access token is flagged with `current:
+        true`.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/credit-report-service_internal_service.SessionView'
+            type: array
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List signed-in devices
+      tags:
+      - auth
+  /auth/sessions/{id}:
+    delete:
+      description: Revokes a single session by id. Only the caller's own sessions
+        are reachable — an id belonging to another account returns 404, not 403, so
+        session ids cannot be probed.
+      parameters:
+      - description: Session id from GET /auth/sessions
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{\"message\": \"Device signed out\"}'
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: id must be an integer
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: No such active session
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Sign out one device
+      tags:
+      - auth
   /auth/signup:
     post:
       consumes:
@@ -458,8 +705,25 @@ paths:
       consumes:
       - application/json
       description: Checks the signup OTP; on success verifies the identity, activates
-        the account, and returns a session JWT.
+        the account, and opens a session for the calling device. Token delivery follows
+        the same rules as POST /auth/login.
       parameters:
+      - description: Stable per-device UUID
+        in: header
+        name: X-Device-Id
+        type: string
+      - description: Human-readable device name shown in the device list
+        in: header
+        name: X-Device-Name
+        type: string
+      - description: ios | android | web
+        in: header
+        name: X-Device-Platform
+        type: string
+      - description: JSON device description, e.g. {\
+        in: header
+        name: X-Device-Info
+        type: string
       - description: Email + OTP
         in: body
         name: request

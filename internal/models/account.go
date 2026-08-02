@@ -9,13 +9,6 @@ const (
 	AccountSuspended = "SUSPENDED"
 )
 
-// Account roles. The role is assigned via the auth.admin-emails config
-// allowlist (auto-promoted at verify/login) and rides in the JWT as a claim.
-const (
-	RoleUser  = "user"
-	RoleAdmin = "admin"
-)
-
 // Auth identity providers.
 const (
 	ProviderPassword = "password"

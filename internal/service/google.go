@@ -28,7 +28,9 @@ import (
 // Because Google is the identity provider, the google identity is created as
 // verified=true; no email OTP is sent. Email verification only governs the
 // password provider.
-func (s *AuthService) GoogleLogin(ctx context.Context, idToken string) (*AuthResult, error) {
+func (s *AuthService) GoogleLogin(
+	ctx context.Context, idToken string, dev models.DeviceInfo,
+) (*AuthResult, error) {
 	if s.googleClientID == "" {
 		// Not configured: surface as 503 so the client can distinguish a disabled
 		// provider from a bad token.
@@ -62,7 +64,7 @@ func (s *AuthService) GoogleLogin(ctx context.Context, idToken string) (*AuthRes
 	}
 	s.applyAdminRole(ctx, acc)
 	slog.Info("login", "account_id", acc.ID, "method", "google")
-	return s.issueToken(acc)
+	return s.issueSession(ctx, acc, dev)
 }
 
 // resolveGoogleAccount loads-or-creates the account + google identity for a

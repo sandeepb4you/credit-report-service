@@ -12,6 +12,7 @@ import (
 
 	"credit-report-service/internal/apperr"
 	"credit-report-service/internal/config"
+	"credit-report-service/internal/models"
 	"credit-report-service/internal/server/middleware"
 	"credit-report-service/internal/service"
 )
@@ -25,7 +26,7 @@ func newApp() *fiber.App {
 // ---- signup handler tests ----
 
 func TestSignup_MissingBody(t *testing.T) {
-	h := NewAuthHandler(nil)
+	h := NewAuthHandler(nil, nil, false)
 	app := newApp()
 	app.Post("/api/auth/signup", h.Signup)
 
@@ -41,7 +42,7 @@ func TestSignup_MissingBody(t *testing.T) {
 }
 
 func TestSignup_InvalidEmail(t *testing.T) {
-	h := NewAuthHandler(nil)
+	h := NewAuthHandler(nil, nil, false)
 	app := newApp()
 	app.Post("/api/auth/signup", h.Signup)
 
@@ -60,7 +61,7 @@ func TestSignup_InvalidEmail(t *testing.T) {
 // ---- verify-email handler tests ----
 
 func TestVerifyEmail_MissingOTP(t *testing.T) {
-	h := NewAuthHandler(nil)
+	h := NewAuthHandler(nil, nil, false)
 	app := newApp()
 	app.Post("/api/auth/verify-email", h.VerifyEmail)
 
@@ -77,7 +78,7 @@ func TestVerifyEmail_MissingOTP(t *testing.T) {
 }
 
 func TestVerifyEmail_InvalidOTPFormat(t *testing.T) {
-	h := NewAuthHandler(nil)
+	h := NewAuthHandler(nil, nil, false)
 	app := newApp()
 	app.Post("/api/auth/verify-email", h.VerifyEmail)
 
@@ -96,7 +97,7 @@ func TestVerifyEmail_InvalidOTPFormat(t *testing.T) {
 // ---- login handler tests ----
 
 func TestLogin_EmptyFields(t *testing.T) {
-	h := NewAuthHandler(nil)
+	h := NewAuthHandler(nil, nil, false)
 	app := newApp()
 	app.Post("/api/auth/login", h.Login)
 
@@ -113,7 +114,7 @@ func TestLogin_EmptyFields(t *testing.T) {
 }
 
 func TestLogin_MissingBody(t *testing.T) {
-	h := NewAuthHandler(nil)
+	h := NewAuthHandler(nil, nil, false)
 	app := newApp()
 	app.Post("/api/auth/login", h.Login)
 
@@ -130,7 +131,7 @@ func TestLogin_MissingBody(t *testing.T) {
 // ---- resend handler tests ----
 
 func TestResendOTP_InvalidEmail(t *testing.T) {
-	h := NewAuthHandler(nil)
+	h := NewAuthHandler(nil, nil, false)
 	app := newApp()
 	app.Post("/api/auth/otp/resend", h.ResendOTP)
 
@@ -149,7 +150,7 @@ func TestResendOTP_InvalidEmail(t *testing.T) {
 // ---- google login handler tests ----
 
 func TestGoogleLogin_MissingBody(t *testing.T) {
-	h := NewAuthHandler(nil)
+	h := NewAuthHandler(nil, nil, false)
 	app := newApp()
 	app.Post("/api/auth/google", h.GoogleLogin)
 
@@ -166,7 +167,7 @@ func TestGoogleLogin_MissingBody(t *testing.T) {
 // ---- profile handler tests ----
 
 func TestGetProfile_Unauthenticated(t *testing.T) {
-	h := NewAuthHandler(nil)
+	h := NewAuthHandler(nil, nil, false)
 	app := newApp()
 	app.Get("/api/profile", h.GetProfile)
 
@@ -181,7 +182,7 @@ func TestGetProfile_Unauthenticated(t *testing.T) {
 }
 
 func TestUpdateProfile_Unauthenticated(t *testing.T) {
-	h := NewAuthHandler(nil)
+	h := NewAuthHandler(nil, nil, false)
 	app := newApp()
 	app.Put("/api/profile", h.UpdateProfile)
 
@@ -196,7 +197,7 @@ func TestUpdateProfile_Unauthenticated(t *testing.T) {
 }
 
 func TestUpdateProfile_MissingNames(t *testing.T) {
-	h := NewAuthHandler(nil)
+	h := NewAuthHandler(nil, nil, false)
 	app := newApp()
 	app.Use(func(c *fiber.Ctx) error {
 		c.Locals("accountID", int64(1))
@@ -217,7 +218,7 @@ func TestUpdateProfile_MissingNames(t *testing.T) {
 }
 
 func TestUpdateProfile_BadDOB(t *testing.T) {
-	h := NewAuthHandler(nil)
+	h := NewAuthHandler(nil, nil, false)
 	app := newApp()
 	app.Use(func(c *fiber.Ctx) error {
 		c.Locals("accountID", int64(1))
@@ -450,7 +451,7 @@ func TestKyc_VerifyPAN_BadAccountID(t *testing.T) {
 // ---- Middleware: RequireAuth/RequireRole + AccountID/AccountRole ----
 
 func TestRequireAuth_MissingHeader(t *testing.T) {
-	tokens := service.NewTokenService(config.AuthConfig{JWTSecret: "secret", JWTTTL: time.Hour})
+	tokens := service.NewTokenService(config.AuthConfig{JWTSecret: "secret", AccessTTL: time.Hour})
 	app := fiber.New(fiber.Config{ErrorHandler: apperr.ErrorHandler})
 	app.Use(middleware.RequireAuth(tokens))
 	app.Get("/", func(c *fiber.Ctx) error { return c.SendString("ok") })
@@ -466,8 +467,8 @@ func TestRequireAuth_MissingHeader(t *testing.T) {
 }
 
 func TestRequireAuth_ValidToken(t *testing.T) {
-	tokens := service.NewTokenService(config.AuthConfig{JWTSecret: "secret", JWTTTL: time.Hour})
-	issued, err := tokens.Issue(42, "admin")
+	tokens := service.NewTokenService(config.AuthConfig{JWTSecret: "secret", AccessTTL: time.Hour})
+	issued, err := tokens.Issue(42, "admin", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -498,8 +499,8 @@ func TestRequireAuth_ValidToken(t *testing.T) {
 }
 
 func TestRequireRole_WrongRole(t *testing.T) {
-	tokens := service.NewTokenService(config.AuthConfig{JWTSecret: "secret", JWTTTL: time.Hour})
-	issued, _ := tokens.Issue(1, "user")
+	tokens := service.NewTokenService(config.AuthConfig{JWTSecret: "secret", AccessTTL: time.Hour})
+	issued, _ := tokens.Issue(1, "user", 0)
 
 	app := fiber.New(fiber.Config{ErrorHandler: apperr.ErrorHandler})
 	app.Use(middleware.RequireRole(tokens, "admin"))
@@ -516,8 +517,104 @@ func TestRequireRole_WrongRole(t *testing.T) {
 	}
 }
 
+// RequireRole is a minimum-rank check, so a higher role passes a lower gate.
+func TestRequireRole_HigherRolePasses(t *testing.T) {
+	tokens := service.NewTokenService(config.AuthConfig{JWTSecret: "secret", AccessTTL: time.Hour})
+	issued, _ := tokens.Issue(1, models.RoleAdmin, 0)
+
+	app := fiber.New(fiber.Config{ErrorHandler: apperr.ErrorHandler})
+	app.Use(middleware.RequireRole(tokens, models.RoleUser))
+	app.Get("/", func(c *fiber.Ctx) error { return c.SendString("ok") })
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Authorization", "Bearer "+issued.Token)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("status = %d, want 200 (admin satisfies a user gate)", resp.StatusCode)
+	}
+}
+
+// A token minted before the role claim existed carries no role; it must still
+// satisfy a RoleUser gate and still be refused at a RoleAdmin gate.
+func TestRequireRole_LegacyTokenIsUser(t *testing.T) {
+	tokens := service.NewTokenService(config.AuthConfig{JWTSecret: "secret", AccessTTL: time.Hour})
+	issued, _ := tokens.Issue(1, "", 0)
+
+	cases := []struct {
+		gate string
+		want int
+	}{
+		{models.RoleUser, 200},
+		{models.RoleAdmin, 403},
+	}
+	for _, tc := range cases {
+		app := fiber.New(fiber.Config{ErrorHandler: apperr.ErrorHandler})
+		app.Use(middleware.RequireRole(tokens, tc.gate))
+		app.Get("/", func(c *fiber.Ctx) error { return c.SendString("ok") })
+
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("Authorization", "Bearer "+issued.Token)
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != tc.want {
+			t.Errorf("gate %q: status = %d, want %d", tc.gate, resp.StatusCode, tc.want)
+		}
+	}
+}
+
+// An unrecognized role must fail closed rather than pass a lower gate.
+func TestRequireRole_UnknownRoleDenied(t *testing.T) {
+	tokens := service.NewTokenService(config.AuthConfig{JWTSecret: "secret", AccessTTL: time.Hour})
+	issued, _ := tokens.Issue(1, "superuser", 0)
+
+	app := fiber.New(fiber.Config{ErrorHandler: apperr.ErrorHandler})
+	app.Use(middleware.RequireRole(tokens, models.RoleUser))
+	app.Get("/", func(c *fiber.Ctx) error { return c.SendString("ok") })
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Authorization", "Bearer "+issued.Token)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 403 {
+		t.Errorf("status = %d, want 403 for an unknown role", resp.StatusCode)
+	}
+}
+
+// RequireAuth normalizes a missing role claim to RoleUser in Locals.
+func TestRequireAuth_LegacyTokenRoleNormalized(t *testing.T) {
+	tokens := service.NewTokenService(config.AuthConfig{JWTSecret: "secret", AccessTTL: time.Hour})
+	issued, _ := tokens.Issue(7, "", 0)
+
+	app := fiber.New(fiber.Config{ErrorHandler: apperr.ErrorHandler})
+	app.Use(middleware.RequireAuth(tokens))
+	app.Get("/", func(c *fiber.Ctx) error {
+		role, ok := middleware.AccountRole(c)
+		if !ok || role != models.RoleUser {
+			return fiber.NewError(500, "role = "+role)
+		}
+		return c.SendString("ok")
+	})
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Authorization", "Bearer "+issued.Token)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
 func TestRequireAuth_InvalidScheme(t *testing.T) {
-	tokens := service.NewTokenService(config.AuthConfig{JWTSecret: "secret", JWTTTL: time.Hour})
+	tokens := service.NewTokenService(config.AuthConfig{JWTSecret: "secret", AccessTTL: time.Hour})
 	app := fiber.New(fiber.Config{ErrorHandler: apperr.ErrorHandler})
 	app.Use(middleware.RequireAuth(tokens))
 	app.Get("/", func(c *fiber.Ctx) error { return c.SendString("ok") })

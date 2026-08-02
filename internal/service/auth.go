@@ -26,6 +26,7 @@ type AuthService struct {
 	otp            *OTPService
 	mailer         Mailer
 	tokens         *TokenService
+	sessions       *SessionService
 	agentSvc       *AgentService
 	admins         []string // auth.admin-emails allowlist; lowercase
 	googleClientID string   // "Web application" OAuth client ID; empty -> disabled
@@ -36,6 +37,7 @@ func NewAuthService(
 	otp *OTPService,
 	mailer Mailer,
 	tokens *TokenService,
+	sessions *SessionService,
 	authCfg config.AuthConfig,
 	agentSvc *AgentService,
 ) *AuthService {
@@ -50,6 +52,7 @@ func NewAuthService(
 		otp:            otp,
 		mailer:         mailer,
 		tokens:         tokens,
+		sessions:       sessions,
 		agentSvc:       agentSvc,
 		admins:         admins,
 		googleClientID: authCfg.Google.ClientID,
@@ -63,11 +66,22 @@ type SignupResult struct {
 	Message   string `json:"message"`
 }
 
-// AuthResult carries a session token plus the account (returned on verify/login).
+// AuthResult carries a freshly minted token pair plus the account (returned on
+// verify/login/refresh).
+//
+// RefreshToken is populated by the service on every path, but the handler
+// strips it for web clients and sets an httpOnly cookie instead — a browser
+// must never see a 30-day credential in JS-readable JSON. SessionID is the
+// device this pair belongs to and is not serialized; handlers use it to set
+// cookies and to label the current device.
 type AuthResult struct {
-	Token     string          `json:"token"`
-	ExpiresAt time.Time       `json:"expiresAt"`
-	Account   *models.Account `json:"account"`
+	Token        string          `json:"token"`
+	ExpiresAt    time.Time       `json:"expiresAt"`
+	RefreshToken string          `json:"refreshToken,omitempty"`
+	Account      *models.Account `json:"account"`
+
+	SessionID        int64     `json:"-"`
+	RefreshExpiresAt time.Time `json:"-"`
 }
 
 // Signup creates a PENDING account with an unverified password identity and
@@ -177,7 +191,9 @@ func (s *AuthService) ResendOTP(ctx context.Context, email string) error {
 
 // VerifyEmail checks the signup OTP; on success it verifies the identity,
 // activates the account, and returns a session token.
-func (s *AuthService) VerifyEmail(ctx context.Context, email, otp string) (*AuthResult, error) {
+func (s *AuthService) VerifyEmail(
+	ctx context.Context, email, otp string, dev models.DeviceInfo,
+) (*AuthResult, error) {
 	email = normalizeEmail(email)
 
 	ch, err := s.accounts.FindActiveChallenge(ctx, email, models.OtpPurposeSignup)
@@ -252,11 +268,13 @@ func (s *AuthService) VerifyEmail(ctx context.Context, email, otp string) (*Auth
 	s.applyAdminRole(ctx, acc)
 
 	slog.Info("email verified", "account_id", acc.ID)
-	return s.issueToken(acc)
+	return s.issueSession(ctx, acc, dev)
 }
 
-// Login verifies email+password and returns a session token.
-func (s *AuthService) Login(ctx context.Context, email, password string) (*AuthResult, error) {
+// Login verifies email+password and opens a session for the device.
+func (s *AuthService) Login(
+	ctx context.Context, email, password string, dev models.DeviceInfo,
+) (*AuthResult, error) {
 	email = normalizeEmail(email)
 
 	ident, err := s.accounts.FindIdentity(ctx, models.ProviderPassword, email)
@@ -286,7 +304,7 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*AuthR
 	}
 	s.applyAdminRole(ctx, acc)
 	slog.Info("login", "account_id", acc.ID, "method", "password")
-	return s.issueToken(acc)
+	return s.issueSession(ctx, acc, dev)
 }
 
 // GetAccount returns the account for an authenticated request.
@@ -411,12 +429,59 @@ func (s *AuthService) issueAndSend(ctx context.Context, accountID *int64, destin
 	return s.mailer.SendOTP(destination, plain)
 }
 
-func (s *AuthService) issueToken(acc *models.Account) (*AuthResult, error) {
-	tok, err := s.tokens.Issue(acc.ID, acc.Role)
+// issueSession opens a session for the device and mints the access token bound
+// to it. Every successful authentication funnels through here, so a device
+// always ends up in the account's signed-in list.
+func (s *AuthService) issueSession(
+	ctx context.Context, acc *models.Account, dev models.DeviceInfo,
+) (*AuthResult, error) {
+	sess, refresh, err := s.sessions.Start(ctx, acc.ID, dev)
 	if err != nil {
 		return nil, err
 	}
-	return &AuthResult{Token: tok.Token, ExpiresAt: tok.ExpiresAt, Account: acc}, nil
+	tok, err := s.tokens.Issue(acc.ID, acc.Role, sess.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &AuthResult{
+		Token:            tok.Token,
+		ExpiresAt:        tok.ExpiresAt,
+		RefreshToken:     refresh,
+		Account:          acc,
+		SessionID:        sess.ID,
+		RefreshExpiresAt: sess.ExpiresAt,
+	}, nil
+}
+
+// Refresh exchanges a refresh token for a new token pair. The session's
+// account is re-read so a role change lands in the new access token within one
+// refresh cycle rather than waiting for the user to sign in again.
+func (s *AuthService) Refresh(
+	ctx context.Context, refreshToken string, dev models.DeviceInfo,
+) (*AuthResult, error) {
+	sess, next, err := s.sessions.Refresh(ctx, refreshToken, dev)
+	if err != nil {
+		return nil, err
+	}
+	acc, err := s.accounts.FindByID(ctx, sess.AccountID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, apperr.NewUnauthorized("Session expired; please sign in again")
+		}
+		return nil, err
+	}
+	tok, err := s.tokens.Issue(acc.ID, acc.Role, sess.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &AuthResult{
+		Token:            tok.Token,
+		ExpiresAt:        tok.ExpiresAt,
+		RefreshToken:     next,
+		Account:          acc,
+		SessionID:        sess.ID,
+		RefreshExpiresAt: sess.ExpiresAt,
+	}, nil
 }
 
 // applyAdminRole promotes the account to admin if its primary email is on the

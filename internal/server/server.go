@@ -28,11 +28,24 @@ func New(
 	orders *handler.OrderHandler,
 	tokens *service.TokenService,
 ) *fiber.App {
+	// Client IP resolution. X-Forwarded-For is only believed when the immediate
+	// peer is a configured trusted proxy — otherwise any caller could forge the
+	// IP recorded against their session. With no proxies configured the header
+	// is ignored entirely and c.IP() stays the socket peer.
+	trustProxies := len(cfg.Server.TrustedProxies) > 0
+	proxyHeader := ""
+	if trustProxies {
+		proxyHeader = fiber.HeaderXForwardedFor
+	}
+
 	app := fiber.New(fiber.Config{
-		ErrorHandler:          apperr.ErrorHandler,
-		ServerHeader:          "credit-report-service",
-		DisableStartupMessage: false,
-		BodyLimit:             bodyLimitBytes(cfg.Multipart.MaxRequestSize),
+		ErrorHandler:            apperr.ErrorHandler,
+		ServerHeader:            "credit-report-service",
+		DisableStartupMessage:   false,
+		BodyLimit:               bodyLimitBytes(cfg.Multipart.MaxRequestSize),
+		EnableTrustedProxyCheck: trustProxies,
+		TrustedProxies:          cfg.Server.TrustedProxies,
+		ProxyHeader:             proxyHeader,
 	})
 
 	// Request logger runs first so it can time every handler. It logs method,
@@ -42,10 +55,18 @@ func New(
 
 	// CORS: the browser frontend preflights cross-origin requests (OPTIONS);
 	// without this every POST from the UI fails with 405.
+	//
+	// AllowCredentials is required for the web refresh cookie to be sent and
+	// stored cross-origin, but the spec forbids pairing it with a wildcard
+	// origin — so it is only enabled once cors-origins names real origins.
+	// Leaving cors-origins at "*" silently disables cookie-based refresh for
+	// browsers; set it explicitly in any environment with a web frontend.
+	allowCredentials := cfg.Server.CORSOrigins != "*"
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: cfg.Server.CORSOrigins,
-		AllowMethods: "GET,POST,PUT,DELETE,OPTIONS",
-		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
+		AllowOrigins:     cfg.Server.CORSOrigins,
+		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS",
+		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, X-Device-Id, X-Device-Name, X-Device-Platform, X-Device-Info",
+		AllowCredentials: allowCredentials,
 	}))
 
 	api := app.Group("/api")
@@ -76,6 +97,10 @@ func New(
 	a.Post("/otp/resend", auth.ResendOTP)
 	a.Post("/login", auth.Login)
 	a.Post("/google", auth.GoogleLogin)
+	// Refresh is public: the refresh token (body for mobile, httpOnly cookie
+	// for web) is itself the credential, and the expired access token that
+	// prompted the call would fail RequireAuth.
+	a.Post("/refresh", auth.Refresh)
 
 	// Cashfree server-to-server webhook (public; authenticated by HMAC
 	// signature over the raw body, not by a bearer token).
@@ -83,6 +108,13 @@ func New(
 
 	// ---- Protected -------------------------------------------------------
 	requireAuth := middleware.RequireAuth(tokens)
+
+	// Sessions / signed-in devices. Mounted on the same /auth group but behind
+	// RequireAuth, unlike the public flows above.
+	a.Post("/logout", requireAuth, auth.Logout)
+	a.Get("/sessions", requireAuth, auth.ListSessions)
+	a.Delete("/sessions", requireAuth, auth.RevokeOtherSessions)
+	a.Delete("/sessions/:id<int>", requireAuth, auth.RevokeSession)
 
 	profile := api.Group("/profile", requireAuth)
 	profile.Get("/", auth.GetProfile)

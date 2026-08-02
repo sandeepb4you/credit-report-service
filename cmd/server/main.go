@@ -69,6 +69,7 @@ func main() {
 	analyticsRepo := repository.NewCreditAnalyticsRepo(pool)
 	agentRepo := repository.NewAgentRepo(pool)
 	orderRepo := repository.NewOrderRepo(pool)
+	sessionRepo := repository.NewSessionRepo(pool)
 
 	// Upstream clients.
 	digitapClient := digitap.New(digitap.Config{
@@ -94,14 +95,16 @@ func main() {
 	mailSvc := service.NewMailService(cfg.Mail, cfg.Auth.OTP.TTL)
 	tokenSvc := service.NewTokenService(cfg.Auth)
 	agentSvc := service.NewAgentService(agentRepo, accountRepo)
-	authSvc := service.NewAuthService(accountRepo, otpSvc, mailSvc, tokenSvc, cfg.Auth, agentSvc)
+	sessionSvc := service.NewSessionService(sessionRepo, cfg.Auth)
+	authSvc := service.NewAuthService(
+		accountRepo, otpSvc, mailSvc, tokenSvc, sessionSvc, cfg.Auth, agentSvc)
 	analyticsSvc := service.NewCreditAnalyticsService(digitapClient, analyticsRepo, accountRepo)
 	kycSvc := service.NewKycService(accountRepo)
 	orderSvc := service.NewOrderService(orderRepo, accountRepo, gateway, cfg.Cashfree)
 
 	// Handlers.
 	healthH := handler.NewHealthHandler()
-	authH := handler.NewAuthHandler(authSvc)
+	authH := handler.NewAuthHandler(authSvc, sessionSvc, cfg.Auth.CookieSecure)
 	analyticsH := handler.NewCreditAnalyticsHandler(analyticsSvc)
 	kycH := handler.NewKycHandler(kycSvc)
 	agentH := handler.NewAgentHandler(agentSvc, authSvc)
@@ -117,6 +120,9 @@ func main() {
 		"cashfree_stub", cashfreeStub,
 		"ocr_provider", cfg.Registration.OCR.Provider,
 		"google_login_enabled", cfg.Auth.Google.ClientID != "",
+		// Zero behind a load balancer means every session records the
+		// balancer's IP instead of the user's.
+		"trusted_proxies", len(cfg.Server.TrustedProxies),
 	)
 
 	app := server.New(cfg, healthH, authH, analyticsH, kycH, agentH, orderH, tokenSvc)
