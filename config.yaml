@@ -43,9 +43,9 @@ multipart:
 
 cashfree:
   mode: sandbox            # sandbox | production
-  # Credentials from the Cashfree merchant dashboard. OVERRIDE in prod via
-  # CASHFREE_CLIENT_ID / CASHFREE_CLIENT_SECRET env vars. Empty client-id ->
-  # log-only stub gateway (no real Cashfree calls; dev fallback).
+  # Credentials from the Cashfree merchant dashboard. Never commit real values:
+  # set them in the gitignored config.dev.yaml, or via CASHFREE_CLIENT_ID /
+  # CASHFREE_CLIENT_SECRET. Empty client-id -> log-only stub gateway.
   client-id: ""
   client-secret: ""
   api-version: "2025-01-01"
