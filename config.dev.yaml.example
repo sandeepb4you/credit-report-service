@@ -1,3 +1,14 @@
+# Template for config.dev.yaml (APP_PROFILE=dev), which is gitignored because
+# it holds real upstream credentials.
+#
+# Copy to config.dev.yaml and fill in the blanks:
+#   cp config.dev.yaml.example config.dev.yaml
+#
+# Anything left empty falls back to the stub/offline path, so the service still
+# boots without credentials. Never commit the filled-in copy — prefer env vars
+# (DB_URL, CASHFREE_CLIENT_SECRET, DIGITAP_CLIENT_SECRET, AUTH_JWT_SECRET) in
+# any shared or deployed environment.
+
 # Default service configuration. Override per-environment with config.<profile>.yaml
 # (loaded when APP_PROFILE=<profile>) or environment variables; env keys are
 # uppercased with dots/dashes flattened to underscores, e.g.
@@ -9,7 +20,7 @@ server:
 
 db:
   # Postgres URL (pgx-native). Override via DB_URL env var.
-  url: postgres://serpapp:serp1234@35.200.255.84:5432/credit?sslmode=disable&search_path=report
+  url: "postgres://USER:PASSWORD@HOST:5432/credit?sslmode=require&search_path=report"
   max-pool-size: 10
   min-idle: 2
 
@@ -22,7 +33,7 @@ mail:
 
 auth:
   # HS256 signing secret for login JWTs. OVERRIDE in prod via AUTH_JWT_SECRET.
-  jwt-secret: "dev-insecure-change-me"
+  jwt-secret: ""
   jwt-ttl: 720h   # 30 days
   otp:
     length: 6
@@ -54,9 +65,24 @@ digitap:
   #   DIGITAP_CLIENT_ID, DIGITAP_CLIENT_SECRET
   # When client-id is empty, the service runs the upstream client in an offline
   # stub mode (no outbound HTTP) so the build/tests work without credentials.
-  # client-id: "43398827"
-  # client-secret: "UwSufO5A0L7gZxABIsLjR9PILm9H2OQ5"
+  # client-id: ""
+  # client-secret: ""
   base-url: https://apidemo.digitap.work/
-  client-id:
-  client-secret: 
+  client-id: ""
+  client-secret: ""
   timeout: 30s
+
+cashfree:
+  mode: sandbox            # sandbox | production
+  # Credentials from the Cashfree merchant dashboard. OVERRIDE in prod via
+  # CASHFREE_CLIENT_ID / CASHFREE_CLIENT_SECRET env vars. Empty client-id ->
+  # log-only stub gateway (no real Cashfree calls; dev fallback).
+  client-id: ""
+  client-secret: ""
+  api-version: "2025-01-01"
+  # Browser redirect after payment; "{order_id}" is replaced with our order uid.
+  return-url: "http://localhost:3000/payment/result?order_id={order_id}"
+  # Public HTTPS URL of POST /api/payments/cashfree/webhook. Empty -> webhooks
+  # must be configured in the Cashfree dashboard instead.
+  notify-url: ""
+  timeout: 15s
