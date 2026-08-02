@@ -26,6 +26,7 @@ func New(
 	kyc *handler.KycHandler,
 	orders *handler.OrderHandler,
 	coupons *handler.CouponHandler,
+	loans *handler.LoanSwitchHandler,
 	tokens *service.TokenService,
 ) *fiber.App {
 	// Client IP resolution. X-Forwarded-For is only believed when the immediate
@@ -153,6 +154,23 @@ func New(
 	// ---- KYC (PAN submission) -------------------------------------------
 	k := api.Group("/kyc", requireAuth)
 	k.Post("/pan", kyc.SubmitPAN)
+
+	// ---- Loan switch (interest optimizer) -------------------------------
+	//
+	// The savings view is for any signed-in user; provider CRUD and the switch
+	// settings are admin-only, gated on the 'loan-provider:manage' permission.
+	api.Get("/loan-switch/opportunities", requireAuth, loans.GetOpportunities)
+
+	lp := api.Group("/admin/loan-providers", middleware.RequirePermission(tokens, models.PermLoanProviderManage))
+	lp.Post("/", loans.CreateProvider)
+	lp.Get("/", loans.ListProviders)
+	lp.Get("/:id<int>", loans.GetProvider)
+	lp.Put("/:id<int>", loans.UpdateProvider)
+	lp.Delete("/:id<int>", loans.DeleteProvider)
+
+	ls := api.Group("/admin/loan-switch", middleware.RequirePermission(tokens, models.PermLoanProviderManage))
+	ls.Get("/settings", loans.GetSettings)
+	ls.Put("/settings", loans.UpdateSettings)
 
 	// ---- Admin (permission-gated) ----------------------------------------
 	//

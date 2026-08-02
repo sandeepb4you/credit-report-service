@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -46,6 +47,10 @@ type CreditAnalyticsService struct {
 	client   *digitap.Client
 	repo     *repository.CreditAnalyticsRepo
 	accounts *repository.AccountRepo
+	// loanSwitch is optional: when set, insights responses are enriched with
+	// balance-transfer opportunities. Injected after construction (the two
+	// services share the analytics repo) via SetLoanSwitch.
+	loanSwitch *LoanSwitchService
 }
 
 func NewCreditAnalyticsService(
@@ -54,6 +59,13 @@ func NewCreditAnalyticsService(
 	accounts *repository.AccountRepo,
 ) *CreditAnalyticsService {
 	return &CreditAnalyticsService{client: client, repo: repo, accounts: accounts}
+}
+
+// SetLoanSwitch wires the loan-switch service used to enrich insights with
+// interest-reduction opportunities. Optional; when unset, insights simply carry
+// no interestSavings and no interest recommendations.
+func (s *CreditAnalyticsService) SetLoanSwitch(ls *LoanSwitchService) {
+	s.loanSwitch = ls
 }
 
 // CreditAnalyticsInput is the validated payload for a credit-analytics request.
@@ -84,19 +96,99 @@ type ReportPage struct {
 // report: the bureau credit score, on-time payment percentage, card
 // utilization percentage, and enquiry count for the past 180 days.
 type ReportInsights struct {
-	ReportID               int64         `json:"reportId"`
-	CreditScore            *int64        `json:"creditScore"`
-	OnTimePaymentPercent   float64       `json:"onTimePaymentPercent"`
-	CardUtilizationPercent float64       `json:"cardUtilizationPercent"`
-	EnquiryCount180Days    int64         `json:"enquiryCount180Days"`
-	Outdated               bool          `json:"outdated"`
-	TotalAccountCount      int64         `json:"totalAccountCount"`
-	ActiveAccountCount     int64         `json:"activeAccountCount"`
-	TotalOutstandingAmount float64       `json:"totalOutstandingAmount"`
-	MonthlyEMI             float64       `json:"monthlyEmi"`
-	InterestPaidPerYear    float64       `json:"interestPaidPerYear"`
-	LoanAccounts           []LoanAccount `json:"loanAccounts"`
-	ReportCard             *ReportCard   `json:"reportCard"`
+	ReportID               int64   `json:"reportId"`
+	CreditScore            *int64  `json:"creditScore"`
+	OnTimePaymentPercent   float64 `json:"onTimePaymentPercent"`
+	CardUtilizationPercent float64 `json:"cardUtilizationPercent"`
+	EnquiryCount180Days    int64   `json:"enquiryCount180Days"`
+	Outdated               bool    `json:"outdated"`
+	TotalAccountCount      int64   `json:"totalAccountCount"`
+	ActiveAccountCount     int64   `json:"activeAccountCount"`
+	TotalOutstandingAmount float64 `json:"totalOutstandingAmount"`
+	MonthlyEMI             float64 `json:"monthlyEmi"`
+	InterestPaidPerYear    float64 `json:"interestPaidPerYear"`
+	// DerogatoryAccounts counts written-off / settled / defaulted tradelines —
+	// the serious negatives the "good news" diagnosis checks for.
+	DerogatoryAccounts int           `json:"derogatoryAccounts"`
+	LoanAccounts       []LoanAccount `json:"loanAccounts"`
+	ReportCard         *ReportCard   `json:"reportCard"`
+
+	// InterestSavings holds the balance-transfer opportunities computed from the
+	// report's active loans (nil when the loan-switch feature isn't wired in).
+	InterestSavings *SwitchOpportunities `json:"interestSavings,omitempty"`
+	// Recommendations is a single prioritized list of actions the user can take,
+	// spanning both levers: improving the score (from the report card) and
+	// reducing interest (from recommended switches).
+	Recommendations []Recommendation `json:"recommendations"`
+	// ScoreBuilder is the credit-score diagnosis + rebuild plan (Journey 05·C):
+	// journey classification, a realistic target, the positives on file, what's
+	// dragging the score, and a toolkit of strategies to raise it.
+	ScoreBuilder *ScoreBuilder `json:"scoreBuilder,omitempty"`
+}
+
+// ScoreBuilder is the score-improvement view: a diagnosis (what's helping and
+// hurting), a realistic target, and a toolkit of concrete strategies. It adapts
+// to the score band — a "rebuild" plan for low scores, a "protect" plan for
+// high ones — so the same block drives both the low-score (S27–S29) and
+// good-score (S26) journeys.
+type ScoreBuilder struct {
+	// Journey is "rebuild" (< 650), "blended" (650–749), "protect" (>= 750), or
+	// "unknown" (no score on file).
+	Journey  string `json:"journey"`
+	Headline string `json:"headline"`
+
+	CurrentScore   *int64 `json:"currentScore"`
+	TargetScoreMin int    `json:"targetScoreMin"`
+	TargetScoreMax int    `json:"targetScoreMax"`
+	// TimelineMonthsMin/Max bound a realistic time-to-target (0 when the plan is
+	// "maintain", i.e. already at target).
+	TimelineMonthsMin int `json:"timelineMonthsMin"`
+	TimelineMonthsMax int `json:"timelineMonthsMax"`
+
+	// Positives are the reassuring facts found on the file (no defaults, etc.).
+	Positives []string `json:"positives"`
+	// Drivers are the factors dragging the score down (weakest first).
+	Drivers []ScoreDriver `json:"drivers"`
+	// Strategies is the rebuild/optimize toolkit, highest-impact first.
+	Strategies []BuilderStrategy `json:"strategies"`
+
+	Disclaimer string `json:"disclaimer"`
+}
+
+// ScoreDriver is one factor pulling the score down (from the report card).
+type ScoreDriver struct {
+	Factor  string `json:"factor"`
+	Grade   string `json:"grade"`
+	Summary string `json:"summary"`
+}
+
+// BuilderStrategy is one lever in the score toolkit. EstimatedPointsMin/Max are
+// nil for strategies whose payoff can't be quantified up front (e.g. disputing
+// errors), which the client renders as a "check" rather than a point range.
+type BuilderStrategy struct {
+	Key                string `json:"key"`
+	Title              string `json:"title"`
+	Detail             string `json:"detail"`
+	Tag                string `json:"tag"`
+	EstimatedPointsMin *int   `json:"estimatedPointsMin,omitempty"`
+	EstimatedPointsMax *int   `json:"estimatedPointsMax,omitempty"`
+}
+
+// Recommendation is one actionable suggestion in the unified action plan.
+type Recommendation struct {
+	// Category is "score" (raise the credit score) or "interest" (cut interest).
+	Category string `json:"category"`
+	Title    string `json:"title"`
+	Detail   string `json:"detail"`
+	// Impact is a human-readable, deliberately non-promissory hint at the payoff
+	// (e.g. the current factor state, or the estimated rupee saving).
+	Impact string `json:"impact,omitempty"`
+	// EstimatedPointsMin/Max bound the estimated score gain for "score"
+	// recommendations (nil for "interest" ones). They are estimates, not
+	// promises — actual movement depends on lender reporting cycles.
+	EstimatedPointsMin *int `json:"estimatedPointsMin,omitempty"`
+	EstimatedPointsMax *int `json:"estimatedPointsMax,omitempty"`
+	Priority           int  `json:"priority"`
 }
 
 // ReportCard is the school-style graded summary of the credit profile across
@@ -117,15 +209,22 @@ type CardFactor struct {
 }
 
 // LoanAccount is a per-tradeline summary in the insights response.
+//
+// InterestRatePercent and RemainingTenureMonths are lifted from the bureau
+// record when present; both are 0 when the report does not carry them (the
+// upstream file is often sparse on these), which downstream consumers such as
+// the switch optimizer must treat as "unknown", not as a real zero.
 type LoanAccount struct {
-	AccountNumber      string         `json:"accountNumber"`
-	LoanType           string         `json:"loanType"`
-	Company            string         `json:"company"`
-	PercentagePaid     float64        `json:"percentagePaid"`
-	TotalTenureMonths  int64          `json:"totalTenureMonths"`
-	CurrentBalance     float64        `json:"currentBalance"`
-	OriginalLoanAmount float64        `json:"originalLoanAmount"`
-	PaymentHistory     []PaymentMonth `json:"paymentHistory"`
+	AccountNumber         string         `json:"accountNumber"`
+	LoanType              string         `json:"loanType"`
+	Company               string         `json:"company"`
+	PercentagePaid        float64        `json:"percentagePaid"`
+	InterestRatePercent   float64        `json:"interestRatePercent"`
+	TotalTenureMonths     int64          `json:"totalTenureMonths"`
+	RemainingTenureMonths int64          `json:"remainingTenureMonths"`
+	CurrentBalance        float64        `json:"currentBalance"`
+	OriginalLoanAmount    float64        `json:"originalLoanAmount"`
+	PaymentHistory        []PaymentMonth `json:"paymentHistory"`
 }
 
 // PaymentMonth is one month's payment status in the 36-month history.
@@ -483,7 +582,12 @@ func (s *CreditAnalyticsService) GetReport(ctx context.Context, accountID, id in
 	if err != nil {
 		return nil, err
 	}
-	return s.insightsFromRow(row)
+	insights, err := s.insightsFromRow(row)
+	if err != nil {
+		return nil, err
+	}
+	s.enrich(ctx, insights)
+	return insights, nil
 }
 
 // GetReportRaw returns the caller's own report row verbatim, including the
@@ -524,16 +628,325 @@ func (s *CreditAnalyticsService) GetLatestReportInsights(ctx context.Context, ac
 	if err != nil {
 		return nil, err
 	}
-	return s.insightsFromRow(row)
+	insights, err := s.insightsFromRow(row)
+	if err != nil {
+		return nil, err
+	}
+	s.enrich(ctx, insights)
+	return insights, nil
 }
 
-// insightsFromRow derives the analytics view of a stored report row. The bureau
-// payload is parsed when present; a row without a stored response (a failed
-// pull / no-record result) still yields the metadata fields (report id, score,
-// outdated) with zeroed analytics rather than an error. The score prefers the
-// persisted column and falls back to parsing the response so reports created
-// before the column existed still report a score.
+// enrich augments a parsed report with the interest-reduction opportunities and
+// the unified recommendation list, so a single analytics call gives the client
+// both levers: raise the score and cut interest. Enrichment is best-effort — a
+// failure to load providers/settings leaves interestSavings nil rather than
+// failing the whole insights response.
+func (s *CreditAnalyticsService) enrich(ctx context.Context, insights *ReportInsights) {
+	if insights == nil {
+		return
+	}
+	if s.loanSwitch != nil && len(insights.LoanAccounts) > 0 {
+		if opps, err := s.loanSwitch.OpportunitiesFromInsights(ctx, insights); err != nil {
+			slog.Warn("insights enrichment: loan-switch opportunities failed",
+				"report_id", insights.ReportID, "error", err)
+		} else {
+			insights.InterestSavings = opps
+		}
+	}
+	insights.Recommendations = buildRecommendations(insights)
+	insights.ScoreBuilder = buildScoreBuilder(insights)
+}
+
+// buildRecommendations flattens the two improvement levers into one prioritized
+// list: concrete interest savings first (biggest net saving first), then the
+// score factors that have room to improve (weakest grade first). It is
+// nil-safe: a report with no card and no switch data yields an empty list.
+func buildRecommendations(ins *ReportInsights) []Recommendation {
+	recs := []Recommendation{}
+
+	// ---- Interest reductions (from recommended switches) ----
+	if ins.InterestSavings != nil {
+		recommended := make([]SwitchOpportunity, 0, len(ins.InterestSavings.Opportunities))
+		for _, o := range ins.InterestSavings.Opportunities {
+			if o.Recommended && o.BestProvider != nil {
+				recommended = append(recommended, o)
+			}
+		}
+		sort.SliceStable(recommended, func(i, j int) bool {
+			return recommended[i].NetSaving > recommended[j].NetSaving
+		})
+		for _, o := range recommended {
+			impact := fmt.Sprintf("Save about ₹%.0f over the tenure (₹%.0f/month)", o.NetSaving, o.MonthlyEmiSaving)
+			if o.RecoveryMonths != nil {
+				impact += fmt.Sprintf("; switching cost recovered in ~%d month(s)", *o.RecoveryMonths)
+			}
+			recs = append(recs, Recommendation{
+				Category: "interest",
+				Title:    "Refinance your " + strings.ToLower(o.LoanType) + " loan",
+				Detail: fmt.Sprintf("Move from %s at %.2f%% to %s at %.2f%%.",
+					o.CurrentLender, o.CurrentRatePercent, o.BestProvider.Name, o.NewRatePercent),
+				Impact: impact,
+			})
+		}
+	}
+
+	// ---- Score improvements (from report-card factors below an A) ----
+	if ins.ReportCard != nil {
+		weak := make([]CardFactor, 0, len(ins.ReportCard.Factors))
+		for _, f := range ins.ReportCard.Factors {
+			if gradeImprovable(f.Grade) {
+				weak = append(weak, f)
+			}
+		}
+		sort.SliceStable(weak, func(i, j int) bool {
+			return gradeRank(weak[i].Grade) < gradeRank(weak[j].Grade) // weakest first
+		})
+		for _, f := range weak {
+			rec := Recommendation{
+				Category: "score",
+				Title:    "Improve " + strings.ToLower(f.Name),
+				Detail:   f.Detail,
+				Impact:   f.Summary,
+			}
+			if lo, hi, ok := estimatedScoreGain(f.Name, f.Grade); ok {
+				rec.EstimatedPointsMin = &lo
+				rec.EstimatedPointsMax = &hi
+				rec.Impact = fmt.Sprintf("Estimated +%d–%d pts · %s", lo, hi, f.Summary)
+			}
+			recs = append(recs, rec)
+		}
+	}
+
+	for i := range recs {
+		recs[i].Priority = i + 1
+	}
+	return recs
+}
+
+// gradeRank orders letter grades worst-to-best for prioritization.
+func gradeRank(grade string) int {
+	switch grade {
+	case "F":
+		return 0
+	case "D":
+		return 1
+	case "C":
+		return 2
+	case "B":
+		return 3
+	case "A":
+		return 4
+	default: // "A+"
+		return 5
+	}
+}
+
+// gradeImprovable reports whether a factor grade has meaningful room to improve
+// (anything below an A).
+func gradeImprovable(grade string) bool { return gradeRank(grade) < 4 }
+
+// estimatedScoreGain returns an ESTIMATED point-range (low, high) for fixing a
+// report-card factor, scaled by how weak it currently is. These are indicative
+// ranges — the compliance-mandated "estimated" qualifier is added by the caller
+// — matched to the Score Improvement Playbook levers in the design (S28/S29).
+// ok is false for factors with no fast, quantifiable lever (nothing is fabricated).
+func estimatedScoreGain(factorName, grade string) (low, high int, ok bool) {
+	rank := gradeRank(grade) // 0=F .. 3=B (only called for below-A factors)
+	switch factorName {
+	case "Payment history":
+		// Recovering from missed payments — the heaviest factor (35%).
+		switch {
+		case rank <= 1: // F/D
+			return 50, 80, true
+		case rank == 2: // C
+			return 30, 50, true
+		default: // B
+			return 15, 30, true
+		}
+	case "Credit utilisation":
+		// The fastest lever: paying balances down reports quickly (30%).
+		switch {
+		case rank <= 1: // D/F — maxed out
+			return 40, 60, true
+		case rank == 2: // C
+			return 30, 50, true
+		default: // B
+			return 15, 30, true
+		}
+	case "Enquiries":
+		// Enquiries age off after ~6 clean months.
+		if rank <= 2 {
+			return 20, 40, true
+		}
+		return 10, 20, true
+	case "Credit age", "Credit mix":
+		// Slow, structural factors — modest, time-driven gains.
+		return 5, 15, true
+	default:
+		return 0, 0, false
+	}
+}
+
+// isDerogatoryStatus reports whether a Written_off_Settled_Status flag marks a
+// serious negative. Blank / "?" / "0" mean none.
+func isDerogatoryStatus(s string) bool {
+	switch strings.TrimSpace(s) {
+	case "", "?", "0", "00":
+		return false
+	default:
+		return true
+	}
+}
+
+const scoreBuilderDisclaimer = "Point impacts and timelines are estimates from your file, not guarantees. Real movement depends on lender reporting cycles."
+
+// buildScoreBuilder produces the score-improvement diagnosis + toolkit
+// (Journey 05·C for low scores, and a protect plan for high ones). It is
+// nil-safe on a report with no card. Nothing is fabricated: positives and
+// strategies are gated on what the file actually shows.
+func buildScoreBuilder(ins *ReportInsights) *ScoreBuilder {
+	if ins.ReportCard == nil {
+		return nil
+	}
+	sb := &ScoreBuilder{CurrentScore: ins.CreditScore, Disclaimer: scoreBuilderDisclaimer}
+
+	var score int
+	if ins.CreditScore != nil {
+		score = int(*ins.CreditScore)
+	}
+	switch {
+	case score <= 0:
+		sb.Journey, sb.Headline = "unknown", "Score unavailable — no plan yet"
+	case score < 650:
+		sb.Journey, sb.Headline = "rebuild", "Needs work — but fixable"
+		sb.TargetScoreMin, sb.TargetScoreMax = 700, max(700, min(750, score+100))
+		sb.TimelineMonthsMin, sb.TimelineMonthsMax = 8, 12
+	case score < 750:
+		sb.Journey, sb.Headline = "blended", "Good — with clear room to grow"
+		sb.TargetScoreMin, sb.TargetScoreMax = 750, max(750, min(800, score+70))
+		sb.TimelineMonthsMin, sb.TimelineMonthsMax = 6, 9
+	default:
+		sb.Journey, sb.Headline = "protect", "Excellent — protect and profit"
+		sb.TargetScoreMin, sb.TargetScoreMax = max(800, score), 900
+		// Already at target: the plan is to maintain, so no timeline.
+	}
+
+	// ---- Positives (the reassuring "good news") ----
+	if ins.DerogatoryAccounts == 0 {
+		sb.Positives = append(sb.Positives, "No defaults, write-offs, or settlements on your file.")
+	}
+	switch {
+	case ins.OnTimePaymentPercent >= 95:
+		sb.Positives = append(sb.Positives, "Strong repayment record — nearly all payments on time.")
+	case ins.OnTimePaymentPercent >= 80:
+		sb.Positives = append(sb.Positives, "Most payments are on time — a solid base to build on.")
+	}
+	if ins.EnquiryCount180Days == 0 {
+		sb.Positives = append(sb.Positives, "No recent enquiries — lenders see no credit hunger.")
+	}
+
+	// ---- Drivers (what's pulling the score down) ----
+	for _, f := range ins.ReportCard.Factors {
+		if gradeImprovable(f.Grade) {
+			sb.Drivers = append(sb.Drivers, ScoreDriver{Factor: f.Name, Grade: f.Grade, Summary: f.Summary})
+		}
+	}
+	sort.SliceStable(sb.Drivers, func(i, j int) bool {
+		return gradeRank(sb.Drivers[i].Grade) < gradeRank(sb.Drivers[j].Grade)
+	})
+
+	// ---- Strategies (the toolkit) ----
+	sb.Strategies = buildStrategies(ins, sb.Journey)
+	return sb
+}
+
+// buildStrategies assembles the score toolkit from the report's signals, then
+// orders it highest-estimated-impact first (unquantified levers like disputing
+// errors sort last).
+func buildStrategies(ins *ReportInsights, journey string) []BuilderStrategy {
+	strat := func(key, title, detail, tag string, lo, hi int) BuilderStrategy {
+		s := BuilderStrategy{Key: key, Title: title, Detail: detail, Tag: tag}
+		if hi > 0 {
+			l, h := lo, hi
+			s.EstimatedPointsMin, s.EstimatedPointsMax = &l, &h
+		}
+		return s
+	}
+
+	var out []BuilderStrategy
+
+	if ins.CardUtilizationPercent > 30 {
+		out = append(out, strat("crush_utilisation", "Crush card utilisation below 30%",
+			fmt.Sprintf("Your revolving usage is %.0f%%. Getting it under 30%% (ideally under 10%%) is the fastest score lever you control.", ins.CardUtilizationPercent),
+			"FASTEST FIX", 30, 50))
+	}
+
+	var missed int64
+	for _, f := range ins.ReportCard.Factors {
+		if f.Name == "Payment history" {
+			missed = f.MissedCount
+		}
+	}
+	if journey == "rebuild" || missed > 0 {
+		out = append(out, strat("perfect_streak", "Build a 12-month on-time streak",
+			"Autopay every EMI and card bill. Late marks fade as clean months stack on top — payment history is the heaviest scoring factor.",
+			"HIGH IMPACT", 50, 80))
+	}
+
+	if ins.EnquiryCount180Days > 2 {
+		out = append(out, strat("application_freeze", "Freeze new applications for 6 months",
+			fmt.Sprintf("You have %d enquiries in the last 6 months. Each one dents the score; they stop hurting after ~6 clean months.", ins.EnquiryCount180Days),
+			"PROTECT", 20, 40))
+	}
+
+	if journey == "rebuild" {
+		out = append(out, strat("fd_secured_card", "Open an FD-secured credit card",
+			"Open a small fixed deposit and get a card against it — guaranteed approval, no hard enquiry, and the FD keeps earning interest while every on-time month builds positive history.",
+			"BEST FOR YOU", 40, 80))
+	}
+
+	if journey == "protect" {
+		out = append(out, strat("protect_streak", "Autopay every bill to protect your streak",
+			"At your level the wins are protective: one 30-day slip can cost 50–100 points. Autopay locks in the streak that anchors your score.",
+			"PROTECT", 0, 0))
+		out = append(out, strat("premium_card", "Claim a lifetime-free premium card",
+			"A clean high-score file qualifies for lifetime-free premium cards — more limit (lower utilisation) and rewards, with no joining fee.",
+			"PERK", 0, 0))
+	}
+
+	// Always worth a look; the payoff can't be quantified up front.
+	out = append(out, strat("dispute_errors", "Dispute any report errors",
+		"Review your report for wrong late-marks or accounts you don't recognise and dispute them with the bureau — corrections are free and can lift the score quickly.",
+		"CHECK", 0, 0))
+
+	sort.SliceStable(out, func(i, j int) bool {
+		return strategyMax(out[i]) > strategyMax(out[j])
+	})
+	return out
+}
+
+func strategyMax(s BuilderStrategy) int {
+	if s.EstimatedPointsMax == nil {
+		return 0
+	}
+	return *s.EstimatedPointsMax
+}
+
+// insightsFromRow derives the analytics view of a stored report row. See
+// insightsFromReportRow for the details; this method just delegates so callers
+// on the service read naturally.
 func (s *CreditAnalyticsService) insightsFromRow(row *models.CreditAnalyticsRequest) (*ReportInsights, error) {
+	return insightsFromReportRow(row)
+}
+
+// insightsFromReportRow derives the analytics view of a stored report row. The
+// bureau payload is parsed when present; a row without a stored response (a
+// failed pull / no-record result) still yields the metadata fields (report id,
+// score, outdated) with zeroed analytics rather than an error. The score
+// prefers the persisted column and falls back to parsing the response so
+// reports created before the column existed still report a score. Shared by the
+// analytics and loan-switch services.
+func insightsFromReportRow(row *models.CreditAnalyticsRequest) (*ReportInsights, error) {
 	insights := &ReportInsights{}
 	if len(row.ResponseBody) > 0 {
 		parsed, err := parseReportInsights(row.ResponseBody)
@@ -582,6 +995,53 @@ func extractBureauScore(raw json.RawMessage) *int64 {
 	return &score
 }
 
+// caisAccountDetail is one tradeline from CAIS_Account_DETAILS.
+type caisAccountDetail struct {
+	PaymentHistoryProfile         string `json:"Payment_History_Profile"`
+	PortfolioType                 string `json:"Portfolio_Type"`
+	CreditLimitAmount             string `json:"Credit_Limit_Amount"`
+	CurrentBalance                string `json:"Current_Balance"`
+	AccountStatus                 string `json:"Account_Status"`
+	ScheduledMonthlyPaymentAmount string `json:"Scheduled_Monthly_Payment_Amount"`
+	RateOfInterest                string `json:"Rate_of_Interest"`
+	AccountType                   string `json:"Account_Type"`
+	AccountNumber                 string `json:"Account_Number"`
+	SubscriberName                string `json:"Subscriber_Name"`
+	OpenDate                      string `json:"Open_Date"`
+	HighestCredit                 string `json:"Highest_Credit_or_Original_Loan_Amount"`
+	RepaymentTenure               string `json:"Repayment_Tenure"`
+	WrittenOffSettledStatus       string `json:"Written_off_Settled_Status"`
+}
+
+// caisAccountDetailList tolerates a real Digitap/Experian quirk: CAIS_Account_DETAILS
+// is a JSON array when there are multiple tradelines, but the XML→JSON
+// conversion collapses it to a single JSON object when there is exactly one.
+// UnmarshalJSON accepts either shape and always yields a slice, so a one-loan
+// report is no longer silently dropped (or, worse, an unmarshal error).
+type caisAccountDetailList []caisAccountDetail
+
+func (l *caisAccountDetailList) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil
+	}
+	if trimmed[0] == '[' {
+		var arr []caisAccountDetail
+		if err := json.Unmarshal(trimmed, &arr); err != nil {
+			return err
+		}
+		*l = arr
+		return nil
+	}
+	// A single object (one tradeline) — wrap it into a one-element slice.
+	var one caisAccountDetail
+	if err := json.Unmarshal(trimmed, &one); err != nil {
+		return err
+	}
+	*l = caisAccountDetailList{one}
+	return nil
+}
+
 // parseReportInsights extracts on-time payment %, card utilization %, and
 // 180-day enquiry count from the raw Digitap INProfileResponse JSONB.
 //
@@ -612,21 +1072,7 @@ func parseReportInsights(raw json.RawMessage) (*ReportInsights, error) {
 		ResultJSON struct {
 			INProfileResponse struct {
 				CAISAccount struct {
-					CAISAccountDetails []struct {
-						PaymentHistoryProfile         string `json:"Payment_History_Profile"`
-						PortfolioType                 string `json:"Portfolio_Type"`
-						CreditLimitAmount             string `json:"Credit_Limit_Amount"`
-						CurrentBalance                string `json:"Current_Balance"`
-						AccountStatus                 string `json:"Account_Status"`
-						ScheduledMonthlyPaymentAmount string `json:"Scheduled_Monthly_Payment_Amount"`
-						RateOfInterest                string `json:"Rate_of_Interest"`
-						AccountType                   string `json:"Account_Type"`
-						AccountNumber                 string `json:"Account_Number"`
-						SubscriberName                string `json:"Subscriber_Name"`
-						OpenDate                      string `json:"Open_Date"`
-						HighestCredit                 string `json:"Highest_Credit_or_Original_Loan_Amount"`
-						RepaymentTenure               string `json:"Repayment_Tenure"`
-					} `json:"CAIS_Account_DETAILS"`
+					CAISAccountDetails caisAccountDetailList `json:"CAIS_Account_DETAILS"`
 				} `json:"CAIS_Account"`
 				TotalCAPSSummary struct {
 					TotalCAPSLast180Days string `json:"TotalCAPSLast180Days"`
@@ -745,15 +1191,18 @@ func parseReportInsights(raw json.RawMessage) (*ReportInsights, error) {
 			pctPaid = float64(int(pctPaid*10+0.5)) / 10
 		}
 
+		totalTenure := atoiSafe64(acct.RepaymentTenure)
 		loanAccounts = append(loanAccounts, LoanAccount{
-			AccountNumber:      acct.AccountNumber,
-			LoanType:           loanTypeFor(acct.AccountType),
-			Company:            acct.SubscriberName,
-			PercentagePaid:     pctPaid,
-			TotalTenureMonths:  atoiSafe64(acct.RepaymentTenure),
-			CurrentBalance:     roundTo2(balance),
-			OriginalLoanAmount: roundTo2(originalLoan),
-			PaymentHistory:     parsePaymentHistory(acct.PaymentHistoryProfile),
+			AccountNumber:         acct.AccountNumber,
+			LoanType:              loanTypeFor(acct.AccountType),
+			Company:               acct.SubscriberName,
+			PercentagePaid:        pctPaid,
+			InterestRatePercent:   atofSafe(acct.RateOfInterest),
+			TotalTenureMonths:     totalTenure,
+			RemainingTenureMonths: remainingTenureMonths(acct.OpenDate, totalTenure),
+			CurrentBalance:        roundTo2(balance),
+			OriginalLoanAmount:    roundTo2(originalLoan),
+			PaymentHistory:        parsePaymentHistory(acct.PaymentHistoryProfile),
 		})
 
 		// Track oldest account open date for credit age.
@@ -773,6 +1222,14 @@ func parseReportInsights(raw json.RawMessage) (*ReportInsights, error) {
 		// Track distinct product types for credit mix.
 		if lt := loanTypeFor(acct.AccountType); lt != "Other" {
 			productTypes[lt] = true
+		}
+
+		// Count serious negatives: written-off ("97") accounts or any account
+		// carrying a written-off/settled status flag. A "?"/blank status is not
+		// derogatory. This drives the "no defaults/write-offs/settlements"
+		// reassurance in the score-builder diagnosis.
+		if acct.AccountStatus == "97" || isDerogatoryStatus(acct.WrittenOffSettledStatus) {
+			insights.DerogatoryAccounts++
 		}
 	}
 	insights.LoanAccounts = loanAccounts
@@ -1041,6 +1498,34 @@ func overallGrade(factors []CardFactor) string {
 	default:
 		return "F"
 	}
+}
+
+// remainingTenureMonths estimates how many months are left on an installment
+// loan: its total tenure minus the months elapsed since the open date, clamped
+// to [0, total]. Returns 0 when the tenure is unknown (0) or the open date is
+// unparseable — callers must treat 0 as "unknown", the same convention the
+// bureau's sparse fields force elsewhere.
+func remainingTenureMonths(openDate string, totalTenure int64) int64 {
+	if totalTenure <= 0 {
+		return 0
+	}
+	opened := parseExperianDate(openDate)
+	if opened.IsZero() {
+		return 0
+	}
+	now := time.Now().UTC()
+	elapsed := int64((now.Year()-opened.Year())*12 + int(now.Month()) - int(opened.Month()))
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	remaining := totalTenure - elapsed
+	if remaining < 0 {
+		return 0
+	}
+	if remaining > totalTenure {
+		return totalTenure
+	}
+	return remaining
 }
 
 // parseExperianDate parses an Experian date string in YYYYMMDD format

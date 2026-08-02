@@ -70,6 +70,7 @@ func main() {
 	orderRepo := repository.NewOrderRepo(pool)
 	sessionRepo := repository.NewSessionRepo(pool)
 	couponRepo := repository.NewCouponRepo(pool)
+	loanRepo := repository.NewLoanProviderRepo(pool)
 
 	// Upstream clients.
 	digitapClient := digitap.New(digitap.Config{
@@ -104,6 +105,10 @@ func main() {
 	}
 	kycSvc := service.NewKycService(accountRepo, cfg.Demo.Enabled)
 	orderSvc := service.NewOrderService(orderRepo, accountRepo, couponSvc, gateway, cfg.Cashfree)
+	loanSwitchSvc := service.NewLoanSwitchService(loanRepo, analyticsRepo)
+	// Enrich analytics insights with interest-reduction opportunities so a single
+	// analytics call surfaces both levers: raise the score and cut interest.
+	analyticsSvc.SetLoanSwitch(loanSwitchSvc)
 
 	// Handlers.
 	healthH := handler.NewHealthHandler()
@@ -112,6 +117,7 @@ func main() {
 	kycH := handler.NewKycHandler(kycSvc)
 	orderH := handler.NewOrderHandler(orderSvc)
 	couponH := handler.NewCouponHandler(couponSvc)
+	loanH := handler.NewLoanSwitchHandler(loanSwitchSvc)
 
 	// One-time configuration snapshot. No secrets: just feature flags the
 	// operator needs to confirm at boot (stub vs. live upstream, OCR provider,
@@ -130,7 +136,7 @@ func main() {
 		"trusted_proxies", len(cfg.Server.TrustedProxies),
 	)
 
-	app := server.New(cfg, healthH, authH, analyticsH, kycH, orderH, couponH, tokenSvc)
+	app := server.New(cfg, healthH, authH, analyticsH, kycH, orderH, couponH, loanH, tokenSvc)
 
 	go func() {
 		addr := ":" + itoa(cfg.Server.Port)

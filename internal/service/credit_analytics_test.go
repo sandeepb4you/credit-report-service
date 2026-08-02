@@ -1208,3 +1208,146 @@ func TestExtractBureauScore_MissingOrEmpty(t *testing.T) {
 		})
 	}
 }
+
+func TestParseReportInsights_SingleAccountObject(t *testing.T) {
+	// The Digitap/Experian quirk: one tradeline -> CAIS_Account_DETAILS is a
+	// single OBJECT, not an array. It must parse to one loan account.
+	object := json.RawMessage(`{
+		"result_json": { "INProfileResponse": {
+			"CAIS_Account": { "CAIS_Account_DETAILS": {
+				"Payment_History_Profile": "000000000000000000000000000000000000",
+				"Portfolio_Type": "I", "Account_Type": "07",
+				"Current_Balance": "8200000", "Highest_Credit_or_Original_Loan_Amount": "9000000",
+				"Rate_of_Interest": "7.45", "Repayment_Tenure": "300",
+				"Account_Status": "11", "Subscriber_Name": "HDFC Bank Ltd",
+				"Account_Number": "XX8241", "Open_Date": "20250810"
+			} },
+			"SCORE": { "BureauScore": "815" }
+		} }
+	}`)
+	got, err := parseReportInsights(object)
+	if err != nil {
+		t.Fatalf("single-object parse errored: %v", err)
+	}
+	if got.TotalAccountCount != 1 || len(got.LoanAccounts) != 1 {
+		t.Fatalf("want 1 account, got total=%d loans=%d", got.TotalAccountCount, len(got.LoanAccounts))
+	}
+	if got.LoanAccounts[0].InterestRatePercent != 7.45 {
+		t.Errorf("rate not parsed: %v", got.LoanAccounts[0].InterestRatePercent)
+	}
+
+	// The equivalent single-element ARRAY must yield the same result.
+	array := json.RawMessage(`{
+		"result_json": { "INProfileResponse": {
+			"CAIS_Account": { "CAIS_Account_DETAILS": [{
+				"Payment_History_Profile": "000000000000000000000000000000000000",
+				"Portfolio_Type": "I", "Account_Type": "07",
+				"Current_Balance": "8200000", "Highest_Credit_or_Original_Loan_Amount": "9000000",
+				"Rate_of_Interest": "7.45", "Repayment_Tenure": "300",
+				"Account_Status": "11", "Subscriber_Name": "HDFC Bank Ltd",
+				"Account_Number": "XX8241", "Open_Date": "20250810"
+			}] },
+			"SCORE": { "BureauScore": "815" }
+		} }
+	}`)
+	got2, err := parseReportInsights(array)
+	if err != nil {
+		t.Fatalf("array parse errored: %v", err)
+	}
+	if got2.TotalAccountCount != 1 || len(got2.LoanAccounts) != 1 {
+		t.Fatalf("array: want 1 account, got total=%d loans=%d", got2.TotalAccountCount, len(got2.LoanAccounts))
+	}
+}
+
+// ---- score builder ----
+
+func sbStrategyKeys(sb *ScoreBuilder) map[string]bool {
+	m := map[string]bool{}
+	for _, s := range sb.Strategies {
+		m[s.Key] = true
+	}
+	return m
+}
+
+func TestBuildScoreBuilder_RebuildJourney(t *testing.T) {
+	sc := int64(605)
+	ins := &ReportInsights{
+		CreditScore: &sc, OnTimePaymentPercent: 80, CardUtilizationPercent: 68.3,
+		EnquiryCount180Days: 5, DerogatoryAccounts: 0,
+		ReportCard: &ReportCard{Factors: []CardFactor{
+			{Name: "Payment history", Grade: "C", Summary: "10 missed", MissedCount: 10},
+			{Name: "Credit utilisation", Grade: "C", Summary: "68% used"},
+			{Name: "Credit age", Grade: "C", Summary: "2.5 years"},
+			{Name: "Enquiries", Grade: "C", Summary: "5 in 6 months"},
+			{Name: "Credit mix", Grade: "B", Summary: "2 types"},
+		}},
+	}
+	sb := buildScoreBuilder(ins)
+	if sb == nil || sb.Journey != "rebuild" {
+		t.Fatalf("want rebuild, got %+v", sb)
+	}
+	if sb.TargetScoreMin != 700 || sb.TimelineMonthsMax != 12 {
+		t.Errorf("target/timeline wrong: %d %d", sb.TargetScoreMin, sb.TimelineMonthsMax)
+	}
+	keys := sbStrategyKeys(sb)
+	for _, want := range []string{"fd_secured_card", "crush_utilisation", "perfect_streak", "application_freeze", "dispute_errors"} {
+		if !keys[want] {
+			t.Errorf("rebuild toolkit missing %q", want)
+		}
+	}
+	// Strategies ordered by impact, unquantified (dispute) last.
+	if sb.Strategies[len(sb.Strategies)-1].Key != "dispute_errors" {
+		t.Errorf("dispute should sort last, got %q", sb.Strategies[len(sb.Strategies)-1].Key)
+	}
+	// Drivers weakest first; the B factor is last.
+	if sb.Drivers[len(sb.Drivers)-1].Grade != "B" {
+		t.Errorf("weakest-first ordering broken: %+v", sb.Drivers)
+	}
+	if len(sb.Positives) == 0 || sb.Positives[0] != "No defaults, write-offs, or settlements on your file." {
+		t.Errorf("expected no-derogatory positive, got %v", sb.Positives)
+	}
+}
+
+func TestBuildScoreBuilder_ProtectJourney(t *testing.T) {
+	sc := int64(815)
+	ins := &ReportInsights{
+		CreditScore: &sc, OnTimePaymentPercent: 100, CardUtilizationPercent: 15,
+		EnquiryCount180Days: 0, DerogatoryAccounts: 0,
+		ReportCard: &ReportCard{Factors: []CardFactor{
+			{Name: "Payment history", Grade: "A+"}, {Name: "Credit utilisation", Grade: "A"},
+			{Name: "Credit age", Grade: "A+"}, {Name: "Enquiries", Grade: "A+"}, {Name: "Credit mix", Grade: "A"},
+		}},
+	}
+	sb := buildScoreBuilder(ins)
+	if sb.Journey != "protect" {
+		t.Fatalf("want protect, got %s", sb.Journey)
+	}
+	if len(sb.Drivers) != 0 {
+		t.Errorf("all-A profile should have no drivers, got %+v", sb.Drivers)
+	}
+	keys := sbStrategyKeys(sb)
+	if keys["fd_secured_card"] {
+		t.Error("protect journey should not suggest an FD-secured card")
+	}
+	if !keys["protect_streak"] || !keys["premium_card"] {
+		t.Errorf("protect toolkit missing protect/perk strategies: %v", keys)
+	}
+	if len(sb.Positives) != 3 {
+		t.Errorf("want 3 positives (no-derog, strong repayment, no enquiries), got %v", sb.Positives)
+	}
+}
+
+func TestParseReportInsights_DerogatoryCount(t *testing.T) {
+	raw := json.RawMessage(`{"result_json":{"INProfileResponse":{"CAIS_Account":{"CAIS_Account_DETAILS":[
+		{"Account_Status":"97","Payment_History_Profile":"555","Current_Balance":"0","Subscriber_Name":"X"},
+		{"Account_Status":"11","Written_off_Settled_Status":"S","Payment_History_Profile":"000","Current_Balance":"5000","Subscriber_Name":"Y"},
+		{"Account_Status":"11","Written_off_Settled_Status":null,"Payment_History_Profile":"000","Current_Balance":"5000","Subscriber_Name":"Z"}
+	]}}}}`)
+	ins, err := parseReportInsights(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ins.DerogatoryAccounts != 2 {
+		t.Errorf("want 2 derogatory (written-off + settled), got %d", ins.DerogatoryAccounts)
+	}
+}

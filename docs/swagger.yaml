@@ -172,6 +172,44 @@ definitions:
       verifiedAt:
         type: string
     type: object
+  credit-report-service_internal_models.LoanProvider:
+    properties:
+      active:
+        type: boolean
+      createdAt:
+        type: string
+      id:
+        type: integer
+      interestRatePercent:
+        type: number
+      loanType:
+        type: string
+      maxTenureMonths:
+        type: integer
+      minCreditScore:
+        type: integer
+      name:
+        type: string
+      processingFeeFlat:
+        type: number
+      processingFeePercent:
+        type: number
+      updatedAt:
+        type: string
+    type: object
+  credit-report-service_internal_models.LoanSwitchSettings:
+    properties:
+      foreclosureFeePercentCar:
+        type: number
+      foreclosureFeePercentHome:
+        type: number
+      foreclosureFeePercentPersonal:
+        type: number
+      recoveryWindowMonths:
+        type: integer
+      updatedAt:
+        type: string
+    type: object
   credit-report-service_internal_models.Order:
     properties:
       amount:
@@ -236,6 +274,21 @@ definitions:
       token:
         type: string
     type: object
+  credit-report-service_internal_service.BuilderStrategy:
+    properties:
+      detail:
+        type: string
+      estimatedPointsMax:
+        type: integer
+      estimatedPointsMin:
+        type: integer
+      key:
+        type: string
+      tag:
+        type: string
+      title:
+        type: string
+    type: object
   credit-report-service_internal_service.CardFactor:
     properties:
       detail:
@@ -270,6 +323,8 @@ definitions:
         type: string
       currentBalance:
         type: number
+      interestRatePercent:
+        type: number
       loanType:
         type: string
       originalLoanAmount:
@@ -280,6 +335,8 @@ definitions:
         type: array
       percentagePaid:
         type: number
+      remainingTenureMonths:
+        type: integer
       totalTenureMonths:
         type: integer
     type: object
@@ -339,6 +396,32 @@ definitions:
       productCode:
         type: string
     type: object
+  credit-report-service_internal_service.Recommendation:
+    properties:
+      category:
+        description: Category is "score" (raise the credit score) or "interest" (cut
+          interest).
+        type: string
+      detail:
+        type: string
+      estimatedPointsMax:
+        type: integer
+      estimatedPointsMin:
+        description: |-
+          EstimatedPointsMin/Max bound the estimated score gain for "score"
+          recommendations (nil for "interest" ones). They are estimates, not
+          promises — actual movement depends on lender reporting cycles.
+        type: integer
+      impact:
+        description: |-
+          Impact is a human-readable, deliberately non-promissory hint at the payoff
+          (e.g. the current factor state, or the estimated rupee saving).
+        type: string
+      priority:
+        type: integer
+      title:
+        type: string
+    type: object
   credit-report-service_internal_service.ReportCard:
     properties:
       factors:
@@ -356,10 +439,21 @@ definitions:
         type: number
       creditScore:
         type: integer
+      derogatoryAccounts:
+        description: |-
+          DerogatoryAccounts counts written-off / settled / defaulted tradelines —
+          the serious negatives the "good news" diagnosis checks for.
+        type: integer
       enquiryCount180Days:
         type: integer
       interestPaidPerYear:
         type: number
+      interestSavings:
+        allOf:
+        - $ref: '#/definitions/credit-report-service_internal_service.SwitchOpportunities'
+        description: |-
+          InterestSavings holds the balance-transfer opportunities computed from the
+          report's active loans (nil when the loan-switch feature isn't wired in).
       loanAccounts:
         items:
           $ref: '#/definitions/credit-report-service_internal_service.LoanAccount'
@@ -370,10 +464,25 @@ definitions:
         type: number
       outdated:
         type: boolean
+      recommendations:
+        description: |-
+          Recommendations is a single prioritized list of actions the user can take,
+          spanning both levers: improving the score (from the report card) and
+          reducing interest (from recommended switches).
+        items:
+          $ref: '#/definitions/credit-report-service_internal_service.Recommendation'
+        type: array
       reportCard:
         $ref: '#/definitions/credit-report-service_internal_service.ReportCard'
       reportId:
         type: integer
+      scoreBuilder:
+        allOf:
+        - $ref: '#/definitions/credit-report-service_internal_service.ScoreBuilder'
+        description: |-
+          ScoreBuilder is the credit-score diagnosis + rebuild plan (Journey 05·C):
+          journey classification, a realistic target, the positives on file, what's
+          dragging the score, and a toolkit of strategies to raise it.
       totalAccountCount:
         type: integer
       totalOutstandingAmount:
@@ -400,6 +509,56 @@ definitions:
         type: integer
       id:
         type: integer
+    type: object
+  credit-report-service_internal_service.ScoreBuilder:
+    properties:
+      currentScore:
+        type: integer
+      disclaimer:
+        type: string
+      drivers:
+        description: Drivers are the factors dragging the score down (weakest first).
+        items:
+          $ref: '#/definitions/credit-report-service_internal_service.ScoreDriver'
+        type: array
+      headline:
+        type: string
+      journey:
+        description: |-
+          Journey is "rebuild" (< 650), "blended" (650–749), "protect" (>= 750), or
+          "unknown" (no score on file).
+        type: string
+      positives:
+        description: Positives are the reassuring facts found on the file (no defaults,
+          etc.).
+        items:
+          type: string
+        type: array
+      strategies:
+        description: Strategies is the rebuild/optimize toolkit, highest-impact first.
+        items:
+          $ref: '#/definitions/credit-report-service_internal_service.BuilderStrategy'
+        type: array
+      targetScoreMax:
+        type: integer
+      targetScoreMin:
+        type: integer
+      timelineMonthsMax:
+        type: integer
+      timelineMonthsMin:
+        description: |-
+          TimelineMonthsMin/Max bound a realistic time-to-target (0 when the plan is
+          "maintain", i.e. already at target).
+        type: integer
+    type: object
+  credit-report-service_internal_service.ScoreDriver:
+    properties:
+      factor:
+        type: string
+      grade:
+        type: string
+      summary:
+        type: string
     type: object
   credit-report-service_internal_service.SessionView:
     properties:
@@ -437,6 +596,74 @@ definitions:
         type: string
       message:
         type: string
+    type: object
+  credit-report-service_internal_service.SwitchOpportunities:
+    properties:
+      creditScore:
+        type: integer
+      disclaimer:
+        type: string
+      opportunities:
+        items:
+          $ref: '#/definitions/credit-report-service_internal_service.SwitchOpportunity'
+        type: array
+      recommendedCount:
+        type: integer
+      recoveryWindowMonths:
+        type: integer
+      reportId:
+        type: integer
+      totalMonthlyEmiSaving:
+        type: number
+      totalNetSaving:
+        type: number
+    type: object
+  credit-report-service_internal_service.SwitchOpportunity:
+    properties:
+      accountNumber:
+        type: string
+      bestProvider:
+        $ref: '#/definitions/credit-report-service_internal_models.LoanProvider'
+      currentEmi:
+        type: number
+      currentLender:
+        type: string
+      currentRatePercent:
+        type: number
+      foreclosureFee:
+        type: number
+      loanType:
+        description: HOME | PERSONAL | CAR
+        type: string
+      monthlyEmiSaving:
+        type: number
+      netSaving:
+        type: number
+      newEmi:
+        type: number
+      newRatePercent:
+        type: number
+      outstandingBalance:
+        type: number
+      processingFee:
+        type: number
+      reason:
+        type: string
+      recommended:
+        type: boolean
+      recoveryMonths:
+        type: integer
+      remainingTenureMonths:
+        type: integer
+      status:
+        description: |-
+          Status: "recommended" | "not_recommended" | "no_better_offer" |
+          "insufficient_data". Reason explains the non-recommended cases.
+        type: string
+      switchingCost:
+        type: number
+      totalInterestSaving:
+        type: number
     type: object
   internal_handler.createCouponReq:
     properties:
@@ -494,6 +721,33 @@ definitions:
         example: hunter2pass
         type: string
     type: object
+  internal_handler.providerReq:
+    properties:
+      active:
+        example: true
+        type: boolean
+      interestRatePercent:
+        example: 7.2
+        type: number
+      loanType:
+        example: HOME
+        type: string
+      maxTenureMonths:
+        example: 360
+        type: integer
+      minCreditScore:
+        example: 750
+        type: integer
+      name:
+        example: HDFC Bank
+        type: string
+      processingFeeFlat:
+        example: 3000
+        type: number
+      processingFeePercent:
+        example: 0.5
+        type: number
+    type: object
   internal_handler.refreshReq:
     properties:
       refreshToken:
@@ -511,6 +765,21 @@ definitions:
       role:
         example: agent
         type: string
+    type: object
+  internal_handler.settingsReq:
+    properties:
+      foreclosureFeePercentCar:
+        example: 4
+        type: number
+      foreclosureFeePercentHome:
+        example: 0
+        type: number
+      foreclosureFeePercentPersonal:
+        example: 4
+        type: number
+      recoveryWindowMonths:
+        example: 12
+        type: integer
     type: object
   internal_handler.signupReq:
     properties:
@@ -650,6 +919,260 @@ paths:
       summary: Verify an account's PAN (admin only)
       tags:
       - kyc
+  /admin/loan-providers:
+    get:
+      description: Returns configured providers, optionally filtered by loanType (HOME|PERSONAL|CAR)
+        and active. Requires 'loan-provider:manage'.
+      parameters:
+      - description: Filter by loan type (HOME, PERSONAL, CAR)
+        in: query
+        name: loanType
+        type: string
+      - description: Filter by active flag
+        in: query
+        name: active
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/credit-report-service_internal_models.LoanProvider'
+            type: array
+        "400":
+          description: Invalid loanType
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Missing the 'loan-provider:manage' permission
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List loan providers (admin)
+      tags:
+      - loan-providers
+    post:
+      consumes:
+      - application/json
+      description: 'Adds what a lender is offering for a loan type (HOME, PERSONAL,
+        CAR): interest rate, processing fees, minimum credit score, and optional tenure
+        cap. Used by the switch optimizer. Requires the ''loan-provider:manage'' permission.'
+      parameters:
+      - description: Provider offering
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.providerReq'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.LoanProvider'
+        "400":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Missing the 'loan-provider:manage' permission
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Create a loan provider offering (admin)
+      tags:
+      - loan-providers
+  /admin/loan-providers/{id}:
+    delete:
+      parameters:
+      - description: Provider id
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{\"message\": \"Loan provider deleted\"}'
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: id must be an integer
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Missing the 'loan-provider:manage' permission
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: Loan provider not found
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Delete a loan provider (admin)
+      tags:
+      - loan-providers
+    get:
+      parameters:
+      - description: Provider id
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.LoanProvider'
+        "400":
+          description: id must be an integer
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Missing the 'loan-provider:manage' permission
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: Loan provider not found
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Fetch a loan provider by id (admin)
+      tags:
+      - loan-providers
+    put:
+      consumes:
+      - application/json
+      description: Replaces the mutable fields of a provider. Requires 'loan-provider:manage'.
+      parameters:
+      - description: Provider id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Provider offering
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.providerReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.LoanProvider'
+        "400":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Missing the 'loan-provider:manage' permission
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: Loan provider not found
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Update a loan provider (admin)
+      tags:
+      - loan-providers
+  /admin/loan-switch/settings:
+    get:
+      description: Returns the configurable recovery window (how many months the switching
+        cost must be recovered within to recommend a switch) and the default foreclosure
+        fees per loan type. Requires 'loan-provider:manage'.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.LoanSwitchSettings'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Missing the 'loan-provider:manage' permission
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Get loan-switch settings (admin)
+      tags:
+      - loan-providers
+    put:
+      consumes:
+      - application/json
+      description: Sets the recovery window (months) and default foreclosure fees
+        per loan type. Requires 'loan-provider:manage'.
+      parameters:
+      - description: Switch settings
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.settingsReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.LoanSwitchSettings'
+        "400":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Missing the 'loan-provider:manage' permission
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Update loan-switch settings (admin)
+      tags:
+      - loan-providers
   /auth/google:
     post:
       consumes:
@@ -1199,8 +1722,12 @@ paths:
   /credit-analytics/latest-insights:
     get:
       description: 'Returns derived analytics from the most recent successful credit
-        report: the bureau credit score, on-time payment percentage, card utilization
-        percentage, and enquiry count for the past 180 days.'
+        report: the bureau score, on-time payment %, card utilization %, 180-day enquiries,
+        the graded report card, per-loan interest-reduction (balance-transfer) opportunities
+        under interestSavings, and a single prioritized ''recommendations'' list spanning
+        both levers — raising the score and cutting interest. Also includes a scoreBuilder
+        block (journey classification, realistic target, positives, weak-factor diagnosis,
+        and a rebuild/protect toolkit).'
       produces:
       - application/json
       responses:
@@ -1256,8 +1783,9 @@ paths:
     get:
       description: Returns the derived analytics (bureau score, on-time payment %,
         card utilization %, 180-day enquiry count, account summary, loan accounts,
-        and report card) for one of the caller's own reports, computed from the stored
-        bureau response.
+        report card, interest-reduction opportunities under interestSavings, and a
+        unified 'recommendations' list, plus a scoreBuilder diagnosis+toolkit) for
+        one of the caller's own reports, computed from the stored bureau response.
       parameters:
       - description: Report id
         in: path
@@ -1401,6 +1929,45 @@ paths:
       summary: Submit the authenticated account's PAN
       tags:
       - kyc
+  /loan-switch/opportunities:
+    get:
+      description: Matches each active home/personal/car loan on a credit report to
+        the cheapest configured provider for the caller's score band, and estimates
+        the monthly and total savings of a balance transfer. By default it uses the
+        caller's most recent report; pass reportId to evaluate a specific one (must
+        be your own). A switch is 'recommended' only when its cost (current loan's
+        foreclosure fee + new provider's processing fee) is recovered within the configured
+        recovery window. Loans the report is too sparse to evaluate are returned with
+        status 'insufficient_data'. Rates are indicative benchmarks, not offers.
+      parameters:
+      - description: Evaluate this report instead of the latest (must be your own)
+        in: query
+        name: reportId
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_service.SwitchOpportunities'
+        "400":
+          description: reportId must be an integer
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: No credit report found / report not found
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Loan-switch savings opportunities from a credit report
+      tags:
+      - loan-switch
   /orders:
     get:
       description: Returns every order placed by the authenticated account, newest

@@ -1,0 +1,725 @@
+{
+  "reportId": 3,
+  "creditScore": 815,
+  "onTimePaymentPercent": 100,
+  "cardUtilizationPercent": 19.5,
+  "enquiryCount180Days": 0,
+  "outdated": false,
+  "totalAccountCount": 3,
+  "activeAccountCount": 3,
+  "totalOutstandingAmount": 8958000,
+  "monthlyEmi": 78870,
+  "interestPaidPerYear": 696100,
+  "loanAccounts": [
+    {
+      "accountNumber": "XXXXXXXXXXXXXXX8241",
+      "loanType": "Home Loan",
+      "company": "HDFC Bank Ltd",
+      "percentagePaid": 8.9,
+      "interestRatePercent": 7.45,
+      "totalTenureMonths": 300,
+      "remainingTenureMonths": 288,
+      "currentBalance": 8200000,
+      "originalLoanAmount": 9000000,
+      "paymentHistory": [
+        {
+          "month": "2026-08",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2026-07",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2026-06",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2026-05",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2026-04",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2026-03",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2026-02",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2026-01",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-12",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-11",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-10",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-09",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-08",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-07",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-06",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-05",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-04",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-03",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-02",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-01",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-12",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-11",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-10",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-09",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-08",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-07",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-06",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-05",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-04",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-03",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-02",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-01",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2023-12",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2023-11",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2023-10",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2023-09",
+          "status": "not_reported",
+          "daysLate": 0
+        }
+      ]
+    },
+    {
+      "accountNumber": "XXXXXXXXXXXXXXX5590",
+      "loanType": "Auto Loan",
+      "company": "Kotak Mahindra Bank",
+      "percentagePaid": 38.2,
+      "interestRatePercent": 8.4,
+      "totalTenureMonths": 72,
+      "remainingTenureMonths": 45,
+      "currentBalance": 680000,
+      "originalLoanAmount": 1100000,
+      "paymentHistory": [
+        {
+          "month": "2026-08",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2026-07",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2026-06",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2026-05",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2026-04",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2026-03",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2026-02",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2026-01",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-12",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-11",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-10",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-09",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-08",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-07",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-06",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-05",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-04",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-03",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-02",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-01",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-12",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-11",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-10",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-09",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-08",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-07",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-06",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-05",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-04",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-03",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-02",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-01",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2023-12",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2023-11",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2023-10",
+          "status": "not_reported",
+          "daysLate": 0
+        },
+        {
+          "month": "2023-09",
+          "status": "not_reported",
+          "daysLate": 0
+        }
+      ]
+    },
+    {
+      "accountNumber": "XXXXXXXXXXXXXXX1180",
+      "loanType": "Credit Card",
+      "company": "Axis Bank Limited",
+      "percentagePaid": 80.5,
+      "interestRatePercent": 36,
+      "totalTenureMonths": 0,
+      "remainingTenureMonths": 0,
+      "currentBalance": 78000,
+      "originalLoanAmount": 400000,
+      "paymentHistory": [
+        {
+          "month": "2026-08",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2026-07",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2026-06",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2026-05",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2026-04",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2026-03",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2026-02",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2026-01",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-12",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-11",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-10",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-09",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-08",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-07",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-06",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-05",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-04",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-03",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-02",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2025-01",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-12",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-11",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-10",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-09",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-08",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-07",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-06",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-05",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-04",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-03",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-02",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2024-01",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2023-12",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2023-11",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2023-10",
+          "status": "paid",
+          "daysLate": 0
+        },
+        {
+          "month": "2023-09",
+          "status": "paid",
+          "daysLate": 0
+        }
+      ]
+    }
+  ],
+  "reportCard": {
+    "overallGrade": "A+",
+    "factors": [
+      {
+        "name": "Payment history",
+        "weight": 35,
+        "grade": "A+",
+        "summary": "No missed payments. Excellent track record.",
+        "detail": "Keep the streak alive.",
+        "missedCount": 0
+      },
+      {
+        "name": "Credit utilisation",
+        "weight": 30,
+        "grade": "A",
+        "summary": "19.5% utilization. Under 30% — good.",
+        "detail": "Push under 10% for A+.",
+        "missedCount": 0
+      },
+      {
+        "name": "Credit age",
+        "weight": 15,
+        "grade": "A+",
+        "summary": "11.4 years — long-established history.",
+        "detail": "Protect old accounts; they anchor your score.",
+        "missedCount": 0
+      },
+      {
+        "name": "Enquiries",
+        "weight": 10,
+        "grade": "A+",
+        "summary": "0 enquiries in 6 months. Lenders see zero credit hunger.",
+        "detail": "Maintain discipline.",
+        "missedCount": 0
+      },
+      {
+        "name": "Credit mix",
+        "weight": 10,
+        "grade": "A",
+        "summary": "3 product types: auto loan, credit card, home loan.",
+        "detail": "Good mix of revolving and installment.",
+        "missedCount": 0
+      }
+    ]
+  },
+  "interestSavings": {
+    "reportId": 3,
+    "creditScore": 815,
+    "recoveryWindowMonths": 12,
+    "opportunities": [
+      {
+        "loanType": "HOME",
+        "currentLender": "HDFC Bank Ltd",
+        "accountNumber": "XXXXXXXXXXXXXXX8241",
+        "outstandingBalance": 8200000,
+        "currentRatePercent": 7.45,
+        "remainingTenureMonths": 288,
+        "status": "recommended",
+        "bestProvider": {
+          "id": 1,
+          "name": "Kotak Mahindra Bank",
+          "loanType": "HOME",
+          "interestRatePercent": 7.2,
+          "processingFeePercent": 0,
+          "processingFeeFlat": 5000,
+          "minCreditScore": 800,
+          "maxTenureMonths": null,
+          "active": true,
+          "createdAt": "2026-07-15T10:12:04Z",
+          "updatedAt": "2026-07-15T10:12:04Z"
+        },
+        "newRatePercent": 7.2,
+        "currentEmi": 61204.21,
+        "newEmi": 59894.74,
+        "monthlyEmiSaving": 1309.47,
+        "totalInterestSaving": 377126.85,
+        "processingFee": 5000,
+        "switchingCost": 5000,
+        "netSaving": 372126.85,
+        "recoveryMonths": 4,
+        "recommended": true
+      },
+      {
+        "loanType": "CAR",
+        "currentLender": "Kotak Mahindra Bank",
+        "accountNumber": "XXXXXXXXXXXXXXX5590",
+        "outstandingBalance": 680000,
+        "currentRatePercent": 8.4,
+        "remainingTenureMonths": 45,
+        "status": "not_recommended",
+        "reason": "Switching cost is not recovered within the configured window.",
+        "bestProvider": {
+          "id": 12,
+          "name": "HDFC Bank",
+          "loanType": "CAR",
+          "interestRatePercent": 7.9,
+          "processingFeePercent": 0.5,
+          "processingFeeFlat": 1500,
+          "minCreditScore": 780,
+          "maxTenureMonths": null,
+          "active": true,
+          "createdAt": "2026-07-15T10:12:04Z",
+          "updatedAt": "2026-07-15T10:12:04Z"
+        },
+        "newRatePercent": 7.9,
+        "currentEmi": 17668.25,
+        "newEmi": 17509.13,
+        "monthlyEmiSaving": 159.12,
+        "totalInterestSaving": 7160.52,
+        "foreclosureFee": 27200,
+        "processingFee": 4900,
+        "switchingCost": 32100,
+        "netSaving": -24939.47,
+        "recoveryMonths": 202,
+        "recommended": false
+      }
+    ],
+    "totalMonthlyEmiSaving": 1309.47,
+    "totalNetSaving": 372126.85,
+    "recommendedCount": 1,
+    "disclaimer": "Rates are indicative market benchmarks, not offers. Actual eligibility and rates are decided by the lender."
+  },
+  "recommendations": [
+    {
+      "category": "interest",
+      "title": "Refinance your home loan",
+      "detail": "Move from HDFC Bank Ltd at 7.45% to Kotak Mahindra Bank at 7.20%.",
+      "impact": "Save about ₹372127 over the tenure (₹1309/month); switching cost recovered in ~4 month(s)",
+      "priority": 1
+    }
+  ]
+}

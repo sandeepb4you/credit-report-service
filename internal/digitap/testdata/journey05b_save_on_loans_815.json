@@ -1,0 +1,266 @@
+{
+  "http_response_code": 200,
+  "client_ref_num": "CA-1754140800000-b5e2f1",
+  "request_id": "3d9a7c12-05b0-4e21-8a7f-journey05b815",
+  "result_code": 101,
+  "message": "success",
+  "result": {
+    "result_json": {
+      "INProfileResponse": {
+        "Header": {
+          "SystemCode": "0",
+          "MessageText": null,
+          "ReportDate": "20260802",
+          "ReportTime": "094100"
+        },
+        "UserMessage": {
+          "UserMessageText": "Normal Response"
+        },
+        "CreditProfileHeader": {
+          "Enquiry_Username": "customized_match_v3__decimusfin_~DS",
+          "ReportDate": "20260802",
+          "ReportTime": "094100",
+          "Version": "V2.4",
+          "ReportNumber": "1754140800000",
+          "Subscriber": null,
+          "Subscriber_Name": "Bureau Disclosure Report with Customized Match V3"
+        },
+        "Current_Application": {
+          "Current_Application_Details": {
+            "Enquiry_Reason": "6",
+            "Finance_Purpose": null,
+            "Amount_Financed": "0",
+            "Duration_Of_Agreement": "0",
+            "Current_Applicant_Details": {
+              "Last_Name": "IYER",
+              "First_Name": "ANANYA",
+              "Middle_Name1": null,
+              "Gender_Code": null,
+              "Date_Of_Birth_Applicant": null,
+              "MobilePhoneNumber": "XXXXXX7708",
+              "EMailId": null
+            },
+            "Current_Other_Details": {
+              "Income": "0",
+              "Marital_Status": null,
+              "Employment_Status": null
+            },
+            "Current_Applicant_Address_Details": [
+              {
+                "FlatNoPlotNoHouseNo": null,
+                "City": null,
+                "State": null,
+                "PINCode": null,
+                "Country_Code": "IB"
+              }
+            ]
+          }
+        },
+        "CAIS_Account": {
+          "CAIS_Summary": {
+            "Credit_Account": {
+              "CreditAccountTotal": "3",
+              "CreditAccountActive": "3",
+              "CreditAccountDefault": "0",
+              "CreditAccountClosed": "0",
+              "CADSuitFiledCurrentBalance": "0"
+            },
+            "Total_Outstanding_Balance": {
+              "Outstanding_Balance_Secured": "8880000",
+              "Outstanding_Balance_Secured_Percentage": "99",
+              "Outstanding_Balance_UnSecured": "78000",
+              "Outstanding_Balance_UnSecured_Percentage": "1",
+              "Outstanding_Balance_All": "8958000"
+            }
+          },
+          "CAIS_Account_DETAILS": [
+            {
+              "Identification_Number": "PVTHDFC712",
+              "Subscriber_Name": "HDFC Bank Ltd",
+              "Account_Number": "XXXXXXXXXXXXXXX8241",
+              "Portfolio_Type": "I",
+              "Account_Type": "07",
+              "Open_Date": "20250810",
+              "Credit_Limit_Amount": "0",
+              "Highest_Credit_or_Original_Loan_Amount": "9000000",
+              "Scheduled_Monthly_Payment_Amount": "61204",
+              "Account_Status": "11",
+              "Payment_Rating": "0",
+              "Payment_History_Profile": "000000000000????????????????????????",
+              "Current_Balance": "8200000",
+              "Amount_Past_Due": null,
+              "Date_Reported": "20260728",
+              "Date_of_First_Delinquency": null,
+              "Date_Closed": null,
+              "Date_of_Last_Payment": "20260710",
+              "Written_off_Settled_Status": null,
+              "Occupation_Code": "S",
+              "Rate_of_Interest": "7.45",
+              "Repayment_Tenure": "300",
+              "DateOfAddition": "20250830",
+              "CurrencyCode": "INR",
+              "AccountHoldertypeCode": "1",
+              "CAIS_Account_History": [
+                { "Year": "2026", "Month": "07", "Days_Past_Due": "000", "Asset_Classification": "STD" },
+                { "Year": "2026", "Month": "06", "Days_Past_Due": "000", "Asset_Classification": "STD" },
+                { "Year": "2026", "Month": "05", "Days_Past_Due": "000", "Asset_Classification": "STD" },
+                { "Year": "2026", "Month": "04", "Days_Past_Due": "000", "Asset_Classification": "STD" },
+                { "Year": "2026", "Month": "03", "Days_Past_Due": "000", "Asset_Classification": "STD" },
+                { "Year": "2026", "Month": "02", "Days_Past_Due": "000", "Asset_Classification": "STD" },
+                { "Year": "2026", "Month": "01", "Days_Past_Due": "000", "Asset_Classification": "STD" },
+                { "Year": "2025", "Month": "12", "Days_Past_Due": "000", "Asset_Classification": "STD" },
+                { "Year": "2025", "Month": "11", "Days_Past_Due": "000", "Asset_Classification": "STD" },
+                { "Year": "2025", "Month": "10", "Days_Past_Due": "000", "Asset_Classification": "STD" },
+                { "Year": "2025", "Month": "09", "Days_Past_Due": "000", "Asset_Classification": "STD" },
+                { "Year": "2025", "Month": "08", "Days_Past_Due": "000", "Asset_Classification": "STD" }
+              ],
+              "CAIS_Holder_Details": [
+                { "Surname_Non_Normalized": "IYER", "Gender_Code": "2", "Date_of_birth": "19880417" }
+              ],
+              "CAIS_Holder_Address_Details": [
+                {
+                  "First_Line_Of_Address_non_normalized": "23 RESIDENCY ROAD",
+                  "Second_Line_Of_Address_non_normalized": "KORAMANGALA COLONY BENGALURU",
+                  "State_non_normalized": "29",
+                  "ZIP_Postal_Code_non_normalized": "560095",
+                  "CountryCode_non_normalized": "IB",
+                  "Address_indicator_non_normalized": "02"
+                }
+              ],
+              "CAIS_Holder_ID_Details": [
+                { "Income_TAX_PAN": "ABCPI XXXXK", "EMailId": "aiyer@example.com" }
+              ]
+            },
+            {
+              "Identification_Number": "PVTKOTK338",
+              "Subscriber_Name": "Kotak Mahindra Bank",
+              "Account_Number": "XXXXXXXXXXXXXXX5590",
+              "Portfolio_Type": "C",
+              "Account_Type": "01",
+              "Open_Date": "20240510",
+              "Credit_Limit_Amount": "0",
+              "Highest_Credit_or_Original_Loan_Amount": "1100000",
+              "Scheduled_Monthly_Payment_Amount": "17666",
+              "Account_Status": "11",
+              "Payment_Rating": "0",
+              "Payment_History_Profile": "000000000000000000000000000?????????",
+              "Current_Balance": "680000",
+              "Amount_Past_Due": null,
+              "Date_Reported": "20260726",
+              "Date_of_First_Delinquency": null,
+              "Date_Closed": null,
+              "Date_of_Last_Payment": "20260705",
+              "Written_off_Settled_Status": null,
+              "Occupation_Code": "S",
+              "Rate_of_Interest": "8.40",
+              "Repayment_Tenure": "72",
+              "DateOfAddition": "20240530",
+              "CurrencyCode": "INR",
+              "AccountHoldertypeCode": "1",
+              "CAIS_Account_History": [
+                { "Year": "2026", "Month": "07", "Days_Past_Due": "000", "Asset_Classification": "STD" },
+                { "Year": "2026", "Month": "06", "Days_Past_Due": "000", "Asset_Classification": "STD" },
+                { "Year": "2026", "Month": "05", "Days_Past_Due": "000", "Asset_Classification": "STD" },
+                { "Year": "2026", "Month": "04", "Days_Past_Due": "000", "Asset_Classification": "STD" },
+                { "Year": "2026", "Month": "03", "Days_Past_Due": "000", "Asset_Classification": "STD" },
+                { "Year": "2026", "Month": "02", "Days_Past_Due": "000", "Asset_Classification": "STD" },
+                { "Year": "2026", "Month": "01", "Days_Past_Due": "000", "Asset_Classification": "STD" }
+              ],
+              "CAIS_Holder_Details": [
+                { "Surname_Non_Normalized": "IYER", "Gender_Code": "2", "Date_of_birth": "19880417" }
+              ],
+              "CAIS_Holder_Address_Details": [
+                {
+                  "First_Line_Of_Address_non_normalized": "23 RESIDENCY ROAD",
+                  "Second_Line_Of_Address_non_normalized": "KORAMANGALA COLONY BENGALURU",
+                  "State_non_normalized": "29",
+                  "ZIP_Postal_Code_non_normalized": "560095",
+                  "CountryCode_non_normalized": "IB",
+                  "Address_indicator_non_normalized": "02"
+                }
+              ],
+              "CAIS_Holder_ID_Details": [
+                { "Income_TAX_PAN": "ABCPI XXXXK", "EMailId": "aiyer@example.com" }
+              ]
+            },
+            {
+              "Identification_Number": "PVTAXIS204",
+              "Subscriber_Name": "Axis Bank Limited",
+              "Account_Number": "XXXXXXXXXXXXXXX1180",
+              "Portfolio_Type": "R",
+              "Account_Type": "10",
+              "Open_Date": "20150312",
+              "Credit_Limit_Amount": "400000",
+              "Highest_Credit_or_Original_Loan_Amount": "400000",
+              "Scheduled_Monthly_Payment_Amount": null,
+              "Account_Status": "11",
+              "Payment_Rating": "0",
+              "Payment_History_Profile": "000000000000000000000000000000000000",
+              "Current_Balance": "78000",
+              "Amount_Past_Due": null,
+              "Date_Reported": "20260725",
+              "Date_of_First_Delinquency": null,
+              "Date_Closed": null,
+              "Date_of_Last_Payment": "20260708",
+              "Written_off_Settled_Status": null,
+              "Occupation_Code": "S",
+              "Rate_of_Interest": "36",
+              "Repayment_Tenure": "0",
+              "DateOfAddition": "20150402",
+              "CurrencyCode": "INR",
+              "AccountHoldertypeCode": "1",
+              "CAIS_Account_History": [
+                { "Year": "2026", "Month": "07", "Days_Past_Due": "000", "Asset_Classification": "STD" },
+                { "Year": "2026", "Month": "06", "Days_Past_Due": "000", "Asset_Classification": "STD" },
+                { "Year": "2026", "Month": "05", "Days_Past_Due": "000", "Asset_Classification": "STD" }
+              ],
+              "CAIS_Holder_Details": [
+                { "Surname_Non_Normalized": "IYER", "Gender_Code": "2", "Date_of_birth": "19880417" }
+              ],
+              "CAIS_Holder_Address_Details": [
+                {
+                  "First_Line_Of_Address_non_normalized": "23 RESIDENCY ROAD",
+                  "Second_Line_Of_Address_non_normalized": "KORAMANGALA COLONY BENGALURU",
+                  "State_non_normalized": "29",
+                  "ZIP_Postal_Code_non_normalized": "560095",
+                  "CountryCode_non_normalized": "IB",
+                  "Address_indicator_non_normalized": "02"
+                }
+              ],
+              "CAIS_Holder_ID_Details": [
+                { "Income_TAX_PAN": "ABCPI XXXXK", "EMailId": "aiyer@example.com" }
+              ]
+            }
+          ]
+        },
+        "Match_result": { "Exact_match": "Y" },
+        "TotalCAPS_Summary": {
+          "TotalCAPSLast7Days": "0",
+          "TotalCAPSLast30Days": "0",
+          "TotalCAPSLast90Days": "0",
+          "TotalCAPSLast180Days": "0"
+        },
+        "CAPS": {
+          "CAPS_Summary": {
+            "CAPSLast7Days": "0",
+            "CAPSLast30Days": "0",
+            "CAPSLast90Days": "0",
+            "CAPSLast180Days": "0"
+          }
+        },
+        "NonCreditCAPS": {
+          "NonCreditCAPS_Summary": {
+            "NonCreditCAPSLast7Days": "0",
+            "NonCreditCAPSLast30Days": "0",
+            "NonCreditCAPSLast90Days": "0",
+            "NonCreditCAPSLast180Days": "0"
+          }
+        },
+        "SCORE": {
+          "BureauScore": "815",
+          "BureauScoreConfidLevel": "H"
+        }
+      }
+    }
+  }
+}

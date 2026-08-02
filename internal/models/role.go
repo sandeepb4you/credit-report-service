@@ -33,11 +33,12 @@ var roleRank = map[string]int{
 // route declaration, and it is what lets the role -> permission mapping move
 // into the database later without changing any handler.
 const (
-	PermKycVerify      = "kyc:verify"       // mark another account's PAN verified
-	PermAccountSetRole = "account:set-role" // grant/revoke roles
-	PermCouponCreate   = "coupon:create"    // issue a coupon code
-	PermCouponManage   = "coupon:manage"    // list/revoke your own coupons
-	PermCouponAdmin    = "coupon:admin"     // see and revoke anyone's coupons
+	PermKycVerify          = "kyc:verify"           // mark another account's PAN verified
+	PermAccountSetRole     = "account:set-role"     // grant/revoke roles
+	PermCouponCreate       = "coupon:create"        // issue a coupon code
+	PermCouponManage       = "coupon:manage"        // list/revoke your own coupons
+	PermCouponAdmin        = "coupon:admin"         // see and revoke anyone's coupons
+	PermLoanProviderManage = "loan-provider:manage" // curate loan providers + switch settings
 )
 
 // rolePerms lists the permissions each role adds on top of the role beneath
@@ -54,6 +55,7 @@ var rolePerms = map[string][]string{
 		PermKycVerify,
 		PermAccountSetRole,
 		PermCouponAdmin,
+		PermLoanProviderManage,
 	},
 }
 

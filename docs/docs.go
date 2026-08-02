@@ -143,6 +143,396 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/loan-providers": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns configured providers, optionally filtered by loanType (HOME|PERSONAL|CAR) and active. Requires 'loan-provider:manage'.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "loan-providers"
+                ],
+                "summary": "List loan providers (admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by loan type (HOME, PERSONAL, CAR)",
+                        "name": "loanType",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Filter by active flag",
+                        "name": "active",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/credit-report-service_internal_models.LoanProvider"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid loanType",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing the 'loan-provider:manage' permission",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Adds what a lender is offering for a loan type (HOME, PERSONAL, CAR): interest rate, processing fees, minimum credit score, and optional tenure cap. Used by the switch optimizer. Requires the 'loan-provider:manage' permission.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "loan-providers"
+                ],
+                "summary": "Create a loan provider offering (admin)",
+                "parameters": [
+                    {
+                        "description": "Provider offering",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.providerReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.LoanProvider"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing the 'loan-provider:manage' permission",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/loan-providers/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "loan-providers"
+                ],
+                "summary": "Fetch a loan provider by id (admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Provider id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.LoanProvider"
+                        }
+                    },
+                    "400": {
+                        "description": "id must be an integer",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing the 'loan-provider:manage' permission",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Loan provider not found",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Replaces the mutable fields of a provider. Requires 'loan-provider:manage'.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "loan-providers"
+                ],
+                "summary": "Update a loan provider (admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Provider id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Provider offering",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.providerReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.LoanProvider"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing the 'loan-provider:manage' permission",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Loan provider not found",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "loan-providers"
+                ],
+                "summary": "Delete a loan provider (admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Provider id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{\\\"message\\\": \\\"Loan provider deleted\\\"}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "id must be an integer",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing the 'loan-provider:manage' permission",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Loan provider not found",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/loan-switch/settings": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the configurable recovery window (how many months the switching cost must be recovered within to recommend a switch) and the default foreclosure fees per loan type. Requires 'loan-provider:manage'.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "loan-providers"
+                ],
+                "summary": "Get loan-switch settings (admin)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.LoanSwitchSettings"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing the 'loan-provider:manage' permission",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sets the recovery window (months) and default foreclosure fees per loan type. Requires 'loan-provider:manage'.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "loan-providers"
+                ],
+                "summary": "Update loan-switch settings (admin)",
+                "parameters": [
+                    {
+                        "description": "Switch settings",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.settingsReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.LoanSwitchSettings"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing the 'loan-provider:manage' permission",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/google": {
             "post": {
                 "description": "Verifies a Google ID token (issued by the Android/iOS Google Sign-In SDK) and returns a session JWT. On first login, creates a verified account; on subsequent logins, reuses the existing account. If the Google email matches an existing account, the Google identity is linked onto it. Requires the Web OAuth client ID to be configured (AUTH_GOOGLE_CLIENT_ID); otherwise returns 503.",
@@ -937,7 +1327,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns derived analytics from the most recent successful credit report: the bureau credit score, on-time payment percentage, card utilization percentage, and enquiry count for the past 180 days.",
+                "description": "Returns derived analytics from the most recent successful credit report: the bureau score, on-time payment %, card utilization %, 180-day enquiries, the graded report card, per-loan interest-reduction (balance-transfer) opportunities under interestSavings, and a single prioritized 'recommendations' list spanning both levers — raising the score and cutting interest. Also includes a scoreBuilder block (journey classification, realistic target, positives, weak-factor diagnosis, and a rebuild/protect toolkit).",
                 "produces": [
                     "application/json"
                 ],
@@ -1021,7 +1411,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the derived analytics (bureau score, on-time payment %, card utilization %, 180-day enquiry count, account summary, loan accounts, and report card) for one of the caller's own reports, computed from the stored bureau response.",
+                "description": "Returns the derived analytics (bureau score, on-time payment %, card utilization %, 180-day enquiry count, account summary, loan accounts, report card, interest-reduction opportunities under interestSavings, and a unified 'recommendations' list, plus a scoreBuilder diagnosis+toolkit) for one of the caller's own reports, computed from the stored bureau response.",
                 "produces": [
                     "application/json"
                 ],
@@ -1224,6 +1614,57 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "PAN already linked to another account",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/loan-switch/opportunities": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Matches each active home/personal/car loan on a credit report to the cheapest configured provider for the caller's score band, and estimates the monthly and total savings of a balance transfer. By default it uses the caller's most recent report; pass reportId to evaluate a specific one (must be your own). A switch is 'recommended' only when its cost (current loan's foreclosure fee + new provider's processing fee) is recovered within the configured recovery window. Loans the report is too sparse to evaluate are returned with status 'insufficient_data'. Rates are indicative benchmarks, not offers.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "loan-switch"
+                ],
+                "summary": "Loan-switch savings opportunities from a credit report",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Evaluate this report instead of the latest (must be your own)",
+                        "name": "reportId",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_service.SwitchOpportunities"
+                        }
+                    },
+                    "400": {
+                        "description": "reportId must be an integer",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No credit report found / report not found",
                         "schema": {
                             "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
@@ -1834,6 +2275,64 @@ const docTemplate = `{
                 }
             }
         },
+        "credit-report-service_internal_models.LoanProvider": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "interestRatePercent": {
+                    "type": "number"
+                },
+                "loanType": {
+                    "type": "string"
+                },
+                "maxTenureMonths": {
+                    "type": "integer"
+                },
+                "minCreditScore": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "processingFeeFlat": {
+                    "type": "number"
+                },
+                "processingFeePercent": {
+                    "type": "number"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "credit-report-service_internal_models.LoanSwitchSettings": {
+            "type": "object",
+            "properties": {
+                "foreclosureFeePercentCar": {
+                    "type": "number"
+                },
+                "foreclosureFeePercentHome": {
+                    "type": "number"
+                },
+                "foreclosureFeePercentPersonal": {
+                    "type": "number"
+                },
+                "recoveryWindowMonths": {
+                    "type": "integer"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
         "credit-report-service_internal_models.Order": {
             "type": "object",
             "properties": {
@@ -1925,6 +2424,29 @@ const docTemplate = `{
                 }
             }
         },
+        "credit-report-service_internal_service.BuilderStrategy": {
+            "type": "object",
+            "properties": {
+                "detail": {
+                    "type": "string"
+                },
+                "estimatedPointsMax": {
+                    "type": "integer"
+                },
+                "estimatedPointsMin": {
+                    "type": "integer"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "tag": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
         "credit-report-service_internal_service.CardFactor": {
             "type": "object",
             "properties": {
@@ -1974,6 +2496,9 @@ const docTemplate = `{
                 "currentBalance": {
                     "type": "number"
                 },
+                "interestRatePercent": {
+                    "type": "number"
+                },
                 "loanType": {
                     "type": "string"
                 },
@@ -1988,6 +2513,9 @@ const docTemplate = `{
                 },
                 "percentagePaid": {
                     "type": "number"
+                },
+                "remainingTenureMonths": {
+                    "type": "integer"
                 },
                 "totalTenureMonths": {
                     "type": "integer"
@@ -2073,6 +2601,35 @@ const docTemplate = `{
                 }
             }
         },
+        "credit-report-service_internal_service.Recommendation": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "description": "Category is \"score\" (raise the credit score) or \"interest\" (cut interest).",
+                    "type": "string"
+                },
+                "detail": {
+                    "type": "string"
+                },
+                "estimatedPointsMax": {
+                    "type": "integer"
+                },
+                "estimatedPointsMin": {
+                    "description": "EstimatedPointsMin/Max bound the estimated score gain for \"score\"\nrecommendations (nil for \"interest\" ones). They are estimates, not\npromises — actual movement depends on lender reporting cycles.",
+                    "type": "integer"
+                },
+                "impact": {
+                    "description": "Impact is a human-readable, deliberately non-promissory hint at the payoff\n(e.g. the current factor state, or the estimated rupee saving).",
+                    "type": "string"
+                },
+                "priority": {
+                    "type": "integer"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
         "credit-report-service_internal_service.ReportCard": {
             "type": "object",
             "properties": {
@@ -2099,11 +2656,23 @@ const docTemplate = `{
                 "creditScore": {
                     "type": "integer"
                 },
+                "derogatoryAccounts": {
+                    "description": "DerogatoryAccounts counts written-off / settled / defaulted tradelines —\nthe serious negatives the \"good news\" diagnosis checks for.",
+                    "type": "integer"
+                },
                 "enquiryCount180Days": {
                     "type": "integer"
                 },
                 "interestPaidPerYear": {
                     "type": "number"
+                },
+                "interestSavings": {
+                    "description": "InterestSavings holds the balance-transfer opportunities computed from the\nreport's active loans (nil when the loan-switch feature isn't wired in).",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/credit-report-service_internal_service.SwitchOpportunities"
+                        }
+                    ]
                 },
                 "loanAccounts": {
                     "type": "array",
@@ -2120,11 +2689,26 @@ const docTemplate = `{
                 "outdated": {
                     "type": "boolean"
                 },
+                "recommendations": {
+                    "description": "Recommendations is a single prioritized list of actions the user can take,\nspanning both levers: improving the score (from the report card) and\nreducing interest (from recommended switches).",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/credit-report-service_internal_service.Recommendation"
+                    }
+                },
                 "reportCard": {
                     "$ref": "#/definitions/credit-report-service_internal_service.ReportCard"
                 },
                 "reportId": {
                     "type": "integer"
+                },
+                "scoreBuilder": {
+                    "description": "ScoreBuilder is the credit-score diagnosis + rebuild plan (Journey 05·C):\njourney classification, a realistic target, the positives on file, what's\ndragging the score, and a toolkit of strategies to raise it.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/credit-report-service_internal_service.ScoreBuilder"
+                        }
+                    ]
                 },
                 "totalAccountCount": {
                     "type": "integer"
@@ -2165,6 +2749,72 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "integer"
+                }
+            }
+        },
+        "credit-report-service_internal_service.ScoreBuilder": {
+            "type": "object",
+            "properties": {
+                "currentScore": {
+                    "type": "integer"
+                },
+                "disclaimer": {
+                    "type": "string"
+                },
+                "drivers": {
+                    "description": "Drivers are the factors dragging the score down (weakest first).",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/credit-report-service_internal_service.ScoreDriver"
+                    }
+                },
+                "headline": {
+                    "type": "string"
+                },
+                "journey": {
+                    "description": "Journey is \"rebuild\" (\u003c 650), \"blended\" (650–749), \"protect\" (\u003e= 750), or\n\"unknown\" (no score on file).",
+                    "type": "string"
+                },
+                "positives": {
+                    "description": "Positives are the reassuring facts found on the file (no defaults, etc.).",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "strategies": {
+                    "description": "Strategies is the rebuild/optimize toolkit, highest-impact first.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/credit-report-service_internal_service.BuilderStrategy"
+                    }
+                },
+                "targetScoreMax": {
+                    "type": "integer"
+                },
+                "targetScoreMin": {
+                    "type": "integer"
+                },
+                "timelineMonthsMax": {
+                    "type": "integer"
+                },
+                "timelineMonthsMin": {
+                    "description": "TimelineMonthsMin/Max bound a realistic time-to-target (0 when the plan is\n\"maintain\", i.e. already at target).",
+                    "type": "integer"
+                }
+            }
+        },
+        "credit-report-service_internal_service.ScoreDriver": {
+            "type": "object",
+            "properties": {
+                "factor": {
+                    "type": "string"
+                },
+                "grade": {
+                    "type": "string"
+                },
+                "summary": {
+                    "type": "string"
                 }
             }
         },
@@ -2217,6 +2867,105 @@ const docTemplate = `{
                 },
                 "message": {
                     "type": "string"
+                }
+            }
+        },
+        "credit-report-service_internal_service.SwitchOpportunities": {
+            "type": "object",
+            "properties": {
+                "creditScore": {
+                    "type": "integer"
+                },
+                "disclaimer": {
+                    "type": "string"
+                },
+                "opportunities": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/credit-report-service_internal_service.SwitchOpportunity"
+                    }
+                },
+                "recommendedCount": {
+                    "type": "integer"
+                },
+                "recoveryWindowMonths": {
+                    "type": "integer"
+                },
+                "reportId": {
+                    "type": "integer"
+                },
+                "totalMonthlyEmiSaving": {
+                    "type": "number"
+                },
+                "totalNetSaving": {
+                    "type": "number"
+                }
+            }
+        },
+        "credit-report-service_internal_service.SwitchOpportunity": {
+            "type": "object",
+            "properties": {
+                "accountNumber": {
+                    "type": "string"
+                },
+                "bestProvider": {
+                    "$ref": "#/definitions/credit-report-service_internal_models.LoanProvider"
+                },
+                "currentEmi": {
+                    "type": "number"
+                },
+                "currentLender": {
+                    "type": "string"
+                },
+                "currentRatePercent": {
+                    "type": "number"
+                },
+                "foreclosureFee": {
+                    "type": "number"
+                },
+                "loanType": {
+                    "description": "HOME | PERSONAL | CAR",
+                    "type": "string"
+                },
+                "monthlyEmiSaving": {
+                    "type": "number"
+                },
+                "netSaving": {
+                    "type": "number"
+                },
+                "newEmi": {
+                    "type": "number"
+                },
+                "newRatePercent": {
+                    "type": "number"
+                },
+                "outstandingBalance": {
+                    "type": "number"
+                },
+                "processingFee": {
+                    "type": "number"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "recommended": {
+                    "type": "boolean"
+                },
+                "recoveryMonths": {
+                    "type": "integer"
+                },
+                "remainingTenureMonths": {
+                    "type": "integer"
+                },
+                "status": {
+                    "description": "Status: \"recommended\" | \"not_recommended\" | \"no_better_offer\" |\n\"insufficient_data\". Reason explains the non-recommended cases.",
+                    "type": "string"
+                },
+                "switchingCost": {
+                    "type": "number"
+                },
+                "totalInterestSaving": {
+                    "type": "number"
                 }
             }
         },
@@ -2294,6 +3043,43 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_handler.providerReq": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "interestRatePercent": {
+                    "type": "number",
+                    "example": 7.2
+                },
+                "loanType": {
+                    "type": "string",
+                    "example": "HOME"
+                },
+                "maxTenureMonths": {
+                    "type": "integer",
+                    "example": 360
+                },
+                "minCreditScore": {
+                    "type": "integer",
+                    "example": 750
+                },
+                "name": {
+                    "type": "string",
+                    "example": "HDFC Bank"
+                },
+                "processingFeeFlat": {
+                    "type": "number",
+                    "example": 3000
+                },
+                "processingFeePercent": {
+                    "type": "number",
+                    "example": 0.5
+                }
+            }
+        },
         "internal_handler.refreshReq": {
             "type": "object",
             "properties": {
@@ -2318,6 +3104,27 @@ const docTemplate = `{
                 "role": {
                     "type": "string",
                     "example": "agent"
+                }
+            }
+        },
+        "internal_handler.settingsReq": {
+            "type": "object",
+            "properties": {
+                "foreclosureFeePercentCar": {
+                    "type": "number",
+                    "example": 4
+                },
+                "foreclosureFeePercentHome": {
+                    "type": "number",
+                    "example": 0
+                },
+                "foreclosureFeePercentPersonal": {
+                    "type": "number",
+                    "example": 4
+                },
+                "recoveryWindowMonths": {
+                    "type": "integer",
+                    "example": 12
                 }
             }
         },

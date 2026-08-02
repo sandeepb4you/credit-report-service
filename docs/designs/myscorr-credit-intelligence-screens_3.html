@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>myscorr — Credit Intelligence: Analysis, Savings &amp; Score Builder Screens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --page:#0A1420; --page2:#0E1B2C;
+  --ink:#12202E; --muted:#5B6B7B; --faint:#8E9AA8;
+  --screen:#F4F6F9; --card:#FFFFFF; --line:#E4E9EF;
+  --teal:#0E8A78; --teal-d:#0B6E60;
+  --green:#2FCE8F; --green-d:#177A4C; --amber:#F5A623; --amber-d:#D98E12;
+  --red:#E85A4F; --blue:#3B7BDD; --violet:#6B4FBB;
+  --lt:#EAF2F0;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:linear-gradient(180deg,var(--page),var(--page2));color:#E9EEF4;font-family:'Inter',system-ui,sans-serif;padding:48px 40px 80px}
+.wrap{max-width:1480px;margin:0 auto}
+.hero{margin-bottom:20px}
+.brandmark{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+.brandmark span{font-family:'Bricolage Grotesque';font-weight:800;font-size:26px;letter-spacing:-0.5px}
+h1{font-family:'Bricolage Grotesque';font-weight:800;font-size:44px;letter-spacing:-1px;line-height:1.05;max-width:900px}
+h1 em{font-style:normal;color:var(--amber)}
+.sub{color:#A7B4C2;font-size:15px;line-height:1.6;max-width:760px;margin-top:14px}
+.legend{display:flex;gap:10px;margin-top:22px;flex-wrap:wrap}
+.legend .tag{font-size:11px}
+.journey{margin-top:64px}
+.jhead{display:flex;align-items:baseline;gap:16px;border-bottom:1px solid rgba(255,255,255,.12);padding-bottom:14px;margin-bottom:30px}
+.jnum{font-family:'Bricolage Grotesque';font-weight:800;font-size:15px;color:var(--amber);letter-spacing:2px}
+.jhead h2{font-family:'Bricolage Grotesque';font-weight:700;font-size:26px;letter-spacing:-0.4px}
+.jhead p{color:#8FA0B0;font-size:13px;margin-left:auto;max-width:440px;text-align:right}
+.row{display:flex;flex-wrap:wrap;gap:36px;align-items:flex-start}
+.shot{width:300px}
+.phone{width:300px;background:#0C0E13;border-radius:38px;padding:9px;box-shadow:0 24px 60px rgba(0,0,0,.5), inset 0 0 0 1px #2A2F3A}
+.screen{position:relative;background:var(--screen);border-radius:30px;height:604px;overflow:hidden;display:flex;flex-direction:column;color:var(--ink)}
+.notch{position:absolute;top:7px;left:50%;transform:translateX(-50%);width:86px;height:20px;background:#0C0E13;border-radius:12px;z-index:5}
+.sb{display:flex;justify-content:space-between;align-items:center;padding:9px 18px 4px;font-size:10px;font-weight:600;color:var(--ink)}
+.sb .r{display:flex;gap:4px;align-items:center}
+.dot3{display:inline-flex;gap:2px}
+.dot3 i{width:3px;background:var(--ink);border-radius:1px;display:inline-block}
+.batt{width:18px;height:9px;border:1px solid var(--ink);border-radius:2.5px;position:relative}
+.batt::after{content:'';position:absolute;inset:1.5px;right:4px;background:var(--ink);border-radius:1px}
+.appbar{display:flex;align-items:center;gap:10px;padding:10px 16px 6px;font-weight:700;font-size:14px}
+.back{width:26px;height:26px;border-radius:8px;background:#fff;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--muted)}
+.content{flex:1;padding:12px 16px 14px;overflow:hidden;display:flex;flex-direction:column;gap:10px}
+.spacer{flex:1}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px}
+.btn{display:flex;align-items:center;justify-content:center;gap:8px;background:var(--teal);color:#fff;font-weight:700;font-size:13px;border-radius:13px;padding:13px;text-align:center}
+.btn.amber{background:var(--amber);color:#3A2A00}
+.btn.ghost{background:#fff;color:var(--teal);border:1.5px solid var(--teal)}
+.h{font-family:'Bricolage Grotesque';font-weight:700;letter-spacing:-0.3px}
+.t1{font-size:20px}.t2{font-size:16px}.t3{font-size:13.5px}
+.mut{color:var(--muted);font-size:11.5px;line-height:1.5}
+.tiny{font-size:10px;color:var(--faint);line-height:1.45}
+.lbl{font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:-4px}
+.chip{display:inline-flex;align-items:center;gap:5px;background:var(--lt);color:var(--teal-d);font-size:10.5px;font-weight:600;border-radius:99px;padding:4px 9px}
+.chip.warn{background:#FDF1E3;color:var(--amber-d)}
+.chip.bad{background:#FBE9E7;color:var(--red)}
+.chip.info{background:#E8F0FC;color:var(--blue)}
+.pill{display:inline-block;font-size:9.5px;font-weight:700;border-radius:99px;padding:3px 8px;letter-spacing:.4px}
+.rowline{display:flex;justify-content:space-between;align-items:center;font-size:12px}
+.divider{height:1px;background:var(--line)}
+.prog{height:6px;background:#E4E9EF;border-radius:99px;overflow:hidden}
+.prog i{display:block;height:100%;border-radius:99px;background:var(--teal)}
+.cap{margin-top:14px;font-size:12px;line-height:1.55;color:#A9B6C4}
+.cap b{display:block;color:#fff;font-size:13px;font-family:'Bricolage Grotesque';font-weight:700;margin-bottom:4px}
+.cap .snum{color:var(--amber);margin-right:6px}
+.tag{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;border-radius:99px;padding:3px 9px;margin:6px 6px 0 0;letter-spacing:.3px}
+.tag.rev{background:rgba(245,166,35,.15);color:#FFC85C;border:1px solid rgba(245,166,35,.4)}
+.tag.comp{background:rgba(59,123,221,.15);color:#8FB5EF;border:1px solid rgba(59,123,221,.4)}
+.tag.ux{background:rgba(47,206,143,.12);color:#6FE0B4;border:1px solid rgba(47,206,143,.35)}
+.tag.data{background:rgba(107,79,187,.18);color:#B9A6EE;border:1px solid rgba(107,79,187,.45)}
+/* new components for intelligence screens */
+.grade{width:30px;height:30px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-family:'Bricolage Grotesque';font-weight:800;font-size:13px;color:#fff;flex:none}
+.gA{background:#177A4C}.gB{background:#2FCE8F}.gC{background:#F5A623}.gD{background:#E8503A}
+.heat{display:grid;grid-template-columns:repeat(12,1fr);gap:3px}
+.heat i{height:12px;border-radius:3px;background:#DDE5EC}
+.heat i.ok{background:#2FCE8F}.heat i.sma{background:#F5A623}.heat i.bad{background:#E8503A}
+.donutwrap{display:flex;align-items:center;gap:12px}
+.donut{width:64px;height:64px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center}
+.donut b{width:40px;height:40px;border-radius:50%;background:#fff;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:var(--muted);text-align:center;line-height:1.2}
+.simchip{display:flex;justify-content:space-between;align-items:center;background:#fff;border:1.5px solid var(--line);border-radius:12px;padding:9px 11px;font-size:11px;font-weight:600}
+.simchip .delta{font-family:'Bricolage Grotesque';font-weight:800;font-size:12px}
+.up{color:#177A4C}.down{color:#E8503A}
+footer{margin-top:70px;border-top:1px solid rgba(255,255,255,.12);padding-top:22px;color:#8FA0B0;font-size:12.5px;line-height:1.7;max-width:940px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="hero">
+  <div class="brandmark">
+    <svg width="34" height="34" viewBox="0 0 34 34"><path d="M5 24 A13 13 0 0 1 29 24" fill="none" stroke="#F5A623" stroke-width="4.5" stroke-linecap="round"/><path d="M5 24 A13 13 0 0 1 17 11" fill="none" stroke="#2FCE8F" stroke-width="4.5" stroke-linecap="round"/><circle cx="17" cy="24" r="3.4" fill="#fff"/></svg>
+    <span>myscorr</span>
+  </div>
+  <h1>Credit Intelligence — <em>analysis, savings &amp; score-builder</em> screens</h1>
+  <p class="sub">Continues the master spec (S1–S19). These screens render the post-purchase analysis generated from the Experian pull. All values shown are a realistic sample profile matching the Experian report structure: score 815, 11 accounts (4 active), ₹94 L outstanding, 0 enquiries, 100% on-time history, active loans at 7.45% / 8.40%. Screens S27–S28 show the alternate journey for a low-score user (610 persona).</p>
+  <div class="legend">
+    <span class="tag rev">₹ REVENUE MOMENT</span>
+    <span class="tag comp">◆ COMPLIANCE NOTE</span>
+    <span class="tag ux">● UX NOTE</span>
+    <span class="tag data">⬡ DATA SOURCE (Experian JSON)</span>
+  </div>
+</div>
+
+<!-- ============ JOURNEY 5A ============ -->
+<div class="journey">
+  <div class="jhead"><span class="jnum">JOURNEY 05·A</span><h2>Score analysis &amp; report</h2><p>Turn the raw bureau JSON into a visual story: score → grades → accounts → payment proof. This is the ₹299 value made visible.</p></div>
+  <div class="row">
+
+  <!-- S20 Analysis dashboard -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar">Credit analysis<span style="margin-left:auto" class="tiny">Experian · 21 May</span></div>
+      <div class="content" style="padding-top:2px">
+        <div class="card" style="text-align:center;padding:14px 14px 12px;background:linear-gradient(160deg,#0E8A78,#0B6E60);color:#fff;border:none">
+          <svg width="132" height="74" viewBox="0 0 132 74"><path d="M12 68 A54 54 0 0 1 120 68" fill="none" stroke="rgba(255,255,255,.22)" stroke-width="11" stroke-linecap="round"/><path d="M12 68 A54 54 0 0 1 117 55" fill="none" stroke="#FFD98A" stroke-width="11" stroke-linecap="round"/></svg>
+          <div class="h" style="font-size:32px;margin-top:-48px">815</div>
+          <div style="font-size:10.5px;font-weight:700;letter-spacing:1.5px;color:#BFF3DC">EXCELLENT · TOP 7%</div>
+          <div class="tiny" style="color:#CFE9E2;margin-top:3px">Better than 93% of Indians · Range 300–900</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px">
+          <div class="card" style="padding:9px;text-align:center"><div class="h" style="font-size:14px">100%</div><div class="tiny">On-time<br>payments</div></div>
+          <div class="card" style="padding:9px;text-align:center"><div class="h" style="font-size:14px">20%</div><div class="tiny">Card<br>utilisation</div></div>
+          <div class="card" style="padding:9px;text-align:center"><div class="h" style="font-size:14px">0</div><div class="tiny">Enquiries<br>180 days</div></div>
+        </div>
+        <div class="card" style="padding:11px 12px">
+          <div class="rowline"><span class="tiny"><b style="color:var(--ink)">Your money snapshot</b></span><span class="tiny">11 accounts · 4 active</span></div>
+          <div class="rowline tiny" style="margin-top:7px"><span>Total outstanding</span><b style="color:var(--ink)">₹94 L</b></div>
+          <div class="rowline tiny" style="margin-top:4px"><span>Monthly EMI load (est.)</span><b style="color:var(--ink)">₹86 K</b></div>
+          <div class="rowline tiny" style="margin-top:4px"><span>Interest you'll pay this year (est.)</span><b style="color:var(--red)">₹6.8 L</b></div>
+        </div>
+        <div class="btn amber" style="padding:11px">💰 You can save ₹4.2 L — see how</div>
+        <div class="spacer"></div>
+        <div style="display:flex;gap:8px"><div class="btn ghost" style="flex:1;padding:10px">Report card</div><div class="btn" style="flex:1;padding:10px">Full analysis</div></div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S20</span>Analysis dashboard — the hero</b>Score with percentile ("top 6%") makes 815 feel earned. The three stat tiles preview each factor. The interest-cost line reframes the report from vanity metric to money: it sets up the savings CTA — the emotional hook Good Score / Oolka don't lead with.<br><span class="tag data">⬡ SCORE.BureauScore · CAPS_Summary · CAIS_Summary</span><span class="tag ux">● Money framing &gt; score framing</span></div>
+  </div>
+
+  <!-- S21 Report card -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>Your credit report card</div>
+      <div class="content" style="padding-top:4px">
+        <div class="card" style="display:flex;gap:11px;align-items:center;padding:11px 12px"><span class="grade gA">A+</span><div style="flex:1"><div class="rowline"><b style="font-size:12px">Payment history</b><span class="tiny">35% weight</span></div><div class="tiny">0 missed in 10+ years across 11 accounts. Elite.</div></div></div>
+        <div class="card" style="display:flex;gap:11px;align-items:center;padding:11px 12px"><span class="grade gA">A</span><div style="flex:1"><div class="rowline"><b style="font-size:12px">Credit utilisation</b><span class="tiny">30% weight</span></div><div class="tiny">₹78K of ₹4L limit (20%). Under 30 ✓ — push under 10 for A+.</div></div></div>
+        <div class="card" style="display:flex;gap:11px;align-items:center;padding:11px 12px"><span class="grade gA">A+</span><div style="flex:1"><div class="rowline"><b style="font-size:12px">Credit age</b><span class="tiny">15% weight</span></div><div class="tiny">10.8 years — anchored by your 2015 ICICI card.</div></div></div>
+        <div class="card" style="display:flex;gap:11px;align-items:center;padding:11px 12px"><span class="grade gA">A+</span><div style="flex:1"><div class="rowline"><b style="font-size:12px">Enquiries</b><span class="tiny">10% weight</span></div><div class="tiny">0 in 36 months. Lenders see zero credit hunger.</div></div></div>
+        <div class="card" style="display:flex;gap:11px;align-items:center;padding:11px 12px"><span class="grade gA">A</span><div style="flex:1"><div class="rowline"><b style="font-size:12px">Credit mix</b><span class="tiny">10% weight</span></div><div class="tiny">6 product types: home, auto, education, personal, cards.</div></div></div>
+        <div class="card" style="background:var(--lt);border-color:#CDE5DF;padding:10px 12px"><div class="tiny" style="color:var(--teal-d)"><b>Overall: A+ profile.</b> Your job now isn't fixing — it's protecting the streak and making banks pay for it (lower rates, premium cards).</div></div>
+        <div class="spacer"></div>
+        <div class="btn">Share my report card</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S21</span>Factor report card</b>School-style grades are instantly legible — the entire bureau file in five graded rows with factor weights for education. Every grade line ends with the next action. "Share" makes an 815 a flex → organic acquisition loop.<br><span class="tag data">⬡ CAIS_Account_History (DPD) · Credit_Limit vs Balance · Open_Date</span><span class="tag ux">● Shareable = viral surface</span></div>
+  </div>
+
+  <!-- S22 Portfolio -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>Loans &amp; cards</div>
+      <div class="content" style="padding-top:4px">
+        <div class="card" style="padding:11px 12px">
+          <div class="donutwrap">
+            <div class="donut" style="background:conic-gradient(#0E8A78 0 99%, #F5A623 99% 100%)"><b>99%<br>secured</b></div>
+            <div style="flex:1">
+              <div class="rowline tiny"><span>🟢 Secured (home + auto)</span><b style="color:var(--ink)">₹92.8 L</b></div>
+              <div class="rowline tiny" style="margin-top:4px"><span>🟠 Unsecured (card)</span><b style="color:var(--ink)">₹0.78 L</b></div>
+              <div class="tiny" style="margin-top:5px;color:var(--teal-d)">Healthy shape — debt backed by assets.</div>
+            </div>
+          </div>
+        </div>
+        <div class="lbl">Active · 4</div>
+        <div class="card" style="padding:10px 12px"><div class="rowline"><span class="tiny"><b style="color:var(--ink)">HDFC Home Loan</b> · 7.45%</span><b class="tiny" style="color:var(--ink)">₹82 L</b></div><div class="prog" style="margin-top:6px"><i style="width:3%"></i></div><div class="tiny" style="margin-top:3px">3% repaid · 300 mo tenure · <b style="color:var(--amber-d)">rate check available</b></div></div>
+        <div class="card" style="padding:10px 12px"><div class="rowline"><span class="tiny"><b style="color:var(--ink)">Kotak Auto Loan</b> · 8.40%</span><b class="tiny" style="color:var(--ink)">₹6.8 L</b></div><div class="prog" style="margin-top:6px"><i style="width:38%"></i></div><div class="tiny" style="margin-top:3px">38% repaid · 27 of 72 months done</div></div>
+        <div class="card" style="padding:10px 12px"><div class="rowline"><span class="tiny"><b style="color:var(--ink)">Axis Bank Card</b> · 20% used</span><b class="tiny" style="color:var(--ink)">₹0.78 L</b></div><div class="prog" style="margin-top:6px"><i style="width:20%;background:var(--green)"></i></div><div class="tiny" style="margin-top:3px">Limit ₹4 L · 0 overdue</div></div>
+        <div class="tiny" style="text-align:center">+ 1 more active · 7 closed accounts ›</div>
+        <div class="spacer"></div>
+        <div class="btn ghost">View all 11 accounts</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S22</span>Portfolio view</b>Secured/unsecured donut answers "is my debt healthy?" in one glance. Each active account shows rate + progress bar — and the 7.45% home loan is quietly flagged "rate check available," seeding Journey 5B. Closed accounts collapsed: history matters, clutter doesn't.<br><span class="tag data">⬡ CAIS_Account_DETAILS · Outstanding_Balance_Secured/UnSecured</span></div>
+  </div>
+
+  <!-- S23 Payment history -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>Payment history</div>
+      <div class="content" style="padding-top:4px">
+        <div class="card" style="text-align:center;padding:12px"><div class="h t1" style="color:var(--green-d)">130 months</div><div class="tiny">consecutive on-time payments · since Oct 2015</div></div>
+        <div class="lbl">Last 36 months · all accounts</div>
+        <div class="card" style="padding:11px 12px">
+          <div class="tiny" style="margin-bottom:6px"><b style="color:var(--ink)">2026</b></div>
+          <div class="heat"><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="tiny" style="margin:7px 0 6px"><b style="color:var(--ink)">2025</b></div>
+          <div class="heat"><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i></div>
+          <div class="tiny" style="margin:7px 0 6px"><b style="color:var(--ink)">2024</b></div>
+          <div class="heat"><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i></div>
+          <div style="display:flex;gap:10px;margin-top:9px" class="tiny"><span>🟩 On time</span><span>🟧 1–89 days late</span><span>🟥 90+ days</span></div>
+        </div>
+        <div class="card" style="background:var(--lt);border-color:#CDE5DF;padding:10px 12px"><div class="tiny" style="color:var(--teal-d)"><b>Why this matters:</b> payment history is 35% of your score. One 30-day slip can cost 50–100 points and takes ~12 months to heal. Protect the streak → set autopay.</div></div>
+        <div class="spacer"></div>
+        <div class="btn">Set autopay reminders 🔔</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S23</span>Payment heatmap + streak</b>The DPD grid becomes a GitHub-style heatmap and the streak counter ("130 months") gamifies perfection — users will protect a number they can see. For users with slips, late cells turn amber/red and tapping one explains which account and what it cost. Reminder CTA earns the notification permission with obvious value.<br><span class="tag data">⬡ CAIS_Account_History · Payment_History_Profile</span><span class="tag ux">● Streak = retention mechanic</span></div>
+  </div>
+
+  </div>
+</div>
+
+<!-- ============ JOURNEY 5B ============ -->
+<div class="journey">
+  <div class="jhead"><span class="jnum">JOURNEY 05·B</span><h2>Save money on existing loans</h2><p>The differentiator: an 815 score is negotiating power. Compute the savings, then hand the user a ready-made negotiation kit.</p></div>
+  <div class="row">
+
+  <!-- S24 Rate optimizer -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>Interest optimizer</div>
+      <div class="content" style="padding-top:4px">
+        <div class="card" style="background:linear-gradient(150deg,#12202E,#1C3547);color:#fff;text-align:center;padding:16px 14px;border:none">
+          <div style="font-size:10.5px;letter-spacing:1.5px;opacity:.8">WITH YOUR 815 SCORE YOU CAN SAVE</div>
+          <div class="h" style="font-size:30px;margin-top:5px;color:#FFD98A">₹4.2 Lakh</div>
+          <div class="tiny" style="color:#B9C6D2;margin-top:3px">over your loan tenures · ₹1,250/month starting now</div>
+        </div>
+        <div class="lbl">Opportunity 1 · Home loan reprice</div>
+        <div class="card" style="padding:11px 12px">
+          <div class="rowline"><span class="tiny"><b style="color:var(--ink)">HDFC Home Loan · ₹82 L</b></span><span class="pill" style="background:#FBE9E7;color:var(--red)">HIGH IMPACT</span></div>
+          <div class="rowline tiny" style="margin-top:7px"><span>You pay</span><b style="color:var(--red)">7.45%</b></div>
+          <div class="rowline tiny" style="margin-top:4px"><span>Best rate for 800+ scores today</span><b style="color:var(--green-d)">7.20%</b></div>
+          <div class="divider" style="margin:8px 0"></div>
+          <div class="rowline"><span class="tiny">Savings if repriced</span><b class="tiny" style="color:var(--green-d)">₹1,250/mo · ₹3.8 L total</b></div>
+        </div>
+        <div class="lbl">Opportunity 2 · Auto loan</div>
+        <div class="card" style="padding:11px 12px">
+          <div class="rowline"><span class="tiny"><b style="color:var(--ink)">Kotak Auto · 8.40% → 8.10%</b></span><span class="tiny" style="color:var(--green-d)"><b>₹0.4 L saved</b></span></div>
+        </div>
+        <div class="spacer"></div>
+        <div class="btn amber">Get my negotiation kit →</div>
+        <div class="tiny" style="text-align:center">Rates are indicative market benchmarks, not offers</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S24</span>Interest-rate optimizer</b>The money screen. Compares each active loan's actual rate (from the report) against current market benchmarks for the user's score band, and totals the savings. This converts a one-time report into recurring value — rates change, so this screen has a reason to be reopened monthly.<br><span class="tag data">⬡ Rate_of_Interest · Current_Balance · Repayment_Tenure</span><span class="tag rev">₹ Sets up refinance referrals</span><span class="tag comp">◆ "Indicative, not an offer" line mandatory</span></div>
+  </div>
+
+  <!-- S25 Negotiation kit -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>Rate negotiation kit</div>
+      <div class="content" style="padding-top:4px">
+        <div class="mut">3 steps to a lower home-loan rate. Works because HDFC would rather cut 0.25% than lose a ₹82 L loan.</div>
+        <div class="card" style="padding:11px 12px;display:flex;gap:10px"><div class="grade gB" style="border-radius:99px">1</div><div class="tiny"><b style="color:var(--ink)">Ask for "interest rate conversion"</b><br>Visit your home branch / netbanking → request spread reset. One-time fee ~₹1,000–5,000. No new loan, no paperwork circus.</div></div>
+        <div class="card" style="padding:11px 12px;display:flex;gap:10px"><div class="grade gB" style="border-radius:99px">2</div><div class="tiny"><b style="color:var(--ink)">Show your leverage</b><br>Your 815 score + this report + a competing bank's 7.20% offer. We've drafted the request letter for you.</div></div>
+        <div class="card" style="padding:11px 12px;display:flex;gap:10px"><div class="grade gB" style="border-radius:99px">3</div><div class="tiny"><b style="color:var(--ink)">If they refuse — balance transfer</b><br>Move to a bank at 7.20%. Worth it when rate gap ≥0.25% and 5+ years remain. Yours: 0.25% and 24 years ✓</div></div>
+        <div class="card" style="background:#FDF7EC;border-color:#F1DFBE;padding:10px 12px"><div class="tiny" style="color:var(--amber-d)"><b>Break-even check:</b> conversion fee ₹5,000 ÷ ₹1,250 monthly saving = recovered in 4 months. After that, pure profit.</div></div>
+        <div class="spacer"></div>
+        <div style="display:flex;gap:8px"><div class="btn ghost" style="flex:1;padding:10px">📄 Get letter</div><div class="btn" style="flex:1;padding:10px">Compare BT offers</div></div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S25</span>Negotiation kit</b>No app in the category does this: a concrete script with the fee, the break-even math, and a generated letter. "Compare BT offers" routes to partner lenders when the bank refuses — a second monetisable moment born from a money-saving feature, which keeps trust intact.<br><span class="tag rev">₹ Balance-transfer referral</span><span class="tag ux">● Trust engine of the app</span></div>
+  </div>
+
+  <!-- S26 Protect & optimize plan -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>Your action plan</div>
+      <div class="content" style="padding-top:4px">
+        <div class="card" style="background:var(--lt);border-color:#CDE5DF;padding:10px 12px"><div class="tiny" style="color:var(--teal-d)"><b>815 → 850+ · protect &amp; profit plan.</b> At your level the wins are money wins, not score wins.</div></div>
+        <div class="card" style="padding:11px 12px"><div class="rowline"><b style="font-size:12px">Reprice home loan to 7.20%</b><span class="pill" style="background:#FBE9E7;color:var(--red)">₹3.8 L</span></div><div class="tiny" style="margin-top:4px">Your single biggest financial move this year. 4-month payback.</div></div>
+        <div class="card" style="padding:11px 12px"><div class="rowline"><b style="font-size:12px">Autopay every EMI &amp; card bill</b><span class="pill" style="background:#FDF1E3;color:var(--amber-d)">PROTECT</span></div><div class="tiny" style="margin-top:4px">One 30-day slip = −50 to −100 points and your 130-month streak.</div></div>
+        <div class="card" style="padding:11px 12px"><div class="rowline"><b style="font-size:12px">Pay card before statement date</b><span class="pill" style="background:#E8F0FC;color:var(--blue)">+5–10 pts</span></div><div class="tiny" style="margin-top:4px">Clearing ₹78K before the 12th reports ~0% utilisation to Experian.</div></div>
+        <div class="card" style="padding:11px 12px"><div class="rowline"><b style="font-size:12px">Claim a premium card — free</b><span class="pill" style="background:#EDE7FA;color:var(--violet)">PERK</span></div><div class="tiny" style="margin-top:4px">815 + clean file = lifetime-free premium cards. Never pay joining fees.</div></div>
+        <div class="card" style="padding:11px 12px"><div class="rowline"><b style="font-size:12px">Keep the Axis card forever</b><span class="pill" style="background:#FDF1E3;color:var(--amber-d)">PROTECT</span></div><div class="tiny" style="margin-top:4px">Your only active card. Closing it would spike utilisation to ∞.</div></div>
+        <div class="spacer"></div>
+        <div class="btn">Track my plan · 5 actions</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S26</span>Personalized plan — good-score persona</b>Every recommendation is computed from the file, priced in rupees or points, and trackable. Note the honesty: for an 815 we say "your wins are money wins" instead of inventing fake score problems — that's what earns the right to recommend a premium card (commission) without feeling like an ad.<br><span class="tag rev">₹ Premium card referral</span><span class="tag ux">● Checklist = recurring sessions</span></div>
+  </div>
+
+  </div>
+</div>
+
+<!-- ============ JOURNEY 5C ============ -->
+<div class="journey">
+  <div class="jhead"><span class="jnum">JOURNEY 05·C</span><h2>Score builder — low-score journey</h2><p>Alternate path when the pull returns a weak file (610 persona shown). Diagnosis → rebuild toolkit (FD card &amp; more) → simulator → monthly tracking.</p></div>
+  <div class="row">
+
+  <!-- S27 Low score diagnosis -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar">Credit analysis<span style="margin-left:auto" class="tiny">Experian · 01 Aug</span></div>
+      <div class="content" style="padding-top:2px">
+        <div class="card" style="text-align:center;padding:14px;background:linear-gradient(160deg,#8A4A0E,#6E3A0B);color:#fff;border:none">
+          <div class="h" style="font-size:32px">610</div>
+          <div style="font-size:10.5px;font-weight:700;letter-spacing:1.5px;color:#FFD9A8">NEEDS WORK · FIXABLE</div>
+          <div class="tiny" style="color:#EAD7C2;margin-top:3px">Realistic target: 700+ in 8–12 months</div>
+        </div>
+        <div class="lbl">What's pulling you down</div>
+        <div class="card" style="padding:10px 12px;display:flex;gap:11px;align-items:center"><span class="grade gD">D</span><div style="flex:1"><div class="rowline"><b style="font-size:12px">2 late payments</b><span class="tiny">Dec '25, Jan '26</span></div><div class="tiny">Bajaj card, 30 days late · biggest drag, heals with every on-time month</div></div></div>
+        <div class="card" style="padding:10px 12px;display:flex;gap:11px;align-items:center"><span class="grade gD">D</span><div style="flex:1"><div class="rowline"><b style="font-size:12px">64% utilisation</b><span class="tiny">₹82K / ₹1.28L</span></div><div class="tiny">Above 30% signals stress · fastest fix available</div></div></div>
+        <div class="card" style="padding:10px 12px;display:flex;gap:11px;align-items:center"><span class="grade gC">C</span><div style="flex:1"><div class="rowline"><b style="font-size:12px">4 enquiries in 90 days</b><span class="tiny">−20 to −40 pts</span></div><div class="tiny">Stop applying anywhere for 6 months</div></div></div>
+        <div class="card" style="background:var(--lt);border-color:#CDE5DF;padding:9px 12px"><div class="tiny" style="color:var(--teal-d)"><b>Good news:</b> no defaults, no write-offs, no settlements. This is a discipline problem, not a debt problem — and discipline is trainable.</div></div>
+        <div class="spacer"></div>
+        <div class="btn amber">Build my comeback plan →</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S27</span>Low-score diagnosis</b>Same layout grammar as S20 but warm-amber, never shaming red-on-black. Headline pairs the truth ("needs work") with agency ("fixable, 700+ in 8–12 months"). Ends on the genuine positive found in the file — hope is what keeps a 610 user subscribed for the whole rebuild journey.<br><span class="tag data">⬡ DPD entries · utilisation · CAPS counts</span><span class="tag ux">● Tone: coach, not judge</span></div>
+  </div>
+
+  <!-- S28 Rebuild toolkit -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>Score builder toolkit</div>
+      <div class="content" style="padding-top:4px">
+        <div class="card" style="border:1.5px solid var(--teal);padding:11px 12px">
+          <div class="rowline"><b style="font-size:12.5px">🏦 FD-secured credit card</b><span class="pill" style="background:var(--lt);color:var(--teal-d)">BEST FOR YOU</span></div>
+          <div class="tiny" style="margin-top:5px">Open a ₹15,000 FD → get a card against it (no approval risk, no enquiry). Spend under ₹4K/mo, autopay in full. Your FD keeps earning ~7% while every month adds positive history.</div>
+          <div class="rowline tiny" style="margin-top:6px"><span>Score impact</span><b style="color:var(--green-d)">+40–80 pts in 6–12 mo</b></div>
+          <div class="btn" style="margin-top:9px;padding:10px">Open FD card · 10 min</div>
+        </div>
+        <div class="card" style="padding:10px 12px"><div class="rowline"><b style="font-size:12px">📉 Crush utilisation to &lt;30%</b><span class="tiny" style="color:var(--green-d)"><b>+30–50 pts</b></span></div><div class="tiny" style="margin-top:3px">Pay ₹44K down (or split across 2 statement cycles). Fastest lever you own.</div></div>
+        <div class="card" style="padding:10px 12px"><div class="rowline"><b style="font-size:12px">🔁 12-month perfect streak</b><span class="tiny" style="color:var(--green-d)"><b>+50–80 pts</b></span></div><div class="tiny" style="margin-top:3px">Autopay everything. Late payments fade as clean months stack on top.</div></div>
+        <div class="card" style="padding:10px 12px"><div class="rowline"><b style="font-size:12px">🚫 Application freeze · 6 mo</b><span class="tiny" style="color:var(--green-d)"><b>+20–40 pts</b></span></div><div class="tiny" style="margin-top:3px">Enquiries stop hurting after ~6 clean months. We'll alert you when it's safe.</div></div>
+        <div class="card" style="padding:10px 12px"><div class="rowline"><b style="font-size:12px">🔍 Dispute report errors — free</b><span class="tiny" style="color:var(--blue)"><b>Check</b></span></div><div class="tiny" style="margin-top:3px">Wrong late-marks or unknown accounts? We found 1 item worth reviewing → dispute via Experian in-app.</div></div>
+        <div class="spacer"></div>
+        <div class="btn ghost">See all 12 builder strategies</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S28</span>Rebuild toolkit — the FD-card play</b>The hero card is your idea made product: FD-backed secured card = guaranteed approval, zero enquiry, FD still earns interest, history builds monthly — and it's a bank-partnership commission for myscorr. Every other lever is priced in points. "12 strategies" links the full playbook doc.<br><span class="tag rev">₹ FD + secured-card referral</span><span class="tag comp">◆ Point impacts must say "estimated"</span></div>
+  </div>
+
+  <!-- S29 Simulator -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>Score simulator</div>
+      <div class="content" style="padding-top:4px">
+        <div class="card" style="text-align:center;padding:12px">
+          <div class="tiny">IF YOU DO THE SELECTED ACTIONS</div>
+          <div style="display:flex;align-items:baseline;justify-content:center;gap:10px;margin-top:4px">
+            <span class="h" style="font-size:22px;color:var(--faint);text-decoration:line-through">610</span>
+            <span class="h" style="font-size:30px;color:var(--green-d)">692</span>
+            <span class="tiny" style="color:var(--green-d)"><b>+82 est.</b></span>
+          </div>
+          <div class="tiny">projected in ~6 months</div>
+        </div>
+        <div class="lbl">Toggle actions</div>
+        <div class="simchip"><span>✓ Pay card down to ₹35,000</span><span class="delta up">+38</span></div>
+        <div class="simchip"><span>✓ 6 months all payments on time</span><span class="delta up">+29</span></div>
+        <div class="simchip"><span>✓ Open FD-secured card</span><span class="delta up">+15</span></div>
+        <div class="simchip" style="opacity:.55"><span>○ Apply for a personal loan now</span><span class="delta down">−21</span></div>
+        <div class="simchip" style="opacity:.55"><span>○ Close oldest credit card</span><span class="delta down">−14</span></div>
+        <div class="card" style="background:#FDF7EC;border-color:#F1DFBE;padding:9px 12px"><div class="tiny" style="color:var(--amber-d)">Estimates from your actual file, not generic averages. Real movement depends on lender reporting cycles.</div></div>
+        <div class="spacer"></div>
+        <div class="btn">Turn selections into my plan</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S29</span>What-if simulator</b>Interactive cause-and-effect makes score mechanics learnable — including negative toggles that show what a new loan or card closure would cost. Selections convert into the tracked plan, closing the loop. This is the feature users screenshot and share.<br><span class="tag ux">● Education through play</span><span class="tag comp">◆ "Estimate" disclaimer required</span></div>
+  </div>
+
+  <!-- S30 Monthly tracker -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar">Score journey<span style="margin-left:auto" class="tiny">Score Plus ✦</span></div>
+      <div class="content" style="padding-top:4px">
+        <div class="card" style="padding:12px">
+          <div class="rowline"><span class="tiny"><b style="color:var(--ink)">Aug 2026</b></span><span class="chip">+18 this month 🎉</span></div>
+          <svg width="100%" height="74" viewBox="0 0 240 74" style="margin-top:6px">
+            <polyline points="8,60 46,58 84,52 122,54 160,40 198,30 232,22" fill="none" stroke="#0E8A78" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="232" cy="22" r="5" fill="#0E8A78"/>
+            <text x="6" y="72" font-size="9" fill="#8E9AA8">Feb · 610</text>
+            <text x="196" y="14" font-size="10" font-weight="700" fill="#177A4C">Aug · 671</text>
+          </svg>
+          <div class="tiny">61 points gained · 29 to your 700 goal</div>
+          <div class="prog" style="margin-top:6px"><i style="width:68%;background:linear-gradient(90deg,#F5A623,#2FCE8F)"></i></div>
+        </div>
+        <div class="lbl">This month's wins</div>
+        <div class="card" style="padding:9px 12px"><div class="rowline tiny"><span>✅ Utilisation 64% → 31%</span><b style="color:var(--green-d)">done</b></div></div>
+        <div class="card" style="padding:9px 12px"><div class="rowline tiny"><span>✅ 3rd on-time month in a row</span><b style="color:var(--green-d)">streak</b></div></div>
+        <div class="card" style="padding:9px 12px"><div class="rowline tiny"><span>⏳ FD card reports to bureau</span><b style="color:var(--amber-d)">~Sep</b></div></div>
+        <div class="card" style="background:var(--lt);border-color:#CDE5DF;padding:9px 12px"><div class="tiny" style="color:var(--teal-d)"><b>At 700</b> you unlock: personal loans at ~14% instead of 22%, and your first unsecured premium card. Keep going.</div></div>
+        <div class="spacer"></div>
+        <div class="btn ghost">Refresh score · included in Plus</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S30</span>Monthly journey tracker</b>The retention engine and the reason Score Plus (₹499/yr, monthly refresh) exists: trend line, goal progress, monthly wins, and the "what 700 unlocks" carrot that ties score growth back to the loan marketplace. Push notification on every refresh: "Your score moved +18 — see why."<br><span class="tag rev">₹ Subscription justification</span><span class="tag ux">● Goal + streak + unlock = habit loop</span></div>
+  </div>
+
+  </div>
+</div>
+
+<!-- ============ JOURNEY 5D ============ -->
+<div class="journey">
+  <div class="jhead"><span class="jnum">JOURNEY 05·D</span><h2>Financial health, risk &amp; sharing</h2><p>Persona 3 — score 762, "Very Good" but stretched: 63% card utilisation, one fading late mark. New report concepts benchmarked against market samples (PehchanPe Pulse-class reports), with their flaws fixed.</p></div>
+  <div class="row">
+
+  <!-- S31 Financial health score -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>Financial health score</div>
+      <div class="content" style="padding-top:4px">
+        <div class="card" style="text-align:center;padding:13px;background:linear-gradient(160deg,#12202E,#1C3547);color:#fff;border:none">
+          <div style="display:flex;justify-content:center;align-items:baseline;gap:6px"><span class="h" style="font-size:32px">78</span><span style="font-size:12px;color:#B9C6D2">/100 · GOOD</span></div>
+          <div class="tiny" style="color:#B9C6D2;margin-top:2px">myscorr Health Score — beyond your 762 bureau score</div>
+        </div>
+        <div class="card" style="padding:11px 12px">
+          <div class="rowline tiny"><span><b style="color:var(--ink)">Repayment</b> · 35% weight</span><b style="color:var(--green-d)">96</b></div><div class="prog" style="margin:4px 0 8px"><i style="width:96%;background:var(--green)"></i></div>
+          <div class="rowline tiny"><span><b style="color:var(--ink)">Card utilisation</b> · 30%</span><b style="color:var(--red)">58</b></div><div class="prog" style="margin:4px 0 8px"><i style="width:58%;background:var(--amber)"></i></div>
+          <div class="rowline tiny"><span><b style="color:var(--ink)">Credit age</b> · 15%</span><b style="color:var(--ink)">74</b></div><div class="prog" style="margin:4px 0 8px"><i style="width:74%"></i></div>
+          <div class="rowline tiny"><span><b style="color:var(--ink)">Credit mix</b> · 10%</span><b style="color:var(--ink)">80</b></div><div class="prog" style="margin:4px 0 8px"><i style="width:80%"></i></div>
+          <div class="rowline tiny"><span><b style="color:var(--ink)">Enquiries</b> · 10%</span><b style="color:var(--green-d)">90</b></div><div class="prog" style="margin-top:4px"><i style="width:90%;background:var(--green)"></i></div>
+        </div>
+        <div class="card" style="padding:10px 12px"><div class="rowline"><span class="tiny"><b style="color:var(--ink)">EMI ÷ income (FOIR)</b> · from your statement</span><span class="chip">29% · Healthy</span></div><div class="tiny" style="margin-top:3px">₹42,000 EMI on ₹1,45,000 verified monthly income</div></div>
+        <div class="spacer"></div>
+        <div class="btn">Fix my weakest factor →</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S31</span>Financial Health Score (0–100)</b>A myscorr composite with transparent sub-scores per weighted factor — one glance shows exactly which bar is dragging (utilisation, 58). Improvement over the benchmark: FOIR uses <i>verified</i> income from statement analysis (S18), not self-declared income, and card utilisation is computed on revolving credit only — never polluted by home-loan balances the way competitor reports do.<br><span class="tag data">⬡ All factors + S18 income output</span><span class="tag ux">● One score, five honest bars</span></div>
+  </div>
+
+  <!-- S32 Lender checklist -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>How lenders see you</div>
+      <div class="content" style="padding-top:4px">
+        <div class="mut">The checklist an underwriter runs before approving you — with your live results.</div>
+        <div class="card" style="padding:9px 12px"><div class="rowline tiny"><span>✅ Credit score ≥ 700</span><b style="color:var(--green-d)">762</b></div></div>
+        <div class="card" style="padding:9px 12px;border-color:#F1C7C2"><div class="rowline tiny"><span>❌ Card utilisation &lt; 30%</span><b style="color:var(--red)">63%</b></div><div class="tiny" style="margin-top:3px">₹1.58L used of ₹2.5L limits — the one line blocking best rates</div></div>
+        <div class="card" style="padding:9px 12px"><div class="rowline tiny"><span>✅ Enquiries (12 mo) ≤ 6</span><b style="color:var(--green-d)">1</b></div></div>
+        <div class="card" style="padding:9px 12px"><div class="rowline tiny"><span>✅ Active loans ≤ 5</span><b style="color:var(--green-d)">2</b></div></div>
+        <div class="card" style="padding:9px 12px;border-color:#F1DFBE"><div class="rowline tiny"><span>⚠️ Late payments (36 mo)</span><b style="color:var(--amber-d)">1 · Mar '23</b></div><div class="tiny" style="margin-top:3px">15-day delay, impact fades fully by Mar '27</div></div>
+        <div class="card" style="padding:9px 12px"><div class="rowline tiny"><span>✅ Write-offs / settlements</span><b style="color:var(--green-d)">None</b></div></div>
+        <div class="card" style="background:var(--lt);border-color:#CDE5DF;padding:9px 12px"><div class="tiny" style="color:var(--teal-d)"><b>Verdict: 5 of 6 passed.</b> Clear the utilisation line and you're a top-tier applicant at any bank.</div></div>
+        <div class="spacer"></div>
+        <div class="btn">Fix the red line</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S32</span>Lender benchmarks checklist</b>Adopted from the benchmark report and sharpened: every norm is pass/fail against the user's actual numbers, the failing row is visually loud, and the verdict quantifies it ("5 of 6"). This screen converts abstract score anxiety into a single named blocker — which is also the CTA.<br><span class="tag ux">● Underwriter's-eye view = clarity</span></div>
+  </div>
+
+  <!-- S33 Risk radar -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>Risk radar</div>
+      <div class="content" style="padding-top:4px">
+        <div class="card" style="text-align:center;padding:12px"><div class="tiny">ESTIMATED 12-MONTH DEFAULT RISK</div><div class="h t1" style="color:var(--green-d);margin-top:2px">3.2% · Low</div><div class="tiny">Model estimate from your repayment pattern, leverage &amp; history</div></div>
+        <div class="lbl">Stress signals</div>
+        <div class="card" style="padding:9px 12px"><div class="rowline tiny"><span>Overdue accounts (30+ DPD)</span><span class="chip">None ✓</span></div></div>
+        <div class="card" style="padding:9px 12px"><div class="rowline tiny"><span>Written-off / settled accounts</span><span class="chip">None ✓</span></div></div>
+        <div class="card" style="padding:9px 12px"><div class="rowline tiny"><span>Recent enquiry burst</span><span class="chip">None ✓</span></div></div>
+        <div class="card" style="padding:9px 12px"><div class="rowline tiny"><span>High revolving utilisation</span><span class="chip bad">Flagged · 63%</span></div></div>
+        <div class="lbl">Red flags · 2</div>
+        <div class="card" style="padding:10px 12px"><div class="rowline"><b style="font-size:12px">Card utilisation at 63%</b><span class="pill" style="background:#FBE9E7;color:var(--red)">MEDIUM</span></div><div class="tiny" style="margin-top:3px">Signals leverage stress; will surface in every lender's auto-check.</div></div>
+        <div class="card" style="padding:10px 12px"><div class="rowline"><b style="font-size:12px">One late payment (Mar 2023)</b><span class="pill" style="background:#FDF1E3;color:var(--amber-d)">FADING</span></div><div class="tiny" style="margin-top:3px">15 days on a personal loan · weight decays with each clean month.</div></div>
+        <div class="spacer"></div>
+        <div class="btn ghost">What changes my risk band?</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S33</span>Risk radar — default probability + flags</b>The default-probability number is a strong differentiator (users never see how lenders model them) but it's regulatorily sensitive: always "model estimate," never presented as a lender decision, with methodology one tap away. Stress signals give the reassuring all-clear list; red flags carry impact levels and decay explanations.<br><span class="tag comp">◆ "Estimate, not a lending decision" mandatory</span><span class="tag data">⬡ DPD + settlement fields + CAPS</span></div>
+  </div>
+
+  <!-- S34 Roadmap -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>6-month roadmap</div>
+      <div class="content" style="padding-top:4px">
+        <div class="card" style="text-align:center;padding:12px">
+          <div style="display:flex;align-items:center;justify-content:center;gap:10px">
+            <div><div class="h t2">762</div><div class="tiny">today</div></div>
+            <div style="flex:1;max-width:70px" class="prog"><i style="width:100%;background:linear-gradient(90deg,#F5A623,#2FCE8F)"></i></div>
+            <div><div class="h t2" style="color:var(--green-d)">785–810</div><div class="tiny">in 6 months</div></div>
+          </div>
+        </div>
+        <div class="card" style="padding:10px 12px;display:flex;gap:10px"><div class="grade gB" style="border-radius:99px;font-size:10px">M1-2</div><div style="flex:1"><div class="rowline"><b style="font-size:12px">Utilisation below 30%</b><b class="tiny" style="color:var(--green-d)">+8–15</b></div><div class="tiny">Pay ₹83K before statement dates (split across 2 cycles is fine)</div></div></div>
+        <div class="card" style="padding:10px 12px;display:flex;gap:10px"><div class="grade gB" style="border-radius:99px;font-size:10px">M3-4</div><div style="flex:1"><div class="rowline"><b style="font-size:12px">Zero new enquiries + autopay</b><b class="tiny" style="color:var(--green-d)">+5–10</b></div><div class="tiny">Application freeze holds; streak extends past the '23 late mark</div></div></div>
+        <div class="card" style="padding:10px 12px;display:flex;gap:10px"><div class="grade gB" style="border-radius:99px;font-size:10px">M5-6</div><div style="flex:1"><div class="rowline"><b style="font-size:12px">Hold clean + refresh score</b><b class="tiny" style="color:var(--green-d)">+5–12</b></div><div class="tiny">Verify movement on your Plus refresh; unlock 800-band rates</div></div></div>
+        <div class="card" style="background:#FDF7EC;border-color:#F1DFBE;padding:9px 12px"><div class="tiny" style="color:var(--amber-d)">Projection assumes no new debt or late payments. Ranges, not promises.</div></div>
+        <div class="spacer"></div>
+        <div class="btn">Start month 1 · set reminders</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S34</span>Improvement roadmap + projection</b>Adopted and upgraded: the month-phased plan ends in a projected <i>range</i> (785–810), each phase has its own point estimate, and month 5–6 deliberately lands on a Score Plus refresh — the projection becomes the reason to subscribe and verify. Pairs with S29's simulator (play) as the commitment version (plan).<br><span class="tag rev">₹ Refresh = projection verification</span><span class="tag comp">◆ Range + assumptions disclaimer</span></div>
+  </div>
+
+  <!-- S35 Shareable pulse -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>Share my credit pulse</div>
+      <div class="content" style="padding-top:4px">
+        <div class="card" style="background:linear-gradient(150deg,#0E8A78,#0B6E60);color:#fff;text-align:center;padding:14px;border:none">
+          <div class="tiny" style="color:#BFF3DC;letter-spacing:1px">MYSCORR VERIFIED ✓</div>
+          <div class="h" style="font-size:28px;margin-top:4px">762 · Very Good</div>
+          <div class="tiny" style="color:#CFE9E2;margin-top:2px">Aarav M. · Experian · 22 May 2026<br>0 defaults · clean repayment record</div>
+        </div>
+        <div class="lbl">Privacy controls</div>
+        <div class="card" style="padding:9px 12px"><div class="rowline tiny"><span>Hide loan amounts</span><span class="chip">ON</span></div></div>
+        <div class="card" style="padding:9px 12px"><div class="rowline tiny"><span>Hide lender names</span><span class="chip">ON</span></div></div>
+        <div class="card" style="padding:9px 12px"><div class="rowline tiny"><span>Link expires</span><span class="chip info">30 days</span></div></div>
+        <div class="card" style="padding:10px 12px"><div class="tiny"><b style="color:var(--ink)">Who asks for this:</b> landlords &amp; rental agreements, visa files, co-applicant checks, business partners. Share proof, not your full report.</div></div>
+        <div class="spacer"></div>
+        <div style="display:flex;gap:8px"><div class="btn ghost" style="flex:1;padding:10px">Preview link</div><div class="btn" style="flex:1;padding:10px">🔗 Copy link</div></div>
+        <div class="tiny" style="text-align:center">Viewers see only what you enable · revoke anytime</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S35</span>Shareable verified score link</b>The benchmark's shareable-report idea, rebuilt privacy-first: user-controlled masking of amounts and lenders, 30-day expiry, one-tap revoke — theirs only masks email/phone. Real Indian use cases (rentals, visas, co-applicants) make this genuinely useful, and every viewed link ends with "Get your own report · ₹299" — the organic acquisition loop.<br><span class="tag rev">₹ Viral referral surface</span><span class="tag comp">◆ Consent + revocation logged (DPDP Act)</span></div>
+  </div>
+
+  </div>
+</div>
+
+<footer>
+<b style="color:#fff;font-family:'Bricolage Grotesque'">Build notes — Credit Intelligence layer</b><br>
+① Every number on S20–S30 must be computed from the Experian JSON (paths tagged ⬡ per screen) — never hard-coded; the same templates render both the 815 and 610 personas by swapping thresholds. &nbsp;② Persona routing: score ≥750 with no flags → 05·A + 05·B emphasis (protect &amp; save money); ≥750 with active flags (e.g., 762 + 63% utilisation, Journey 05·D persona) → benchmarks + roadmap emphasis; 650–749 → blended; &lt;650 → 05·C emphasis (rebuild). &nbsp;③ Compliance strings: all savings and point-impact figures carry "estimated / indicative" qualifiers; rate benchmarks must cite refresh date; simulator is educational, not advice — route these through the same locked-strings review as S5/S7/S13. &nbsp;④ Insight rules, thresholds and the full 12-strategy library live in the companion document <i>myscorr Score Improvement Playbook</i> — treat it as the single source of truth for S26/S28 content. &nbsp;⑤ Instrument: analysis_viewed → savings_screen_viewed → negotiation_kit_opened → plan_created → action_completed → refresh_purchased.
+</footer>
+
+</div>
+</body>
+</html>

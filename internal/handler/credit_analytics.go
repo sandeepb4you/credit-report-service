@@ -95,7 +95,7 @@ func (h *CreditAnalyticsHandler) ListReports(c *fiber.Ctx) error {
 // GetReport godoc
 //
 // @Summary      Fetch a credit-analytics report by id
-// @Description  Returns the derived analytics (bureau score, on-time payment %, card utilization %, 180-day enquiry count, account summary, loan accounts, and report card) for one of the caller's own reports, computed from the stored bureau response.
+// @Description  Returns the derived analytics (bureau score, on-time payment %, card utilization %, 180-day enquiry count, account summary, loan accounts, report card, interest-reduction opportunities under interestSavings, and a unified 'recommendations' list, plus a scoreBuilder diagnosis+toolkit) for one of the caller's own reports, computed from the stored bureau response.
 // @Tags         credit-analytics
 // @Produce      json
 // @Security     BearerAuth
@@ -153,7 +153,7 @@ func (h *CreditAnalyticsHandler) GetReportRaw(c *fiber.Ctx) error {
 // GetLatestInsights godoc
 //
 // @Summary      Get credit insights from the latest report
-// @Description  Returns derived analytics from the most recent successful credit report: the bureau credit score, on-time payment percentage, card utilization percentage, and enquiry count for the past 180 days.
+// @Description  Returns derived analytics from the most recent successful credit report: the bureau score, on-time payment %, card utilization %, 180-day enquiries, the graded report card, per-loan interest-reduction (balance-transfer) opportunities under interestSavings, and a single prioritized 'recommendations' list spanning both levers — raising the score and cutting interest. Also includes a scoreBuilder block (journey classification, realistic target, positives, weak-factor diagnosis, and a rebuild/protect toolkit).
 // @Tags         credit-analytics
 // @Produce      json
 // @Security     BearerAuth

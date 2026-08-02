@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>myscorr — App Screen Journeys (Android &amp; iOS)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --page:#0A1420; --page2:#0E1B2C;
+  --ink:#12202E; --muted:#5B6B7B; --faint:#8E9AA8;
+  --screen:#F4F6F9; --card:#FFFFFF; --line:#E4E9EF;
+  --teal:#0E8A78; --teal-d:#0B6E60;
+  --green:#2FCE8F; --amber:#F5A623; --amber-d:#D98E12;
+  --red:#E85A4F; --blue:#3B7BDD;
+  --lt:#EAF2F0;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:linear-gradient(180deg,var(--page),var(--page2));color:#E9EEF4;font-family:'Inter',system-ui,sans-serif;padding:48px 40px 80px}
+.wrap{max-width:1480px;margin:0 auto}
+/* ---------- page header ---------- */
+.hero{margin-bottom:20px}
+.brandmark{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+.brandmark svg{display:block}
+.brandmark span{font-family:'Bricolage Grotesque';font-weight:800;font-size:26px;letter-spacing:-0.5px}
+h1{font-family:'Bricolage Grotesque';font-weight:800;font-size:44px;letter-spacing:-1px;line-height:1.05;max-width:820px}
+h1 em{font-style:normal;color:var(--amber)}
+.sub{color:#A7B4C2;font-size:15px;line-height:1.6;max-width:720px;margin-top:14px}
+.legend{display:flex;gap:10px;margin-top:22px;flex-wrap:wrap}
+.legend .tag{font-size:11px}
+/* ---------- journeys ---------- */
+.journey{margin-top:64px}
+.jhead{display:flex;align-items:baseline;gap:16px;border-bottom:1px solid rgba(255,255,255,.12);padding-bottom:14px;margin-bottom:30px}
+.jnum{font-family:'Bricolage Grotesque';font-weight:800;font-size:15px;color:var(--amber);letter-spacing:2px}
+.jhead h2{font-family:'Bricolage Grotesque';font-weight:700;font-size:26px;letter-spacing:-0.4px}
+.jhead p{color:#8FA0B0;font-size:13px;margin-left:auto;max-width:420px;text-align:right}
+.row{display:flex;flex-wrap:wrap;gap:36px;align-items:flex-start}
+.shot{width:300px}
+/* ---------- phone frame ---------- */
+.phone{width:300px;background:#0C0E13;border-radius:38px;padding:9px;box-shadow:0 24px 60px rgba(0,0,0,.5), inset 0 0 0 1px #2A2F3A}
+.screen{position:relative;background:var(--screen);border-radius:30px;height:604px;overflow:hidden;display:flex;flex-direction:column;color:var(--ink)}
+.notch{position:absolute;top:7px;left:50%;transform:translateX(-50%);width:86px;height:20px;background:#0C0E13;border-radius:12px;z-index:5}
+.sb{display:flex;justify-content:space-between;align-items:center;padding:9px 18px 4px;font-size:10px;font-weight:600;color:var(--ink)}
+.sb .r{display:flex;gap:4px;align-items:center}
+.dot3{display:inline-flex;gap:2px}
+.dot3 i{width:3px;background:var(--ink);border-radius:1px;display:inline-block}
+.batt{width:18px;height:9px;border:1px solid var(--ink);border-radius:2.5px;position:relative}
+.batt::after{content:'';position:absolute;inset:1.5px;right:4px;background:var(--ink);border-radius:1px}
+.appbar{display:flex;align-items:center;gap:10px;padding:10px 16px 6px;font-weight:700;font-size:14px}
+.back{width:26px;height:26px;border-radius:8px;background:#fff;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--muted)}
+.content{flex:1;padding:12px 16px 14px;overflow:hidden;display:flex;flex-direction:column;gap:10px}
+.spacer{flex:1}
+/* ---------- shared ui ---------- */
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px}
+.btn{display:flex;align-items:center;justify-content:center;gap:8px;background:var(--teal);color:#fff;font-weight:700;font-size:13px;border-radius:13px;padding:13px;text-align:center}
+.btn.amber{background:var(--amber);color:#3A2A00}
+.btn.ghost{background:#fff;color:var(--teal);border:1.5px solid var(--teal)}
+.btn.dark{background:var(--ink)}
+.h{font-family:'Bricolage Grotesque';font-weight:700;letter-spacing:-0.3px}
+.t1{font-size:20px}.t2{font-size:16px}.t3{font-size:13.5px}
+.mut{color:var(--muted);font-size:11.5px;line-height:1.5}
+.tiny{font-size:10px;color:var(--faint);line-height:1.45}
+.field{background:#fff;border:1.5px solid var(--line);border-radius:12px;padding:11px 12px;font-size:12.5px;color:var(--muted);display:flex;align-items:center;gap:8px}
+.field b{color:var(--ink)}
+.field.focus{border-color:var(--teal)}
+.lbl{font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:-4px}
+.chip{display:inline-flex;align-items:center;gap:5px;background:var(--lt);color:var(--teal-d);font-size:10.5px;font-weight:600;border-radius:99px;padding:4px 9px}
+.chip.warn{background:#FDF1E3;color:var(--amber-d)}
+.chip.bad{background:#FBE9E7;color:var(--red)}
+.chip.info{background:#E8F0FC;color:var(--blue)}
+.pill{display:inline-block;font-size:9.5px;font-weight:700;border-radius:99px;padding:3px 8px;letter-spacing:.4px}
+.bottomnav{display:flex;border-top:1px solid var(--line);background:#fff;padding:8px 6px 12px}
+.bottomnav div{flex:1;text-align:center;font-size:9px;font-weight:600;color:var(--faint)}
+.bottomnav div.on{color:var(--teal)}
+.bottomnav i{display:block;width:20px;height:20px;border-radius:6px;background:#E8EDF2;margin:0 auto 3px}
+.bottomnav div.on i{background:var(--teal)}
+.check{display:flex;gap:9px;align-items:flex-start}
+.check b{width:16px;height:16px;flex:none;border-radius:5px;border:1.5px solid var(--teal);background:var(--teal);color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center}
+.check.off b{background:#fff;border-color:#C4CDD6}
+.otp{display:flex;gap:8px;justify-content:center}
+.otp span{width:38px;height:46px;background:#fff;border:1.5px solid var(--line);border-radius:11px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px}
+.otp span.on{border-color:var(--teal);color:var(--teal)}
+.prog{height:6px;background:#E4E9EF;border-radius:99px;overflow:hidden}
+.prog i{display:block;height:100%;border-radius:99px;background:var(--teal)}
+.rowline{display:flex;justify-content:space-between;align-items:center;font-size:12px}
+.divider{height:1px;background:var(--line)}
+/* ---------- captions ---------- */
+.cap{margin-top:14px;font-size:12px;line-height:1.55;color:#A9B6C4}
+.cap b{display:block;color:#fff;font-size:13px;font-family:'Bricolage Grotesque';font-weight:700;margin-bottom:4px}
+.cap .snum{color:var(--amber);margin-right:6px}
+.tag{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;border-radius:99px;padding:3px 9px;margin:6px 6px 0 0;letter-spacing:.3px}
+.tag.rev{background:rgba(245,166,35,.15);color:#FFC85C;border:1px solid rgba(245,166,35,.4)}
+.tag.comp{background:rgba(59,123,221,.15);color:#8FB5EF;border:1px solid rgba(59,123,221,.4)}
+.tag.ux{background:rgba(47,206,143,.12);color:#6FE0B4;border:1px solid rgba(47,206,143,.35)}
+/* score gauge */
+.gwrap{display:flex;flex-direction:column;align-items:center}
+.gscore{font-family:'Bricolage Grotesque';font-weight:800;font-size:34px;margin-top:-52px}
+.gband{font-size:11px;font-weight:700;color:var(--green);letter-spacing:1px}
+footer{margin-top:70px;border-top:1px solid rgba(255,255,255,.12);padding-top:22px;color:#8FA0B0;font-size:12.5px;line-height:1.7;max-width:900px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<!-- ================= PAGE HEADER ================= -->
+<div class="hero">
+  <div class="brandmark">
+    <svg width="34" height="34" viewBox="0 0 34 34"><path d="M5 24 A13 13 0 0 1 29 24" fill="none" stroke="#F5A623" stroke-width="4.5" stroke-linecap="round"/><path d="M5 24 A13 13 0 0 1 17 11" fill="none" stroke="#2FCE8F" stroke-width="4.5" stroke-linecap="round"/><circle cx="17" cy="24" r="3.4" fill="#fff"/></svg>
+    <span>myscorr</span>
+  </div>
+  <h1>App screen journeys — from install to <em>score, loans &amp; statement intelligence</em></h1>
+  <p class="sub">Full screen-by-screen spec for the Android &amp; iOS app: onboarding → paid Experian score check (₹299) → insights → personal loan eligibility (Muthoot partner) → bank account &amp; credit card cross-sell → bank / UPI statement analysis. Captions under each screen carry UX, revenue and compliance notes for the build team.</p>
+  <div class="legend">
+    <span class="tag rev">₹ REVENUE MOMENT</span>
+    <span class="tag comp">◆ COMPLIANCE NOTE</span>
+    <span class="tag ux">● UX NOTE</span>
+  </div>
+</div>
+
+<!-- ================= JOURNEY 1 ================= -->
+<div class="journey">
+  <div class="jhead"><span class="jnum">JOURNEY 01</span><h2>Onboarding &amp; login</h2><p>Goal: verified identity (phone + email) in under 60 seconds, land on a dashboard that sells the score check.</p></div>
+  <div class="row">
+
+  <!-- S1 Splash -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div style="flex:1;background:linear-gradient(170deg,#0E8A78 0%,#0B6E60 55%,#0A5A50 100%);display:flex;flex-direction:column;color:#fff;padding:52px 22px 22px">
+        <div style="flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:14px">
+          <svg width="86" height="60" viewBox="0 0 86 60"><path d="M10 54 A33 33 0 0 1 76 54" fill="none" stroke="rgba(255,255,255,.25)" stroke-width="9" stroke-linecap="round"/><path d="M10 54 A33 33 0 0 1 58 24" fill="none" stroke="#F5A623" stroke-width="9" stroke-linecap="round"/><circle cx="43" cy="54" r="6" fill="#fff"/></svg>
+          <div class="h" style="font-size:30px;letter-spacing:-0.8px">myscorr</div>
+          <div style="font-size:13.5px;opacity:.92;text-align:center;line-height:1.55">Know your score.<br>Get the credit you deserve.</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:9px">
+          <div style="font-size:11px;opacity:.85;display:flex;gap:7px;align-items:center">✓ &nbsp;Experian credit score &amp; full report</div>
+          <div style="font-size:11px;opacity:.85;display:flex;gap:7px;align-items:center">✓ &nbsp;Personal loan eligibility, zero spam</div>
+          <div style="font-size:11px;opacity:.85;display:flex;gap:7px;align-items:center">✓ &nbsp;Bank &amp; UPI statement analysis</div>
+          <div class="btn amber" style="margin-top:12px">Get started</div>
+          <div style="text-align:center;font-size:10px;opacity:.75">Soft check only — never affects your score</div>
+        </div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S1</span>Splash / value proposition</b>Three-benefit pitch before asking for anything. The "soft check — never affects your score" reassurance starts here and repeats through the funnel.<br><span class="tag ux">● First trust impression</span></div>
+  </div>
+
+  <!-- S2 Login -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="content" style="padding-top:26px">
+        <div class="h t1">Login or create<br>your account</div>
+        <div class="mut">We'll send a one-time password to verify it's you.</div>
+        <div style="height:6px"></div>
+        <div class="lbl">Mobile number</div>
+        <div class="field focus"><b>+91</b><span style="color:var(--ink);font-weight:600">98860 4</span><span style="border-left:1.5px solid var(--teal);height:14px"></span></div>
+        <div style="display:flex;align-items:center;gap:10px;color:var(--faint);font-size:10.5px;margin:2px 0"><span class="divider" style="flex:1"></span>OR<span class="divider" style="flex:1"></span></div>
+        <div class="field">✉️ &nbsp;Continue with email</div>
+        <div class="spacer"></div>
+        <div class="check"><b>✓</b><span class="tiny">I agree to the <u>Terms of Service</u> and <u>Privacy Policy</u>, and consent to be contacted on this number via SMS &amp; WhatsApp.</span></div>
+        <div class="btn">Send OTP</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S2</span>Login — phone or email</b>Phone-first (India norm); email as secondary path. Consent line covers SMS + WhatsApp comms up front so lifecycle messaging is opt-in from day zero.<br><span class="tag comp">◆ Explicit comms consent</span></div>
+  </div>
+
+  <!-- S3 OTP -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>Verify number</div>
+      <div class="content" style="padding-top:14px">
+        <div class="h t2">Enter the 6-digit code</div>
+        <div class="mut">Sent to +91 98860 43210 · <u style="color:var(--teal)">Edit</u></div>
+        <div style="height:8px"></div>
+        <div class="otp"><span>4</span><span>7</span><span>2</span><span class="on">9</span><span></span><span></span></div>
+        <div style="text-align:center" class="tiny">Auto-reading SMS… (Android SMS Retriever)</div>
+        <div class="spacer"></div>
+        <div style="text-align:center" class="mut">Resend code in <b style="color:var(--ink)">00:24</b></div>
+        <div class="btn" style="opacity:.5">Verify &amp; continue</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S3</span>OTP verification</b>Auto-read OTP on Android (SMS Retriever API), autofill on iOS. Resend with cooldown + fallback to call-based OTP after two failures — OTP delivery failure is the #1 silent funnel killer.<br><span class="tag ux">● Watch verified-rate ≥80%</span></div>
+  </div>
+
+  <!-- S4 Empty dashboard -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="content" style="padding-top:8px">
+        <div class="rowline"><div><div class="mut">Good morning</div><div class="h t2">Rahul 👋</div></div><div style="width:34px;height:34px;border-radius:12px;background:var(--lt);display:flex;align-items:center;justify-content:center">🔔</div></div>
+        <div class="card" style="background:linear-gradient(150deg,#12202E,#1C3547);color:#fff;text-align:center;padding:18px 14px">
+          <svg width="120" height="66" viewBox="0 0 120 66" style="filter:blur(3px);opacity:.65"><path d="M12 60 A48 48 0 0 1 108 60" fill="none" stroke="#3A4E60" stroke-width="10" stroke-linecap="round"/><path d="M12 60 A48 48 0 0 1 84 22" fill="none" stroke="#2FCE8F" stroke-width="10" stroke-linecap="round"/></svg>
+          <div style="margin-top:-46px;font-size:22px">🔒</div>
+          <div class="h t3" style="margin-top:10px;color:#fff">Your Experian score is waiting</div>
+          <div style="font-size:10.5px;opacity:.75;margin-top:3px">Score + full report + improvement plan</div>
+          <div class="btn amber" style="margin-top:12px;padding:11px">Check my score · ₹299</div>
+        </div>
+        <div class="lbl" style="margin-top:2px">Explore</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div class="card" style="padding:11px"><div style="font-size:16px">💸</div><div class="h" style="font-size:11.5px;margin-top:4px">Personal loans</div><div class="tiny">Check eligibility</div></div>
+          <div class="card" style="padding:11px"><div style="font-size:16px">💳</div><div class="h" style="font-size:11.5px;margin-top:4px">Credit cards</div><div class="tiny">Matched to you</div></div>
+          <div class="card" style="padding:11px"><div style="font-size:16px">🏦</div><div class="h" style="font-size:11.5px;margin-top:4px">Bank accounts</div><div class="tiny">Zero balance</div></div>
+          <div class="card" style="padding:11px"><div style="font-size:16px">📄</div><div class="h" style="font-size:11.5px;margin-top:4px">Statement check</div><div class="tiny">Analyse in 2 min</div></div>
+        </div>
+      </div>
+      <div class="bottomnav"><div class="on"><i></i>Home</div><div><i></i>Loans</div><div><i></i>Reports</div><div><i></i>Profile</div></div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S4</span>Dashboard — empty state</b>No data yet, so the empty state IS the paywall: a locked, blurred score gauge with a single CTA. Explore tiles preview the ecosystem (loans, cards, accounts, statements) without letting users wander before activation.<br><span class="tag rev">₹ Primary conversion surface</span><span class="tag ux">● Empty state = invitation</span></div>
+  </div>
+
+  </div>
+</div>
+
+<!-- ================= JOURNEY 2 ================= -->
+<div class="journey">
+  <div class="jhead"><span class="jnum">JOURNEY 02</span><h2>Paid score check → report</h2><p>Goal: ₹299 payment → PAN + consent → Experian soft pull → score reveal, insights and report delivery.</p></div>
+  <div class="row">
+
+  <!-- S5 Paywall -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>Unlock your score</div>
+      <div class="content" style="padding-top:8px">
+        <div class="card" style="border:1.5px solid var(--amber);position:relative">
+          <span class="pill" style="position:absolute;top:-9px;left:12px;background:var(--amber);color:#3A2A00">ONE-TIME · MOST POPULAR</span>
+          <div class="rowline" style="margin-top:4px"><span class="h t2">Score + Report</span><span class="h t2">₹299</span></div>
+          <div class="tiny" style="margin-top:6px">✓ Experian credit score (live pull)<br>✓ Full credit report — all accounts &amp; enquiries<br>✓ Personalised improvement plan<br>✓ Loan &amp; credit card eligibility<br>✓ PDF via email + WhatsApp</div>
+        </div>
+        <div class="card">
+          <div class="rowline"><span class="h t3">Score Plus · yearly</span><span class="h t3">₹499</span></div>
+          <div class="tiny" style="margin-top:4px">Everything above + monthly score refresh &amp; change alerts for 12 months</div>
+        </div>
+        <div class="check"><b>✓</b><span class="tiny">This is a <b>soft enquiry</b> — it will never lower your credit score.</span></div>
+        <div class="spacer"></div>
+        <div class="btn amber">Pay ₹299 &amp; check score</div>
+        <div class="tiny" style="text-align:center">100% refund if we can't fetch your report</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S5</span>Score paywall</b>One-time ₹299 anchored against a ₹499 yearly plan (monthly refresh = your retention hook). The refund promise de-risks the payment — bureau pulls do occasionally fail on thin files, so honour it automatically.<br><span class="tag rev">₹ Core monetisation</span><span class="tag ux">● Test ₹199/₹299 pricing</span></div>
+  </div>
+
+  <!-- S6 Payment -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>Payment</div>
+      <div class="content" style="padding-top:8px">
+        <div class="card"><div class="rowline"><span class="mut">Score + Report (one-time)</span><b>₹299</b></div><div class="divider" style="margin:9px 0"></div><div class="rowline"><span class="h t3">Total payable</span><span class="h t3">₹299</span></div></div>
+        <div class="lbl">Pay using UPI</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div class="card" style="padding:11px;border-color:var(--teal)"><div class="h" style="font-size:12px">UPI apps</div><div class="tiny">GPay · PhonePe · Paytm</div></div>
+          <div class="card" style="padding:11px"><div class="h" style="font-size:12px">UPI ID</div><div class="tiny">Enter your VPA</div></div>
+        </div>
+        <div class="lbl">Other options</div>
+        <div class="field">💳 &nbsp;Credit / debit card</div>
+        <div class="field">🏦 &nbsp;Netbanking</div>
+        <div class="spacer"></div>
+        <div class="btn">Pay ₹299 securely</div>
+        <div class="tiny" style="text-align:center">🔒 PCI-DSS compliant · powered by payment gateway</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S6</span>Payment</b>UPI intent-flow first (70%+ of Indian app payments) — deep-link straight into GPay/PhonePe/Paytm and auto-return. Handle the "payment made but app killed" edge case with server-side webhook reconciliation.<br><span class="tag ux">● UPI intent &gt; collect flow</span></div>
+  </div>
+
+  <!-- S7 PAN form -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>Verify your identity</div>
+      <div class="content" style="padding-top:6px">
+        <div class="prog"><i style="width:66%"></i></div>
+        <div class="tiny">Step 2 of 3 · Payment received ✓</div>
+        <div class="lbl">PAN number</div>
+        <div class="field focus"><b>ABCPK 4321 L</b></div>
+        <div class="lbl">Full name (as per PAN)</div>
+        <div class="field"><b>Rahul Kumar</b></div>
+        <div style="display:flex;gap:8px">
+          <div style="flex:1"><div class="lbl">Date of birth</div><div class="field"><b>14 / 06 / 1992</b></div></div>
+          <div style="flex:1"><div class="lbl">PIN code</div><div class="field"><b>560034</b></div></div>
+        </div>
+        <div class="lbl">Employment</div>
+        <div style="display:flex;gap:7px"><span class="chip" style="border:1.5px solid var(--teal)">Salaried</span><span class="chip" style="background:#fff;border:1.5px solid var(--line);color:var(--muted)">Self-employed</span></div>
+        <div class="spacer"></div>
+        <div class="check"><b>✓</b><span class="tiny">I authorise myscorr to fetch my credit information from <b>Experian</b> on my behalf and agree to Experian's Terms &amp; Conditions. This is a soft pull and won't affect my score.</span></div>
+        <div class="btn">Fetch my score</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S7</span>PAN &amp; details + bureau consent</b>The trust cliff — expect the biggest drop-off here. Payment BEFORE PAN is deliberate (sunk-cost reduces abandonment). The Experian consent checkbox is mandatory wording per bureau agreement; log timestamped consent.<br><span class="tag comp">◆ Bureau consent (CICRA)</span><span class="tag ux">● Highest drop-off screen</span></div>
+  </div>
+
+  <!-- S8 Processing -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="content" style="justify-content:center;align-items:center;text-align:center;gap:14px">
+        <svg width="110" height="64" viewBox="0 0 110 64"><path d="M10 58 A45 45 0 0 1 100 58" fill="none" stroke="#E4E9EF" stroke-width="10" stroke-linecap="round"/><path d="M10 58 A45 45 0 0 1 55 13" fill="none" stroke="#0E8A78" stroke-width="10" stroke-linecap="round"/></svg>
+        <div class="h t2" style="margin-top:-8px">Fetching your report<br>from Experian…</div>
+        <div class="mut">Usually takes 30–60 seconds.<br>We'll notify you — no need to keep the app open.</div>
+        <div class="card" style="width:100%;text-align:left">
+          <div class="rowline" style="margin-bottom:8px"><span class="tiny">Payment received</span><span class="chip">Done ✓</span></div>
+          <div class="rowline" style="margin-bottom:8px"><span class="tiny">Identity verified with PAN</span><span class="chip">Done ✓</span></div>
+          <div class="rowline" style="margin-bottom:8px"><span class="tiny">Contacting Experian bureau</span><span class="chip warn">In progress…</span></div>
+          <div class="rowline"><span class="tiny">Preparing your insights</span><span class="chip" style="background:#F0F3F6;color:var(--faint)">Waiting</span></div>
+        </div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S8</span>Processing state</b>Since the pull "takes some time", show a live step checklist and release the user — push + WhatsApp notification when ready. Never leave a paid user staring at a spinner; that's refund-request territory.<br><span class="tag ux">● Notify via push + WhatsApp</span></div>
+  </div>
+
+  <!-- S9 Score reveal -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar">Your credit score<span style="margin-left:auto" class="tiny">Experian · 01 Aug</span></div>
+      <div class="content" style="padding-top:4px">
+        <div class="card" style="text-align:center;padding-top:18px">
+          <svg width="150" height="84" viewBox="0 0 150 84"><path d="M14 78 A61 61 0 0 1 136 78" fill="none" stroke="#EDF0F4" stroke-width="12" stroke-linecap="round"/><path d="M14 78 A61 61 0 0 1 118 38" fill="none" stroke="url(#g1)" stroke-width="12" stroke-linecap="round"/><defs><linearGradient id="g1" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#F5A623"/><stop offset="1" stop-color="#2FCE8F"/></linearGradient></defs></svg>
+          <div class="gscore">742</div>
+          <div class="gband">GOOD · TOP 34%</div>
+          <div class="tiny" style="margin-top:4px">Range 300–900 · Next refresh available in 30 days</div>
+        </div>
+        <div class="lbl">What's shaping your score</div>
+        <div class="card" style="padding:10px 12px"><div class="rowline"><span class="tiny"><b style="color:var(--ink)">On-time payments</b> · 98%</span><span class="chip">Excellent</span></div></div>
+        <div class="card" style="padding:10px 12px"><div class="rowline"><span class="tiny"><b style="color:var(--ink)">Card utilisation</b> · 41%</span><span class="chip warn">Improve</span></div></div>
+        <div class="card" style="padding:10px 12px"><div class="rowline"><span class="tiny"><b style="color:var(--ink)">Hard enquiries</b> · 2 in 90 days</span><span class="chip bad">High</span></div></div>
+        <div class="spacer"></div>
+        <div style="display:flex;gap:8px"><div class="btn ghost" style="flex:1;padding:11px">Get report</div><div class="btn" style="flex:1;padding:11px">See insights</div></div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S9</span>Score reveal — the "aha" moment</b>Gauge + percentile + factor breakdown. This is where to fire the in-app review prompt (only if score is decent) and the celebratory haptic. Both CTAs route deeper: insights (engagement) or report (delivery).<br><span class="tag ux">● Activation event — instrument it</span></div>
+  </div>
+
+  <!-- S10 Insights -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>Improve your score</div>
+      <div class="content" style="padding-top:6px">
+        <div class="card" style="background:var(--lt);border-color:#CDE5DF"><div class="tiny" style="color:var(--teal-d)"><b>Potential: 742 → 780+</b> in ~4 months if you act on the high-impact items below.</div></div>
+        <div class="card"><div class="rowline"><span class="h t3">Bring utilisation under 30%</span><span class="pill" style="background:#FBE9E7;color:var(--red)">HIGH IMPACT</span></div><div class="tiny" style="margin-top:5px">You're using ₹82,000 of your ₹2,00,000 limit (41%). Pay down ₹22,000 or request a limit increase.</div></div>
+        <div class="card"><div class="rowline"><span class="h t3">Avoid new loan applications</span><span class="pill" style="background:#FBE9E7;color:var(--red)">HIGH IMPACT</span></div><div class="tiny" style="margin-top:5px">2 hard enquiries in 90 days is dragging your score. Wait ~3 months before applying anywhere new.</div></div>
+        <div class="card"><div class="rowline"><span class="h t3">Keep your oldest card open</span><span class="pill" style="background:#FDF1E3;color:var(--amber-d)">MEDIUM</span></div><div class="tiny" style="margin-top:5px">Your 2016 HDFC card anchors your credit age (8.2 yrs). Don't close it.</div></div>
+        <div class="card"><div class="rowline"><span class="h t3">Set autopay on EMI due dates</span><span class="pill" style="background:#FDF1E3;color:var(--amber-d)">MEDIUM</span></div><div class="tiny" style="margin-top:5px">1 late payment found (Mar 2025). Autopay protects your 98% on-time streak.</div></div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S10</span>Score improvement insights</b>Rule-based insights ranked by impact, each with a concrete number and action — this is the perceived value of the ₹299. Note the second card ("avoid new applications") must be reconciled with loan cross-sell logic: don't push loans at users it would hurt.<br><span class="tag ux">● Value justification screen</span></div>
+  </div>
+
+  <!-- S11 Report delivery -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>Your credit report</div>
+      <div class="content" style="padding-top:8px">
+        <div class="card" style="display:flex;gap:12px;align-items:center">
+          <div style="width:44px;height:56px;background:var(--lt);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:20px">📄</div>
+          <div><div class="h t3">Experian_Report_Rahul.pdf</div><div class="tiny">Full report · 12 pages · 01 Aug 2026<br>Password: RAHU1406 (name + DOB)</div></div>
+        </div>
+        <div class="btn">⬇ &nbsp;Download PDF</div>
+        <div class="btn ghost">✉️ &nbsp;Email to rahul@gmail.com</div>
+        <div class="btn ghost" style="border-color:#25A85E;color:#1E8A4C">🟢 &nbsp;Send on WhatsApp</div>
+        <div class="divider" style="margin:4px 0"></div>
+        <div class="lbl">Inside your report</div>
+        <div class="card" style="padding:10px 12px"><div class="tiny">• 6 credit accounts (2 active, 4 closed)<br>• Enquiry history — 24 months<br>• Payment history month-by-month<br>• Personal info held by the bureau</div></div>
+        <div class="spacer"></div>
+        <div class="tiny" style="text-align:center">Report stored securely in the app under <b>Reports</b> tab</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S11</span>Report download &amp; delivery</b>Three delivery paths as specced: in-app PDF download, email, WhatsApp. Password-protect the PDF (bureau requirement for reports in transit) and keep a copy in the Reports tab — a reason to reopen the app.<br><span class="tag comp">◆ Encrypt PDF in transit</span></div>
+  </div>
+
+  </div>
+</div>
+
+<!-- ================= JOURNEY 3 ================= -->
+<div class="journey">
+  <div class="jhead"><span class="jnum">JOURNEY 03</span><h2>Earn: loans, cards &amp; bank accounts</h2><p>Goal: convert score-holders into Muthoot loan applications (core product) and bank account / credit card referrals (commission).</p></div>
+  <div class="row">
+
+  <!-- S12 Eligibility -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>Loan eligibility</div>
+      <div class="content" style="padding-top:6px">
+        <div class="card" style="background:linear-gradient(150deg,#0E8A78,#0B6E60);color:#fff;text-align:center;padding:18px 14px">
+          <div style="font-size:11px;opacity:.85;letter-spacing:1px">YOU'RE PRE-QUALIFIED FOR</div>
+          <div class="h" style="font-size:26px;margin-top:6px">₹50,000 – ₹3,50,000</div>
+          <div style="font-size:10.5px;opacity:.85;margin-top:4px">Based on your 742 score &amp; declared income</div>
+        </div>
+        <div class="lbl">Why this range</div>
+        <div class="card" style="padding:10px 12px"><div class="rowline"><span class="tiny">Credit score 742</span><span class="chip">Strong ✓</span></div></div>
+        <div class="card" style="padding:10px 12px"><div class="rowline"><span class="tiny">Existing EMI load</span><span class="chip warn">₹18,500/mo</span></div></div>
+        <div class="card" style="padding:10px 12px"><div class="rowline"><span class="tiny">Recent enquiries</span><span class="chip warn">2 — may reduce offer</span></div></div>
+        <div class="spacer"></div>
+        <div class="btn">View my loan offer</div>
+        <div class="tiny" style="text-align:center">Checking offers won't affect your score</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S12</span>Personal loan eligibility</b>Eligibility framed as a range with transparent reasons — the anti-rejection positioning. Gate the CTA if score/enquiry profile makes approval unlikely (a rejected referral costs Muthoot trust and earns you nothing).<br><span class="tag ux">● Only route likely approvals</span></div>
+  </div>
+
+  <!-- S13 Muthoot offer -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>Your loan offer</div>
+      <div class="content" style="padding-top:6px">
+        <div class="card">
+          <div class="rowline"><span class="h t3">Personal Loan</span><span class="pill" style="background:#EDE7FA;color:#6B4FBB">PARTNER · MUTHOOT</span></div>
+          <div class="divider" style="margin:10px 0"></div>
+          <div class="lbl">Loan amount</div>
+          <div class="h t1" style="color:var(--teal)">₹2,00,000</div>
+          <div class="prog" style="margin-top:6px"><i style="width:55%"></i></div>
+          <div class="rowline tiny" style="margin-top:4px"><span>₹50K</span><span>₹3.5L</span></div>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <span class="chip" style="border:1.5px solid var(--teal)">24 mo</span><span class="chip" style="background:#fff;border:1.5px solid var(--line);color:var(--muted)">36 mo</span><span class="chip" style="background:#fff;border:1.5px solid var(--line);color:var(--muted)">48 mo</span>
+          </div>
+          <div class="divider" style="margin:10px 0"></div>
+          <div class="rowline tiny"><span>Interest rate (indicative)</span><b>14% – 18% p.a.</b></div>
+          <div class="rowline tiny" style="margin-top:5px"><span>Processing fee</span><b>Up to 2% + GST</b></div>
+          <div class="rowline" style="margin-top:8px"><span class="h t3">Est. EMI</span><span class="h t2" style="color:var(--teal)">₹9,607/mo</span></div>
+        </div>
+        <div class="spacer"></div>
+        <div class="btn">Apply with Muthoot</div>
+        <div class="tiny" style="text-align:center">myscorr is a loan facilitator. Loans are provided by Muthoot Fincorp Ltd, an RBI-registered NBFC. Final rate &amp; amount at lender's discretion.</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S13</span>Loan offer — Muthoot partner</b>Amount slider + tenure + live EMI. The facilitator disclosure line and indicative-rate framing are Play Store &amp; RBI digital-lending-guideline requirements — never show a rate as guaranteed.<br><span class="tag rev">₹ Core product — disbursal payout</span><span class="tag comp">◆ Facilitator disclosure + APR</span></div>
+  </div>
+
+  <!-- S14 Handoff -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>Application status</div>
+      <div class="content" style="padding-top:6px">
+        <div class="card" style="padding:10px 12px"><div class="tiny"><b style="color:var(--ink)">₹2,00,000 · 24 months · Muthoot Fincorp</b><br>Application ID MSC-2481 · Submitted 01 Aug, 10:14 AM</div></div>
+        <div class="lbl">Progress</div>
+        <div class="card">
+          <div class="rowline" style="margin-bottom:10px"><span class="tiny"><b style="color:var(--ink)">Details shared with lender</b></span><span class="chip">Done ✓</span></div>
+          <div class="rowline" style="margin-bottom:10px"><span class="tiny"><b style="color:var(--ink)">KYC verification</b></span><span class="chip">Done ✓</span></div>
+          <div class="rowline" style="margin-bottom:10px"><span class="tiny"><b style="color:var(--ink)">Lender review</b></span><span class="chip warn">In progress</span></div>
+          <div class="rowline" style="margin-bottom:10px"><span class="tiny"><b style="color:var(--ink)">Approval &amp; e-sign</b></span><span class="chip" style="background:#F0F3F6;color:var(--faint)">Pending</span></div>
+          <div class="rowline"><span class="tiny"><b style="color:var(--ink)">Disbursal to your bank</b></span><span class="chip" style="background:#F0F3F6;color:var(--faint)">Pending</span></div>
+        </div>
+        <div class="card" style="background:#FDF7EC;border-color:#F1DFBE"><div class="tiny" style="color:var(--amber-d)"><b>Consent given:</b> you authorised sharing your score, report summary &amp; KYC details with Muthoot Fincorp for this application. <u>View consent</u></div></div>
+        <div class="spacer"></div>
+        <div class="btn ghost">Track on WhatsApp</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S14</span>Application handoff &amp; tracker</b>Pre-filled from data you already hold (PAN, score, income) so the lender application takes seconds. Data-sharing consent is explicit and reviewable. Status updates mirrored to WhatsApp keep users off your support channel.<br><span class="tag comp">◆ Data-sharing consent log</span><span class="tag ux">● Disbursal = payout event</span></div>
+  </div>
+
+  <!-- S15 Bank accounts -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>Bank accounts for you</div>
+      <div class="content" style="padding-top:6px">
+        <div class="mut">Open a savings account in ~5 minutes. Matched to your profile.</div>
+        <div class="card">
+          <div class="rowline"><span class="h t3">Digital Savings A/c</span><span class="pill" style="background:var(--lt);color:var(--teal-d)">BEST MATCH</span></div>
+          <div class="tiny" style="margin-top:5px">✓ Zero balance · ✓ Up to 7% p.a. interest<br>✓ Free virtual debit card · Video-KYC onboarding</div>
+          <div class="btn" style="margin-top:10px;padding:10px">Open account</div>
+        </div>
+        <div class="card">
+          <div class="rowline"><span class="h t3">Salary Account</span><span class="pill" style="background:#E8F0FC;color:var(--blue)">POPULAR</span></div>
+          <div class="tiny" style="margin-top:5px">✓ Zero charges with salary credit<br>✓ 2x reward points · Airport lounge access</div>
+          <div class="btn ghost" style="margin-top:10px;padding:10px">Open account</div>
+        </div>
+        <div class="spacer"></div>
+        <div class="tiny" style="text-align:center">myscorr may earn a referral fee when you open an account through the app. This never changes what you pay.</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S15</span>Bank account cross-sell</b>Commission product #2. "Best match" framing keeps it advisory rather than a bare ad wall. The referral-fee disclosure line builds trust and pre-empts regulatory ire — make it standard on every commission surface.<br><span class="tag rev">₹ Account-opening commission</span><span class="tag comp">◆ Referral fee disclosure</span></div>
+  </div>
+
+  <!-- S16 Credit cards -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>Cards matched to you</div>
+      <div class="content" style="padding-top:6px">
+        <div class="card" style="background:linear-gradient(140deg,#12202E,#2A4258);color:#fff">
+          <div class="rowline"><span class="h t3" style="color:#fff">Cashback Card</span><span class="pill" style="background:#2FCE8F;color:#062E1E">92% APPROVAL MATCH</span></div>
+          <div class="tiny" style="color:#B9C6D2;margin-top:5px">5% cashback online · No joining fee<br>Ideal for your spend profile</div>
+          <div class="btn amber" style="margin-top:10px;padding:10px">Check &amp; apply</div>
+        </div>
+        <div class="card">
+          <div class="rowline"><span class="h t3">Fuel Saver Card</span><span class="pill" style="background:var(--lt);color:var(--teal-d)">84% MATCH</span></div>
+          <div class="tiny" style="margin-top:5px">7% value-back on fuel · ₹499/yr, waived on ₹1L spend</div>
+          <div class="btn ghost" style="margin-top:10px;padding:10px">Check &amp; apply</div>
+        </div>
+        <div class="card" style="background:#FBFCFD">
+          <div class="rowline"><span class="h t3" style="color:var(--faint)">Premium Travel Card</span><span class="pill" style="background:#FBE9E7;color:var(--red)">LOW MATCH</span></div>
+          <div class="tiny" style="margin-top:5px">Needs 760+ score — you're 18 points away. We'll alert you when you qualify.</div>
+        </div>
+        <div class="spacer"></div>
+        <div class="tiny" style="text-align:center">Approval-match is an estimate from your score band, not a guarantee.</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S16</span>Credit card cross-sell</b>Approval-match % (from score band) is the killer feature — it prevents rejection-enquiries that damage users' scores, and "you're 18 points away, we'll alert you" turns a low match into a retention loop instead of a dead end.<br><span class="tag rev">₹ Card referral commission</span><span class="tag ux">● Match % must stay honest</span></div>
+  </div>
+
+  </div>
+</div>
+
+<!-- ================= JOURNEY 4 ================= -->
+<div class="journey">
+  <div class="jhead"><span class="jnum">JOURNEY 04</span><h2>Statement intelligence</h2><p>Goal: differentiated utility — bank statement analysis with tamper detection, and UPI app statement insights.</p></div>
+  <div class="row">
+
+  <!-- S17 Upload -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>Analyse statement</div>
+      <div class="content" style="padding-top:6px">
+        <div style="display:flex;gap:7px"><span class="chip" style="border:1.5px solid var(--teal)">🏦 Bank statement</span><span class="chip" style="background:#fff;border:1.5px solid var(--line);color:var(--muted)">📱 UPI app statement</span></div>
+        <div class="card" style="border:1.5px dashed var(--teal);text-align:center;padding:22px 14px;background:#F7FBFA">
+          <div style="font-size:24px">⬆️</div>
+          <div class="h t3" style="margin-top:6px">Upload statement PDF</div>
+          <div class="tiny" style="margin-top:3px">Last 3–6 months · Max 15 MB<br>Direct bank downloads work best</div>
+        </div>
+        <div class="lbl">PDF password (if any)</div>
+        <div class="field">🔒 &nbsp;Enter statement password</div>
+        <div class="lbl">Your bank</div>
+        <div style="display:flex;gap:7px;flex-wrap:wrap"><span class="chip info">HDFC</span><span class="chip info">SBI</span><span class="chip info">ICICI</span><span class="chip info">Axis</span><span class="chip info">Kotak</span><span class="chip info">+ 30 more</span></div>
+        <div class="spacer"></div>
+        <div class="btn">Analyse my statement</div>
+        <div class="tiny" style="text-align:center">🔒 Processed securely · you can delete your file anytime</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S17</span>Statement upload</b>Toggle between bank and UPI statement paths. Ask for the PDF password up front (most bank PDFs are locked — a silent failure point). Roadmap: replace uploads with RBI's Account Aggregator framework for consent-based direct fetch.<br><span class="tag ux">● AA framework = v2 upgrade</span></div>
+  </div>
+
+  <!-- S18 Bank analysis -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>Statement report</div>
+      <div class="content" style="padding-top:6px">
+        <div class="card" style="background:#EFFAF4;border-color:#C4EAD6;padding:11px 12px">
+          <div class="rowline"><span class="h t3" style="color:#177A4C">✓ No tampering detected</span><span class="pill" style="background:#177A4C;color:#fff">AUTHENTIC</span></div>
+          <div class="tiny" style="margin-top:4px;color:#2C6E4E">Metadata, font &amp; balance-continuity checks passed · HDFC · Feb–Jul 2026</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div class="card" style="padding:11px"><div class="tiny">Avg monthly income</div><div class="h t3" style="color:var(--teal)">₹68,400</div><div class="tiny">Salary · consistent ✓</div></div>
+          <div class="card" style="padding:11px"><div class="tiny">Avg monthly spend</div><div class="h t3">₹51,200</div><div class="tiny">75% of income</div></div>
+          <div class="card" style="padding:11px"><div class="tiny">EMI outflows</div><div class="h t3">₹18,500</div><div class="tiny">2 active loans</div></div>
+          <div class="card" style="padding:11px"><div class="tiny">Cheque bounces</div><div class="h t3" style="color:#177A4C">0</div><div class="tiny">6 months clean ✓</div></div>
+        </div>
+        <div class="card" style="padding:11px 12px">
+          <div class="rowline"><span class="tiny"><b style="color:var(--ink)">FOIR (EMI ÷ income)</b></span><span class="chip warn">27% — near limit</span></div>
+          <div class="prog" style="margin-top:7px"><i style="width:54%;background:linear-gradient(90deg,#2FCE8F,#F5A623)"></i></div>
+          <div class="tiny" style="margin-top:4px">Lenders prefer under 40–50%. One more EMI could reduce loan approval odds.</div>
+        </div>
+        <div class="spacer"></div>
+        <div class="btn ghost">⬇ Download analysis PDF</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S18</span>Bank statement analysis + tamper check</b>The authenticity verdict (metadata/font/balance-continuity checks) is genuinely differentiated — useful to users, and potentially a B2B product later (lenders/landlords pay for exactly this). Income + FOIR outputs feed straight back into sharper loan eligibility.<br><span class="tag ux">● Feeds eligibility engine</span><span class="tag rev">₹ Future B2B angle</span></div>
+  </div>
+
+  <!-- S19 UPI analysis -->
+  <div class="shot">
+    <div class="phone"><div class="screen">
+      <div class="notch"></div>
+      <div class="sb"><span>9:41</span><span class="r"><span class="dot3"><i style="height:5px"></i><i style="height:7px"></i><i style="height:9px"></i></span><span class="batt"></span></span></div>
+      <div class="appbar"><div class="back">‹</div>UPI spend insights</div>
+      <div class="content" style="padding-top:6px">
+        <div class="card" style="padding:12px">
+          <div class="rowline"><span class="h t3">July 2026 · ₹32,450 spent</span><span class="tiny">412 txns</span></div>
+          <div style="display:flex;gap:4px;margin-top:10px;height:10px;border-radius:99px;overflow:hidden">
+            <i style="flex:36;background:#0E8A78"></i><i style="flex:22;background:#2FCE8F"></i><i style="flex:18;background:#F5A623"></i><i style="flex:14;background:#3B7BDD"></i><i style="flex:10;background:#C4CDD6"></i>
+          </div>
+          <div class="tiny" style="margin-top:8px">🟩 Food &amp; dining 36% · 🟢 Shopping 22% · 🟧 Travel 18%<br>🟦 Bills &amp; recharge 14% · ⬜ Others 10%</div>
+        </div>
+        <div class="lbl">Top merchants</div>
+        <div class="card" style="padding:10px 12px"><div class="rowline"><span class="tiny"><b style="color:var(--ink)">Swiggy / Zomato</b> · 48 orders</span><b class="tiny" style="color:var(--ink)">₹8,240</b></div></div>
+        <div class="card" style="padding:10px 12px"><div class="rowline"><span class="tiny"><b style="color:var(--ink)">Amazon</b> · 9 orders</span><b class="tiny" style="color:var(--ink)">₹5,980</b></div></div>
+        <div class="card" style="background:#FDF7EC;border-color:#F1DFBE;padding:11px 12px">
+          <div class="tiny" style="color:var(--amber-d)"><b>💡 Insight:</b> 40% of your spend is small-ticket food orders (avg ₹172). Cutting this by half frees ₹4,100/mo — enough to clear your card dues faster and lift your score.</div>
+        </div>
+        <div class="spacer"></div>
+        <div class="btn">Get my savings plan</div>
+      </div>
+    </div></div>
+    <div class="cap"><b><span class="snum">S19</span>UPI statement analysis</b>Parses GPay/PhonePe/Paytm statement exports into category + merchant insights. The magic move: every insight loops back to the score ("frees ₹4,100/mo → clear dues → lift score") so this feature reinforces the core product instead of being a gimmick.<br><span class="tag ux">● Engagement + retention loop</span></div>
+  </div>
+
+  </div>
+</div>
+
+<footer>
+<b style="color:#fff;font-family:'Bricolage Grotesque'">Build notes for the team</b><br>
+① The four journeys share one design system: teal = action, amber = payment/premium moments, green = healthy, red = risk. Keep this colour grammar consistent — users learn it fast. &nbsp;② Instrument these funnel events from day one: otp_verified → payment_success → pan_submitted → score_revealed → loan_offer_viewed → application_submitted → disbursal. &nbsp;③ Screens S5 (paywall), S7 (PAN consent), S13 (loan offer) and S15/S16 (referral disclosures) carry regulatory copy — treat that text as locked strings requiring compliance sign-off before release. &nbsp;④ Android &amp; iOS share identical flows; platform differences are limited to OTP autofill mechanics, payment intent handling, and native share sheets on S11.
+</footer>
+
+</div>
+</body>
+</html>
