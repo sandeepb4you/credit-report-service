@@ -246,10 +246,14 @@ CREATE TABLE products (
     updated_at  TIMESTAMPTZ   NOT NULL DEFAULT now()
 );
 
+-- ON CONFLICT keeps the seed replayable: re-running this file by hand against
+-- a database that already has the catalog is a no-op rather than a duplicate
+-- key error, and locally edited prices survive.
 INSERT INTO products (code, name, amount) VALUES
     ('CREDIT_ANALYSIS',          'Credit Report Analysis',  299.00),
     ('BANK_STATEMENT_ANALYSIS',  'Bank Statement Analysis', 299.00),
-    ('UPI_STATEMENT_ANALYSIS',   'UPI Statement Analysis',  299.00);
+    ('UPI_STATEMENT_ANALYSIS',   'UPI Statement Analysis',  299.00)
+ON CONFLICT (code) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
 -- orders: one row per purchase attempt.
