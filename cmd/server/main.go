@@ -69,6 +69,7 @@ func main() {
 	analyticsRepo := repository.NewCreditAnalyticsRepo(pool)
 	orderRepo := repository.NewOrderRepo(pool)
 	sessionRepo := repository.NewSessionRepo(pool)
+	couponRepo := repository.NewCouponRepo(pool)
 
 	// Upstream clients.
 	digitapClient := digitap.New(digitap.Config{
@@ -98,7 +99,8 @@ func main() {
 		accountRepo, otpSvc, mailSvc, tokenSvc, sessionSvc, cfg.Auth)
 	analyticsSvc := service.NewCreditAnalyticsService(digitapClient, analyticsRepo, accountRepo)
 	kycSvc := service.NewKycService(accountRepo)
-	orderSvc := service.NewOrderService(orderRepo, accountRepo, gateway, cfg.Cashfree)
+	couponSvc := service.NewCouponService(couponRepo, orderRepo)
+	orderSvc := service.NewOrderService(orderRepo, accountRepo, couponSvc, gateway, cfg.Cashfree)
 
 	// Handlers.
 	healthH := handler.NewHealthHandler()
@@ -106,6 +108,7 @@ func main() {
 	analyticsH := handler.NewCreditAnalyticsHandler(analyticsSvc)
 	kycH := handler.NewKycHandler(kycSvc)
 	orderH := handler.NewOrderHandler(orderSvc)
+	couponH := handler.NewCouponHandler(couponSvc)
 
 	// One-time configuration snapshot. No secrets: just feature flags the
 	// operator needs to confirm at boot (stub vs. live upstream, OCR provider,
@@ -122,7 +125,7 @@ func main() {
 		"trusted_proxies", len(cfg.Server.TrustedProxies),
 	)
 
-	app := server.New(cfg, healthH, authH, analyticsH, kycH, orderH, tokenSvc)
+	app := server.New(cfg, healthH, authH, analyticsH, kycH, orderH, couponH, tokenSvc)
 
 	go func() {
 		addr := ":" + itoa(cfg.Server.Port)

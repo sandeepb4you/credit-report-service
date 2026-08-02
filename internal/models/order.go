@@ -42,9 +42,15 @@ type Order struct {
 	AccountID   int64  `json:"-"           db:"account_id"`
 	ProductCode string `json:"productCode" db:"product_code"`
 
-	Amount   float64 `json:"amount"   db:"amount"`
-	Currency string  `json:"currency" db:"currency"`
-	Status   string  `json:"status"   db:"status"`
+	// Amount is what the customer is charged, i.e. already net of any coupon.
+	// DiscountAmount and CouponCode are snapshots of how it got there, so the
+	// list price is Amount + DiscountAmount and later edits to the coupon can
+	// never rewrite this order.
+	Amount         float64 `json:"amount"         db:"amount"`
+	DiscountAmount float64 `json:"discountAmount" db:"discount_amount"`
+	CouponCode     *string `json:"couponCode"     db:"coupon_code"`
+	Currency       string  `json:"currency"       db:"currency"`
+	Status         string  `json:"status"         db:"status"`
 
 	CFOrderID        *string    `json:"cfOrderId"        db:"cf_order_id"`
 	PaymentSessionID *string    `json:"paymentSessionId" db:"payment_session_id"`

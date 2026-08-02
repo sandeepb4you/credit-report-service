@@ -18,6 +18,10 @@ type OrderRepo struct{ pool *pgxpool.Pool }
 
 func NewOrderRepo(pool *pgxpool.Pool) *OrderRepo { return &OrderRepo{pool: pool} }
 
+// BeginTx starts a transaction so the service layer can commit an order and
+// its coupon redemption together.
+func (r *OrderRepo) BeginTx(ctx context.Context) (pgx.Tx, error) { return r.pool.Begin(ctx) }
+
 // ---- products ------------------------------------------------------------
 
 const productCols = `code, name, amount, currency, active, created_at, updated_at`
@@ -41,18 +45,38 @@ func (r *OrderRepo) FindProduct(ctx context.Context, code string) (*models.Produ
 
 // ---- orders ---------------------------------------------------------------
 
-const orderCols = `id, order_uid, account_id, product_code, amount, currency, status,
+const orderCols = `id, order_uid, account_id, product_code, amount, discount_amount,
+    coupon_code, currency, status,
     cf_order_id, payment_session_id, cf_payment_id, payment_method, failure_reason,
     order_expiry_time, paid_at, fulfilled_at, created_at, updated_at`
 
 // CreateOrder inserts the local row before the gateway is called, so the
 // order_uid exists to send as the gateway's order_id.
 func (r *OrderRepo) CreateOrder(ctx context.Context, o *models.Order) error {
-	row := r.pool.QueryRow(ctx,
-		`INSERT INTO orders (order_uid, account_id, product_code, amount, currency, status)
-		 VALUES ($1, $2, $3, $4, $5, $6)
+	return r.insertOrder(ctx, r.pool, o)
+}
+
+// CreateOrderTx inserts the order inside a caller-managed transaction, so an
+// order and the coupon redemption that priced it commit together or not at all.
+func (r *OrderRepo) CreateOrderTx(ctx context.Context, tx pgx.Tx, o *models.Order) error {
+	return r.insertOrder(ctx, tx, o)
+}
+
+// querier is the subset of pgxpool.Pool and pgx.Tx that insertOrder needs, so
+// the statement lives in one place regardless of who runs it.
+type querier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func (r *OrderRepo) insertOrder(ctx context.Context, q querier, o *models.Order) error {
+	row := q.QueryRow(ctx,
+		`INSERT INTO orders
+		     (order_uid, account_id, product_code, amount, discount_amount,
+		      coupon_code, currency, status)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 RETURNING id, created_at, updated_at`,
-		o.OrderUID, o.AccountID, o.ProductCode, o.Amount, o.Currency, o.Status,
+		o.OrderUID, o.AccountID, o.ProductCode, o.Amount, o.DiscountAmount,
+		o.CouponCode, o.Currency, o.Status,
 	)
 	if err := row.Scan(&o.ID, &o.CreatedAt, &o.UpdatedAt); err != nil {
 		return classifyPgErr(err)

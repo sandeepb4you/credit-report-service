@@ -49,6 +49,10 @@ func (h *OrderHandler) ListProducts(c *fiber.Ctx) error {
 
 type createOrderReq struct {
 	ProductCode string `json:"productCode" example:"CREDIT_ANALYSIS"`
+	// CouponCode is optional. Only the code is accepted — the discount and the
+	// resulting total are computed server-side from the catalog price, so a
+	// tampered request cannot change what is charged.
+	CouponCode string `json:"couponCode" example:"SAVE20"`
 }
 
 // Create godoc
@@ -80,7 +84,7 @@ func (h *OrderHandler) Create(c *fiber.Ctx) error {
 		return apperr.NewValidationWith("Validation failed",
 			map[string]string{"productCode": "productCode is required"})
 	}
-	res, err := h.svc.CreateOrder(c.Context(), accountID, req.ProductCode)
+	res, err := h.svc.CreateOrder(c.Context(), accountID, req.ProductCode, req.CouponCode)
 	if err != nil {
 		return err
 	}

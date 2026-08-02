@@ -25,6 +25,7 @@ func New(
 	analytics *handler.CreditAnalyticsHandler,
 	kyc *handler.KycHandler,
 	orders *handler.OrderHandler,
+	coupons *handler.CouponHandler,
 	tokens *service.TokenService,
 ) *fiber.App {
 	// Client IP resolution. X-Forwarded-For is only believed when the immediate
@@ -126,6 +127,17 @@ func New(
 	o.Post("/", orders.Create)
 	o.Get("/", orders.List)
 	o.Get("/:orderId", orders.Get)
+
+	// ---- Coupons ---------------------------------------------------------
+	//
+	// Issuance is capability-gated (agents and admins); the quote endpoint is
+	// open to any signed-in customer, since it is what the payment screen calls
+	// when a code is typed in.
+	cp := api.Group("/coupons")
+	cp.Get("/quote", requireAuth, coupons.QuoteCoupon)
+	cp.Post("/", middleware.RequirePermission(tokens, models.PermCouponCreate), coupons.CreateCoupon)
+	cp.Get("/", middleware.RequirePermission(tokens, models.PermCouponManage), coupons.ListCoupons)
+	cp.Delete("/:code", middleware.RequirePermission(tokens, models.PermCouponManage), coupons.RevokeCoupon)
 
 	// ---- Credit analytics (Digitap proxy) -------------------------------
 	ca := api.Group("/credit-analytics", requireAuth)

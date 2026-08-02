@@ -678,6 +678,221 @@ const docTemplate = `{
                 }
             }
         },
+        "/coupons": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the coupons the caller issued, newest first. Holders of 'coupon:admin' (admins) see every coupon instead.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "coupons"
+                ],
+                "summary": "List coupons",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/credit-report-service_internal_models.Coupon"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing the 'coupon:manage' permission",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a percentage-discount coupon owned by the calling account. Requires the 'coupon:create' permission, held by agents and admins. Omit productCode to have it apply to every product; omit maxRedemptions for unlimited use. The discount is applied server-side at checkout — clients never send prices.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "coupons"
+                ],
+                "summary": "Issue a coupon code",
+                "parameters": [
+                    {
+                        "description": "Coupon definition",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.createCouponReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.Coupon"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing the 'coupon:create' permission",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "That coupon code is already taken",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/coupons/quote": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "What the payment screen calls when a customer enters a code. Returns the list price, the discount, and the payable total, all computed server-side. Reserves nothing — the coupon is only consumed when the order is created, so a quote can go stale if the last redemption is taken in between. Any authenticated user may call it.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "coupons"
+                ],
+                "summary": "Price a product with a coupon applied",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Coupon code",
+                        "name": "code",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Product being purchased",
+                        "name": "productCode",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_service.Quote"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid coupon or unknown product",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/coupons/{code}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Stops future use of a coupon. Agents may only revoke their own; a code belonging to someone else reads as 404 so the endpoint cannot be used to discover which codes exist. Orders already placed keep their discount — revoking is not retroactive.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "coupons"
+                ],
+                "summary": "Revoke a coupon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Coupon code",
+                        "name": "code",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{\\\"message\\\": \\\"Coupon revoked\\\"}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Malformed code",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing the 'coupon:manage' permission",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No such active coupon",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/credit-analytics/latest-insights": {
             "get": {
                 "security": [
@@ -1359,6 +1574,52 @@ const docTemplate = `{
                 }
             }
         },
+        "credit-report-service_internal_models.Coupon": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "createdBy": {
+                    "description": "CreatedBy is the issuing account — the agent this redemption attributes to.",
+                    "type": "integer"
+                },
+                "discountPercent": {
+                    "type": "number"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "maxRedemptions": {
+                    "type": "integer"
+                },
+                "perAccountLimit": {
+                    "type": "integer"
+                },
+                "productCode": {
+                    "description": "ProductCode nil means the coupon applies to every product.",
+                    "type": "string"
+                },
+                "redemptionCount": {
+                    "type": "integer"
+                },
+                "revokedAt": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "validFrom": {
+                    "type": "string"
+                },
+                "validUntil": {
+                    "type": "string"
+                }
+            }
+        },
         "credit-report-service_internal_models.CreditAnalyticsRequest": {
             "type": "object",
             "properties": {
@@ -1471,9 +1732,13 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "amount": {
+                    "description": "Amount is what the customer is charged, i.e. already net of any coupon.\nDiscountAmount and CouponCode are snapshots of how it got there, so the\nlist price is Amount + DiscountAmount and later edits to the coupon can\nnever rewrite this order.",
                     "type": "number"
                 },
                 "cfOrderId": {
+                    "type": "string"
+                },
+                "couponCode": {
                     "type": "string"
                 },
                 "createdAt": {
@@ -1481,6 +1746,9 @@ const docTemplate = `{
                 },
                 "currency": {
                     "type": "string"
+                },
+                "discountAmount": {
+                    "type": "number"
                 },
                 "failureReason": {
                     "type": "string"
@@ -1563,13 +1831,20 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "amount": {
+                    "description": "Amount is the charged total, already net of any coupon. OriginalAmount\nand DiscountAmount let the payment screen show the saving without\nrecomputing it — and without being trusted to.",
                     "type": "number"
                 },
                 "cfOrderId": {
                     "type": "string"
                 },
+                "couponCode": {
+                    "type": "string"
+                },
                 "currency": {
                     "type": "string"
+                },
+                "discountAmount": {
+                    "type": "number"
                 },
                 "mode": {
                     "type": "string"
@@ -1577,10 +1852,39 @@ const docTemplate = `{
                 "orderId": {
                     "type": "string"
                 },
+                "originalAmount": {
+                    "type": "number"
+                },
                 "paymentSessionId": {
                     "type": "string"
                 },
                 "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "credit-report-service_internal_service.Quote": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "discountAmount": {
+                    "type": "number"
+                },
+                "discountPercent": {
+                    "type": "number"
+                },
+                "originalAmount": {
+                    "type": "number"
+                },
+                "payableAmount": {
+                    "type": "number"
+                },
+                "productCode": {
                     "type": "string"
                 }
             }
@@ -1688,9 +1992,47 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_handler.createCouponReq": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "example": "SAVE20"
+                },
+                "discountPercent": {
+                    "type": "number",
+                    "example": 20
+                },
+                "maxRedemptions": {
+                    "type": "integer",
+                    "example": 100
+                },
+                "perAccountLimit": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "productCode": {
+                    "type": "string",
+                    "example": "CREDIT_ANALYSIS"
+                },
+                "validFrom": {
+                    "type": "string",
+                    "example": "2026-08-01T00:00:00Z"
+                },
+                "validUntil": {
+                    "type": "string",
+                    "example": "2026-12-31T23:59:59Z"
+                }
+            }
+        },
         "internal_handler.createOrderReq": {
             "type": "object",
             "properties": {
+                "couponCode": {
+                    "description": "CouponCode is optional. Only the code is accepted — the discount and the\nresulting total are computed server-side from the catalog price, so a\ntampered request cannot change what is charged.",
+                    "type": "string",
+                    "example": "SAVE20"
+                },
                 "productCode": {
                     "type": "string",
                     "example": "CREDIT_ANALYSIS"
