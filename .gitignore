@@ -4,6 +4,9 @@
 *.test
 *.out
 
+# Delve debug binaries from the VS Code / GoLand debugger (~50MB each)
+__debug_bin*
+
 # Local data (PAN image uploads)
 /data/
 
