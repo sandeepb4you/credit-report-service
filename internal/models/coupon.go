@@ -31,7 +31,7 @@ const ReferralCodePrefix = "REF"
 // A coupon that discounts an order below this is rejected at checkout rather
 // than silently clamped, because clamping would overcharge against a discount
 // the customer was shown.
-const MinChargeableAmount = 1.00
+const MinChargeableAmount = 0
 
 // Coupon is the row model for the coupons table: a percentage discount issued
 // by an agent or admin.

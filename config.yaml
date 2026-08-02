@@ -86,3 +86,11 @@ log:
   # format: text (human-readable, good for dev) | json (good for log ingestion)
   level: info
   format: text
+
+demo:
+  # Demo/UAT convenience flag. When true, a PAN submitted via POST /api/kyc/pan
+  # is auto-verified immediately (status VERIFIED) instead of waiting for the
+  # admin verify step, so the credit-analytics flow can be demoed end-to-end
+  # without the external KYC provider. MUST stay false in production.
+  # Override via DEMO_ENABLED=true.
+  enabled: true

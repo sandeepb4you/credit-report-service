@@ -86,3 +86,10 @@ cashfree:
   # must be configured in the Cashfree dashboard instead.
   notify-url: ""
   timeout: 15s
+
+demo:
+  # Dev convenience: auto-verify a submitted PAN (status VERIFIED) so the
+  # credit-analytics flow can be exercised without the external KYC provider or
+  # the admin verify step. Enabled here for local dev; MUST stay false in
+  # production. Override via DEMO_ENABLED.
+  enabled: true

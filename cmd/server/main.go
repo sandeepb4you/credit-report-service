@@ -99,7 +99,10 @@ func main() {
 	authSvc := service.NewAuthService(
 		accountRepo, otpSvc, mailSvc, tokenSvc, sessionSvc, couponSvc, cfg.Auth)
 	analyticsSvc := service.NewCreditAnalyticsService(digitapClient, analyticsRepo, accountRepo)
-	kycSvc := service.NewKycService(accountRepo)
+	if cfg.Demo.Enabled {
+		slog.Warn("DEMO MODE ENABLED: submitted PANs are auto-verified without the external KYC provider; do not use in production")
+	}
+	kycSvc := service.NewKycService(accountRepo, cfg.Demo.Enabled)
 	orderSvc := service.NewOrderService(orderRepo, accountRepo, couponSvc, gateway, cfg.Cashfree)
 
 	// Handlers.
@@ -120,6 +123,8 @@ func main() {
 		"cashfree_stub", cashfreeStub,
 		"ocr_provider", cfg.Registration.OCR.Provider,
 		"google_login_enabled", cfg.Auth.Google.ClientID != "",
+		// Demo mode auto-verifies submitted PANs; must be false in production.
+		"demo_mode", cfg.Demo.Enabled,
 		// Zero behind a load balancer means every session records the
 		// balancer's IP instead of the user's.
 		"trusted_proxies", len(cfg.Server.TrustedProxies),

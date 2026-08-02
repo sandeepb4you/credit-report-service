@@ -1869,10 +1869,88 @@ const docTemplate = `{
                 }
             }
         },
+        "credit-report-service_internal_service.CardFactor": {
+            "type": "object",
+            "properties": {
+                "detail": {
+                    "description": "suggested next action",
+                    "type": "string"
+                },
+                "grade": {
+                    "description": "\"A+\", \"A\", \"B\", \"C\", \"D\", \"F\"",
+                    "type": "string"
+                },
+                "missedCount": {
+                    "description": "missed/delayed months (payment factor)",
+                    "type": "integer"
+                },
+                "name": {
+                    "description": "e.g. \"Payment history\"",
+                    "type": "string"
+                },
+                "summary": {
+                    "description": "human-readable detail line",
+                    "type": "string"
+                },
+                "weight": {
+                    "description": "percent weight (e.g. 35)",
+                    "type": "integer"
+                }
+            }
+        },
         "credit-report-service_internal_service.CreditAnalyticsInput": {
             "type": "object",
             "properties": {
                 "device_ip": {
+                    "type": "string"
+                }
+            }
+        },
+        "credit-report-service_internal_service.LoanAccount": {
+            "type": "object",
+            "properties": {
+                "accountNumber": {
+                    "type": "string"
+                },
+                "company": {
+                    "type": "string"
+                },
+                "currentBalance": {
+                    "type": "number"
+                },
+                "loanType": {
+                    "type": "string"
+                },
+                "originalLoanAmount": {
+                    "type": "number"
+                },
+                "paymentHistory": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/credit-report-service_internal_service.PaymentMonth"
+                    }
+                },
+                "percentagePaid": {
+                    "type": "number"
+                },
+                "totalTenureMonths": {
+                    "type": "integer"
+                }
+            }
+        },
+        "credit-report-service_internal_service.PaymentMonth": {
+            "type": "object",
+            "properties": {
+                "daysLate": {
+                    "description": "0 if paid on time",
+                    "type": "integer"
+                },
+                "month": {
+                    "description": "e.g. \"2026-08\"",
+                    "type": "string"
+                },
+                "status": {
+                    "description": "\"paid\", \"delayed\", \"not_reported\"",
                     "type": "string"
                 }
             }
@@ -1939,14 +2017,43 @@ const docTemplate = `{
                 }
             }
         },
+        "credit-report-service_internal_service.ReportCard": {
+            "type": "object",
+            "properties": {
+                "factors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/credit-report-service_internal_service.CardFactor"
+                    }
+                },
+                "overallGrade": {
+                    "type": "string"
+                }
+            }
+        },
         "credit-report-service_internal_service.ReportInsights": {
             "type": "object",
             "properties": {
+                "activeAccountCount": {
+                    "type": "integer"
+                },
                 "cardUtilizationPercent": {
                     "type": "number"
                 },
                 "enquiryCount180Days": {
                     "type": "integer"
+                },
+                "interestPaidPerYear": {
+                    "type": "number"
+                },
+                "loanAccounts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/credit-report-service_internal_service.LoanAccount"
+                    }
+                },
+                "monthlyEmi": {
+                    "type": "number"
                 },
                 "onTimePaymentPercent": {
                     "type": "number"
@@ -1954,8 +2061,17 @@ const docTemplate = `{
                 "outdated": {
                     "type": "boolean"
                 },
+                "reportCard": {
+                    "$ref": "#/definitions/credit-report-service_internal_service.ReportCard"
+                },
                 "reportId": {
                     "type": "integer"
+                },
+                "totalAccountCount": {
+                    "type": "integer"
+                },
+                "totalOutstandingAmount": {
+                    "type": "number"
                 }
             }
         },

@@ -15,12 +15,17 @@ import (
 // the income-tax database is out of scope here; this only accepts, formats,
 // and stores the number. A VERIFIED row (set by a separate KYC-provider flow)
 // is what gates the analysis products.
+//
+// In demo mode the real verification provider is unavailable, so a submitted
+// PAN is auto-verified on submission (see SubmitPAN). This flag must stay false
+// in production.
 type KycService struct {
 	accounts *repository.AccountRepo
+	demoMode bool
 }
 
-func NewKycService(accounts *repository.AccountRepo) *KycService {
-	return &KycService{accounts: accounts}
+func NewKycService(accounts *repository.AccountRepo, demoMode bool) *KycService {
+	return &KycService{accounts: accounts, demoMode: demoMode}
 }
 
 // SubmitPAN validates the PAN format, then upserts it against the account's
@@ -44,6 +49,20 @@ func (s *KycService) SubmitPAN(ctx context.Context, accountID int64, pan string)
 	}
 	// account_id only — the PAN number is PII and must never appear in logs.
 	slog.Info("pan submitted", "account_id", accountID, "verified", rec.PANVerified)
+
+	// Demo mode: skip the (unavailable) external verification provider and mark
+	// the PAN verified immediately, so the credit-analytics flow is usable
+	// without the admin verify step. Never enabled in production.
+	if s.demoMode {
+		verified, verr := s.accounts.VerifyPAN(ctx, accountID)
+		if verr != nil {
+			// The PAN is stored; auto-verify is a best-effort demo convenience.
+			// Surface the failure rather than silently returning a PENDING row.
+			return nil, verr
+		}
+		slog.Info("pan auto-verified (demo mode)", "account_id", accountID)
+		return verified, nil
+	}
 	return rec, nil
 }
 

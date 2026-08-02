@@ -26,6 +26,15 @@ type Config struct {
 	Digitap      DigitapConfig      `mapstructure:"digitap"`
 	Log          LogConfig          `mapstructure:"log"`
 	Cashfree     CashfreeConfig     `mapstructure:"cashfree"`
+	Demo         DemoConfig         `mapstructure:"demo"`
+}
+
+// DemoConfig holds flags that relax real-world gating so the product can be
+// demonstrated end-to-end without external verification providers. It must stay
+// disabled in production: with Enabled true, a submitted PAN is auto-verified
+// (skipping the admin verification step that normally gates credit analytics).
+type DemoConfig struct {
+	Enabled bool `mapstructure:"enabled"`
 }
 
 // CashfreeConfig holds Cashfree Payment Gateway credentials and endpoints.
@@ -282,6 +291,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("cashfree.mode", "sandbox")
 	v.SetDefault("cashfree.api-version", "2025-01-01")
 	v.SetDefault("cashfree.timeout", "15s")
+
+	// Demo mode: OFF by default. Enable only for demos/UAT where the real KYC
+	// verification provider is unavailable. Set via DEMO_ENABLED=true.
+	v.SetDefault("demo.enabled", false)
 }
 
 func allKeys() []string {
@@ -307,6 +320,7 @@ func allKeys() []string {
 		"cashfree.mode", "cashfree.base-url", "cashfree.client-id",
 		"cashfree.client-secret", "cashfree.api-version",
 		"cashfree.return-url", "cashfree.notify-url", "cashfree.timeout",
+		"demo.enabled",
 	}
 }
 
