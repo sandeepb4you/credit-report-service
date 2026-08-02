@@ -95,12 +95,12 @@ func (h *CreditAnalyticsHandler) ListReports(c *fiber.Ctx) error {
 // GetReport godoc
 //
 // @Summary      Fetch a credit-analytics report by id
-// @Description  Returns the full report row (including the persisted upstream response body) for one of the caller's own reports.
+// @Description  Returns the derived analytics (bureau score, on-time payment %, card utilization %, 180-day enquiry count, account summary, loan accounts, and report card) for one of the caller's own reports, computed from the stored bureau response.
 // @Tags         credit-analytics
 // @Produce      json
 // @Security     BearerAuth
 // @Param        id  path      int  true  "Report id"
-// @Success      200  {object}  models.CreditAnalyticsRequest
+// @Success      200  {object}  service.ReportInsights
 // @Failure      400  {object}  apperr.ErrorBody  "id must be an integer"
 // @Failure      401  {object}  apperr.ErrorBody  "Not authenticated"
 // @Failure      404  {object}  apperr.ErrorBody  "Report not found (or belongs to another account)"
@@ -114,7 +114,36 @@ func (h *CreditAnalyticsHandler) GetReport(c *fiber.Ctx) error {
 	if err != nil {
 		return apperr.NewValidation("id must be an integer")
 	}
-	row, err := h.svc.GetReport(c.Context(), accountID, id)
+	insights, err := h.svc.GetReport(c.Context(), accountID, id)
+	if err != nil {
+		return err
+	}
+	return c.JSON(insights)
+}
+
+// GetReportRaw godoc
+//
+// @Summary      Fetch the raw Digitap response for a report by id
+// @Description  Returns the full report row for one of the caller's own reports, including the persisted raw Digitap response body (response_body) exactly as received upstream. Use /reports/{id} for the derived analytics instead.
+// @Tags         credit-analytics
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id  path      int  true  "Report id"
+// @Success      200  {object}  models.CreditAnalyticsRequest
+// @Failure      400  {object}  apperr.ErrorBody  "id must be an integer"
+// @Failure      401  {object}  apperr.ErrorBody  "Not authenticated"
+// @Failure      404  {object}  apperr.ErrorBody  "Report not found (or belongs to another account)"
+// @Router       /credit-analytics/reports/{id}/raw [get]
+func (h *CreditAnalyticsHandler) GetReportRaw(c *fiber.Ctx) error {
+	accountID, ok := middleware.AccountID(c)
+	if !ok {
+		return apperr.NewUnauthorized("Not authenticated")
+	}
+	id, err := strconv.ParseInt(c.Params("id"), 10, 64)
+	if err != nil {
+		return apperr.NewValidation("id must be an integer")
+	}
+	row, err := h.svc.GetReportRaw(c.Context(), accountID, id)
 	if err != nil {
 		return err
 	}
@@ -124,7 +153,7 @@ func (h *CreditAnalyticsHandler) GetReport(c *fiber.Ctx) error {
 // GetLatestInsights godoc
 //
 // @Summary      Get credit insights from the latest report
-// @Description  Returns derived analytics from the most recent successful credit report: on-time payment percentage, card utilization percentage, and enquiry count for the past 180 days.
+// @Description  Returns derived analytics from the most recent successful credit report: the bureau credit score, on-time payment percentage, card utilization percentage, and enquiry count for the past 180 days.
 // @Tags         credit-analytics
 // @Produce      json
 // @Security     BearerAuth

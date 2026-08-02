@@ -147,6 +147,7 @@ func New(
 	ca.Post("/request", analytics.Request)
 	ca.Get("/reports", analytics.ListReports)
 	ca.Get("/reports/:id<int>", analytics.GetReport)
+	ca.Get("/reports/:id<int>/raw", analytics.GetReportRaw)
 	ca.Get("/latest-insights", analytics.GetLatestInsights)
 
 	// ---- KYC (PAN submission) -------------------------------------------

@@ -63,11 +63,13 @@ type CreditAnalyticsInput struct {
 	DeviceIP string `json:"device_ip"`
 }
 
-// ReportSummary is the trimmed list-item shape for the reports endpoint: just
-// the report's unique identifier (id) and generation date (created_at).
+// ReportSummary is the trimmed list-item shape for the reports endpoint: the
+// report's unique identifier (id), generation date (created_at), and the bureau
+// score (nil when the pull failed or returned no record).
 type ReportSummary struct {
-	ID        int64     `json:"id"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID          int64     `json:"id"`
+	CreatedAt   time.Time `json:"createdAt"`
+	CreditScore *int64    `json:"creditScore"`
 }
 
 // ReportPage is the paginated reports-list response.
@@ -79,10 +81,11 @@ type ReportPage struct {
 }
 
 // ReportInsights is the derived analytics from the latest successful credit
-// report: on-time payment percentage, card utilization percentage, and
-// enquiry count for the past 180 days.
+// report: the bureau credit score, on-time payment percentage, card
+// utilization percentage, and enquiry count for the past 180 days.
 type ReportInsights struct {
 	ReportID               int64         `json:"reportId"`
+	CreditScore            *int64        `json:"creditScore"`
 	OnTimePaymentPercent   float64       `json:"onTimePaymentPercent"`
 	CardUtilizationPercent float64       `json:"cardUtilizationPercent"`
 	EnquiryCount180Days    int64         `json:"enquiryCount180Days"`
@@ -298,6 +301,10 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 		// env.Result is already the raw upstream JSON bytes; store them verbatim.
 		if len(env.Result) > 0 {
 			row.ResponseBody = env.Result
+			// Lift the bureau score into its own column so the reports list can
+			// return it without re-parsing the JSONB. Nil when the response
+			// carries no score (failed pull / no record).
+			row.CreditScore = extractBureauScore(env.Result)
 		}
 	}
 	if persistErr := s.persist(ctx, row); persistErr != nil {
@@ -463,14 +470,33 @@ func (s *CreditAnalyticsService) ListReports(ctx context.Context, accountID int6
 
 	items := make([]ReportSummary, 0, len(rows))
 	for _, r := range rows {
-		items = append(items, ReportSummary{ID: r.ID, CreatedAt: r.CreatedAt})
+		items = append(items, ReportSummary{ID: r.ID, CreatedAt: r.CreatedAt, CreditScore: r.CreditScore})
 	}
 	return &ReportPage{Items: items, Page: page, Size: size, Total: total}, nil
 }
 
-// GetReport returns the full report row for the caller's own report. A row
+// GetReport returns the derived credit analytics for one of the caller's own
+// reports (looked up by id), rather than the raw Digitap response. A row
 // belonging to another account is reported as not found (no existence leak).
-func (s *CreditAnalyticsService) GetReport(ctx context.Context, accountID, id int64) (*models.CreditAnalyticsRequest, error) {
+func (s *CreditAnalyticsService) GetReport(ctx context.Context, accountID, id int64) (*ReportInsights, error) {
+	row, err := s.findOwnedReport(ctx, accountID, id)
+	if err != nil {
+		return nil, err
+	}
+	return s.insightsFromRow(row)
+}
+
+// GetReportRaw returns the caller's own report row verbatim, including the
+// stored raw Digitap response body. A row belonging to another account is
+// reported as not found (no existence leak).
+func (s *CreditAnalyticsService) GetReportRaw(ctx context.Context, accountID, id int64) (*models.CreditAnalyticsRequest, error) {
+	return s.findOwnedReport(ctx, accountID, id)
+}
+
+// findOwnedReport fetches a report row and enforces that it belongs to the
+// caller, mapping a missing or foreign row to the same NotFound so ownership
+// can't be probed by id.
+func (s *CreditAnalyticsService) findOwnedReport(ctx context.Context, accountID, id int64) (*models.CreditAnalyticsRequest, error) {
 	row, err := s.repo.FindByID(ctx, id)
 	if errors.Is(err, repository.ErrNotFound) {
 		return nil, apperr.NewNotFound("Report not found")
@@ -487,9 +513,9 @@ func (s *CreditAnalyticsService) GetReport(ctx context.Context, accountID, id in
 }
 
 // GetLatestReportInsights returns derived credit analytics from the account's
-// most recent successful report: on-time payment %, card utilization %, and
-// enquiry count for the past 180 days. Returns ErrNotFound if no successful
-// report exists yet.
+// most recent successful report: the bureau score, on-time payment %, card
+// utilization %, and enquiry count for the past 180 days. Returns ErrNotFound
+// if no successful report exists yet.
 func (s *CreditAnalyticsService) GetLatestReportInsights(ctx context.Context, accountID int64) (*ReportInsights, error) {
 	row, err := s.repo.FindLatestByAccount(ctx, accountID)
 	if errors.Is(err, repository.ErrNotFound) {
@@ -498,13 +524,62 @@ func (s *CreditAnalyticsService) GetLatestReportInsights(ctx context.Context, ac
 	if err != nil {
 		return nil, err
 	}
-	insights, err := parseReportInsights(row.ResponseBody)
-	if err != nil {
-		return nil, err
+	return s.insightsFromRow(row)
+}
+
+// insightsFromRow derives the analytics view of a stored report row. The bureau
+// payload is parsed when present; a row without a stored response (a failed
+// pull / no-record result) still yields the metadata fields (report id, score,
+// outdated) with zeroed analytics rather than an error. The score prefers the
+// persisted column and falls back to parsing the response so reports created
+// before the column existed still report a score.
+func (s *CreditAnalyticsService) insightsFromRow(row *models.CreditAnalyticsRequest) (*ReportInsights, error) {
+	insights := &ReportInsights{}
+	if len(row.ResponseBody) > 0 {
+		parsed, err := parseReportInsights(row.ResponseBody)
+		if err != nil {
+			return nil, err
+		}
+		insights = parsed
 	}
 	insights.ReportID = row.ID
+	insights.CreditScore = row.CreditScore
+	if insights.CreditScore == nil {
+		insights.CreditScore = extractBureauScore(row.ResponseBody)
+	}
 	insights.Outdated = time.Since(row.CreatedAt) > 30*24*time.Hour
 	return insights, nil
+}
+
+// extractBureauScore lifts SCORE.BureauScore out of the raw Digitap
+// INProfileResponse envelope for cheap per-row storage. It returns nil when the
+// payload is empty, unparseable, or carries no numeric score (e.g. a failed
+// pull or a no-record response), so a missing score is never stored as 0.
+func extractBureauScore(raw json.RawMessage) *int64 {
+	if len(raw) == 0 {
+		return nil
+	}
+	var wrapper struct {
+		ResultJSON struct {
+			INProfileResponse struct {
+				SCORE struct {
+					BureauScore string `json:"BureauScore"`
+				} `json:"SCORE"`
+			} `json:"INProfileResponse"`
+		} `json:"result_json"`
+	}
+	if err := json.Unmarshal(raw, &wrapper); err != nil {
+		return nil
+	}
+	s := strings.TrimSpace(wrapper.ResultJSON.INProfileResponse.SCORE.BureauScore)
+	if s == "" {
+		return nil
+	}
+	score := atoiSafe64(s)
+	if score <= 0 {
+		return nil
+	}
+	return &score
 }
 
 // parseReportInsights extracts on-time payment %, card utilization %, and

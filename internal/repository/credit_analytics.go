@@ -20,7 +20,7 @@ func NewCreditAnalyticsRepo(pool *pgxpool.Pool) *CreditAnalyticsRepo {
 
 const creditAnalyticsCols = `id, account_id, client_ref_num, mobile_no,
     request_id, result_code, http_status, message,
-    request_body, response_body, created_at`
+    request_body, response_body, credit_score, created_at`
 
 // Create inserts a credit-analytics request row and fills the server-assigned
 // fields (id, created_at) on the supplied model.
@@ -28,11 +28,11 @@ func (r *CreditAnalyticsRepo) Create(ctx context.Context, req *models.CreditAnal
 	return pgxscan.Get(ctx, r.pool, req,
 		`INSERT INTO credit_analytics_requests
 		     (account_id, client_ref_num, mobile_no, request_id, result_code,
-		      http_status, message, request_body, response_body)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		      http_status, message, request_body, response_body, credit_score)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		 RETURNING `+creditAnalyticsCols,
 		req.AccountID, req.ClientRefNum, req.MobileNo, req.RequestID, req.ResultCode,
-		req.HTTPStatus, req.Message, req.RequestBody, req.ResponseBody,
+		req.HTTPStatus, req.Message, req.RequestBody, req.ResponseBody, req.CreditScore,
 	)
 }
 

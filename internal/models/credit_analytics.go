@@ -20,5 +20,8 @@ type CreditAnalyticsRequest struct {
 	Message      *string         `json:"message"      db:"message"`
 	RequestBody  json.RawMessage `json:"requestBody"  db:"request_body"`
 	ResponseBody json.RawMessage `json:"responseBody" db:"response_body"`
-	CreatedAt    time.Time       `json:"createdAt"    db:"created_at"`
+	// CreditScore is the bureau score (SCORE.BureauScore) lifted out of the
+	// response at write time. Nil when the pull failed or returned no record.
+	CreditScore *int64    `json:"creditScore" db:"credit_score"`
+	CreatedAt   time.Time `json:"createdAt"   db:"created_at"`
 }

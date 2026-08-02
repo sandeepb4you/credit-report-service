@@ -1172,3 +1172,39 @@ func TestRoundTo2(t *testing.T) {
 		})
 	}
 }
+
+// ---- extractBureauScore ----
+
+func TestExtractBureauScore_Present(t *testing.T) {
+	raw := json.RawMessage(`{
+		"result_json": {
+			"INProfileResponse": {
+				"SCORE": { "BureauScore": "610" }
+			}
+		}
+	}`)
+	got := extractBureauScore(raw)
+	if got == nil {
+		t.Fatal("expected a score, got nil")
+	}
+	if *got != 610 {
+		t.Errorf("extractBureauScore = %d, want 610", *got)
+	}
+}
+
+func TestExtractBureauScore_MissingOrEmpty(t *testing.T) {
+	cases := map[string]json.RawMessage{
+		"empty bytes":       json.RawMessage(``),
+		"no score node":     json.RawMessage(`{"result_json":{"INProfileResponse":{}}}`),
+		"empty score":       json.RawMessage(`{"result_json":{"INProfileResponse":{"SCORE":{"BureauScore":""}}}}`),
+		"non-numeric score": json.RawMessage(`{"result_json":{"INProfileResponse":{"SCORE":{"BureauScore":"N/A"}}}}`),
+		"malformed json":    json.RawMessage(`not json`),
+	}
+	for name, raw := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := extractBureauScore(raw); got != nil {
+				t.Errorf("expected nil, got %d", *got)
+			}
+		})
+	}
+}

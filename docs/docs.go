@@ -937,7 +937,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns derived analytics from the most recent successful credit report: on-time payment percentage, card utilization percentage, and enquiry count for the past 180 days.",
+                "description": "Returns derived analytics from the most recent successful credit report: the bureau credit score, on-time payment percentage, card utilization percentage, and enquiry count for the past 180 days.",
                 "produces": [
                     "application/json"
                 ],
@@ -1021,7 +1021,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the full report row (including the persisted upstream response body) for one of the caller's own reports.",
+                "description": "Returns the derived analytics (bureau score, on-time payment %, card utilization %, 180-day enquiry count, account summary, loan accounts, and report card) for one of the caller's own reports, computed from the stored bureau response.",
                 "produces": [
                     "application/json"
                 ],
@@ -1029,6 +1029,58 @@ const docTemplate = `{
                     "credit-analytics"
                 ],
                 "summary": "Fetch a credit-analytics report by id",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Report id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_service.ReportInsights"
+                        }
+                    },
+                    "400": {
+                        "description": "id must be an integer",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Report not found (or belongs to another account)",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/credit-analytics/reports/{id}/raw": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the full report row for one of the caller's own reports, including the persisted raw Digitap response body (response_body) exactly as received upstream. Use /reports/{id} for the derived analytics instead.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "credit-analytics"
+                ],
+                "summary": "Fetch the raw Digitap response for a report by id",
                 "parameters": [
                     {
                         "type": "integer",
@@ -1682,6 +1734,10 @@ const docTemplate = `{
                 "createdAt": {
                     "type": "string"
                 },
+                "creditScore": {
+                    "description": "CreditScore is the bureau score (SCORE.BureauScore) lifted out of the\nresponse at write time. Nil when the pull failed or returned no record.",
+                    "type": "integer"
+                },
                 "httpStatus": {
                     "type": "integer"
                 },
@@ -2040,6 +2096,9 @@ const docTemplate = `{
                 "cardUtilizationPercent": {
                     "type": "number"
                 },
+                "creditScore": {
+                    "type": "integer"
+                },
                 "enquiryCount180Days": {
                     "type": "integer"
                 },
@@ -2100,6 +2159,9 @@ const docTemplate = `{
             "properties": {
                 "createdAt": {
                     "type": "string"
+                },
+                "creditScore": {
+                    "type": "integer"
                 },
                 "id": {
                     "type": "integer"
