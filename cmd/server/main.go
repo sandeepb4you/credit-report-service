@@ -71,6 +71,7 @@ func main() {
 	sessionRepo := repository.NewSessionRepo(pool)
 	couponRepo := repository.NewCouponRepo(pool)
 	loanRepo := repository.NewLoanProviderRepo(pool)
+	bankOfferingRepo := repository.NewBankOfferingRepo(pool)
 
 	// Upstream clients.
 	digitapClient := digitap.New(digitap.Config{
@@ -109,6 +110,10 @@ func main() {
 	// Enrich analytics insights with interest-reduction opportunities so a single
 	// analytics call surfaces both levers: raise the score and cut interest.
 	analyticsSvc.SetLoanSwitch(loanSwitchSvc)
+	scoreBuilderSvc := service.NewScoreBuilderService(bankOfferingRepo, analyticsRepo)
+	// Enrich the score-builder toolkit (S28) with admin-curated bank offerings so
+	// the FD-card hero names a real product with an apply CTA.
+	analyticsSvc.SetScoreBuilder(scoreBuilderSvc)
 
 	// Handlers.
 	healthH := handler.NewHealthHandler()
@@ -118,6 +123,7 @@ func main() {
 	orderH := handler.NewOrderHandler(orderSvc)
 	couponH := handler.NewCouponHandler(couponSvc)
 	loanH := handler.NewLoanSwitchHandler(loanSwitchSvc)
+	scoreBuilderH := handler.NewScoreBuilderHandler(scoreBuilderSvc)
 
 	// One-time configuration snapshot. No secrets: just feature flags the
 	// operator needs to confirm at boot (stub vs. live upstream, OCR provider,
@@ -136,7 +142,7 @@ func main() {
 		"trusted_proxies", len(cfg.Server.TrustedProxies),
 	)
 
-	app := server.New(cfg, healthH, authH, analyticsH, kycH, orderH, couponH, loanH, tokenSvc)
+	app := server.New(cfg, healthH, authH, analyticsH, kycH, orderH, couponH, loanH, scoreBuilderH, tokenSvc)
 
 	go func() {
 		addr := ":" + itoa(cfg.Server.Port)

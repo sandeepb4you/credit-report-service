@@ -85,6 +85,304 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/bank-offerings": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns configured offerings, optionally filtered by productType (FD_CARD|SECURED_LOAN) and active. Requires 'bank-offering:manage'.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "bank-offerings"
+                ],
+                "summary": "List bank offerings (admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by product type (FD_CARD, SECURED_LOAN)",
+                        "name": "productType",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Filter by active flag",
+                        "name": "active",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/credit-report-service_internal_models.BankOffering"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid productType",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing the 'bank-offering:manage' permission",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Adds a partner product that helps a user rebuild credit (e.g. an FD-secured credit card): the FD amount, the FD yield, the score band it targets, the estimated point impact, the apply link, and a revenue note. Surfaced by the score-builder toolkit (S28) when the user's score falls in the band. Requires the 'bank-offering:manage' permission.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "bank-offerings"
+                ],
+                "summary": "Create a score-builder bank offering (admin)",
+                "parameters": [
+                    {
+                        "description": "Bank offering",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.offeringReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.BankOffering"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing the 'bank-offering:manage' permission",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/bank-offerings/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "bank-offerings"
+                ],
+                "summary": "Fetch a bank offering by id (admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Offering id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.BankOffering"
+                        }
+                    },
+                    "400": {
+                        "description": "id must be an integer",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing the 'bank-offering:manage' permission",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Bank offering not found",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Replaces the mutable fields of an offering. Requires 'bank-offering:manage'.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "bank-offerings"
+                ],
+                "summary": "Update a bank offering (admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Offering id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Bank offering",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.offeringReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.BankOffering"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing the 'bank-offering:manage' permission",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Bank offering not found",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "bank-offerings"
+                ],
+                "summary": "Delete a bank offering (admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Offering id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{\\\"message\\\": \\\"Bank offering deleted\\\"}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "id must be an integer",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing the 'bank-offering:manage' permission",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Bank offering not found",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/admin/kyc/pan/{accountId}/verify": {
             "post": {
                 "security": [
@@ -1564,6 +1862,63 @@ const docTemplate = `{
                 }
             }
         },
+        "/credit-analytics/score-simulator": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Projects the caller's credit score under a chosen set of actions. Builds a toggle-action set from the report's actual signals (positive levers the file has room to improve on, plus two universal negative actions), and sums the selected deltas onto the current score. By default every positive action is selected; pass ` + "`" + `actions` + "`" + ` (a comma-separated list of action keys) to override the selection. By default it uses the caller's most recent report; pass reportId to simulate against a specific one (must be your own). Deltas are estimates from your file, not guarantees.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "score-builder"
+                ],
+                "summary": "Score what-if simulator",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Simulate against this report instead of the latest (must be your own)",
+                        "name": "reportId",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated action keys to select (default: all positive actions)",
+                        "name": "actions",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_service.Simulation"
+                        }
+                    },
+                    "400": {
+                        "description": "reportId must be an integer",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No credit report found / report not found",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/kyc/pan": {
             "post": {
                 "security": [
@@ -2114,6 +2469,59 @@ const docTemplate = `{
                 }
             }
         },
+        "credit-report-service_internal_models.BankOffering": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "applyUrl": {
+                    "description": "ApplyURL is the CTA destination for taking up the product.",
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "estimatedPointsMax": {
+                    "type": "integer"
+                },
+                "estimatedPointsMin": {
+                    "description": "EstimatedPointsMin/Max bound the estimated score gain. Always rendered with\nthe \"estimated, not guaranteed\" disclaimer.",
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "interestRatePercent": {
+                    "description": "InterestRatePercent is the FD yield for display (the deposit keeps earning\nwhile the card builds history). Not a borrowing rate.",
+                    "type": "number"
+                },
+                "maxCreditScore": {
+                    "type": "integer"
+                },
+                "minCreditScore": {
+                    "description": "ScoreBand gates the offering: it is surfaced only when the user's score is\nwithin [MinCreditScore, MaxCreditScore]. Defaults 0..900 = \"everyone\".",
+                    "type": "integer"
+                },
+                "minFdAmount": {
+                    "description": "MinFDAmount is the fixed deposit the user opens to obtain the product\n(e.g. a card against the FD). 0 when not applicable.",
+                    "type": "number"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "productType": {
+                    "type": "string"
+                },
+                "revenueNote": {
+                    "description": "RevenueNote is an ops-facing referral/commission note.",
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
         "credit-report-service_internal_models.Coupon": {
             "type": "object",
             "properties": {
@@ -2427,6 +2835,10 @@ const docTemplate = `{
         "credit-report-service_internal_service.BuilderStrategy": {
             "type": "object",
             "properties": {
+                "applyUrl": {
+                    "description": "Product-only fields (Kind == \"product\"). Zero/empty otherwise.",
+                    "type": "string"
+                },
                 "detail": {
                     "type": "string"
                 },
@@ -2436,7 +2848,16 @@ const docTemplate = `{
                 "estimatedPointsMin": {
                     "type": "integer"
                 },
+                "fdAmount": {
+                    "type": "number"
+                },
                 "key": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "revenueNote": {
                     "type": "string"
                 },
                 "tag": {
@@ -2870,6 +3291,60 @@ const docTemplate = `{
                 }
             }
         },
+        "credit-report-service_internal_service.SimAction": {
+            "type": "object",
+            "properties": {
+                "delta": {
+                    "description": "signed score impact when selected",
+                    "type": "integer"
+                },
+                "direction": {
+                    "description": "\"up\" (positive) | \"down\" (negative)",
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "kind": {
+                    "description": "\"advice\" | \"product\" | \"event\"",
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "selected": {
+                    "description": "✓ selected (counts toward projection) vs ○ not",
+                    "type": "boolean"
+                }
+            }
+        },
+        "credit-report-service_internal_service.Simulation": {
+            "type": "object",
+            "properties": {
+                "actions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/credit-report-service_internal_service.SimAction"
+                    }
+                },
+                "currentScore": {
+                    "type": "integer"
+                },
+                "delta": {
+                    "description": "projected - current (sum of selected action deltas)",
+                    "type": "integer"
+                },
+                "disclaimer": {
+                    "type": "string"
+                },
+                "projectedScore": {
+                    "type": "integer"
+                },
+                "timeframe": {
+                    "type": "string"
+                }
+            }
+        },
         "credit-report-service_internal_service.SwitchOpportunities": {
             "type": "object",
             "properties": {
@@ -3040,6 +3515,55 @@ const docTemplate = `{
                 "password": {
                     "type": "string",
                     "example": "hunter2pass"
+                }
+            }
+        },
+        "internal_handler.offeringReq": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "applyUrl": {
+                    "type": "string",
+                    "example": "https://apply.example.com/hdfc-fd-card"
+                },
+                "estimatedPointsMax": {
+                    "type": "integer",
+                    "example": 80
+                },
+                "estimatedPointsMin": {
+                    "type": "integer",
+                    "example": 40
+                },
+                "interestRatePercent": {
+                    "type": "number",
+                    "example": 7
+                },
+                "maxCreditScore": {
+                    "type": "integer",
+                    "example": 650
+                },
+                "minCreditScore": {
+                    "type": "integer",
+                    "example": 0
+                },
+                "minFdAmount": {
+                    "type": "number",
+                    "example": 15000
+                },
+                "name": {
+                    "type": "string",
+                    "example": "HDFC Millennia FD-Backed Card"
+                },
+                "productType": {
+                    "type": "string",
+                    "example": "FD_CARD"
+                },
+                "revenueNote": {
+                    "type": "string",
+                    "example": "FD + secured-card referral"
                 }
             }
         },

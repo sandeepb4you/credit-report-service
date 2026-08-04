@@ -58,6 +58,51 @@ definitions:
       osVersion:
         type: string
     type: object
+  credit-report-service_internal_models.BankOffering:
+    properties:
+      active:
+        type: boolean
+      applyUrl:
+        description: ApplyURL is the CTA destination for taking up the product.
+        type: string
+      createdAt:
+        type: string
+      estimatedPointsMax:
+        type: integer
+      estimatedPointsMin:
+        description: |-
+          EstimatedPointsMin/Max bound the estimated score gain. Always rendered with
+          the "estimated, not guaranteed" disclaimer.
+        type: integer
+      id:
+        type: integer
+      interestRatePercent:
+        description: |-
+          InterestRatePercent is the FD yield for display (the deposit keeps earning
+          while the card builds history). Not a borrowing rate.
+        type: number
+      maxCreditScore:
+        type: integer
+      minCreditScore:
+        description: |-
+          ScoreBand gates the offering: it is surfaced only when the user's score is
+          within [MinCreditScore, MaxCreditScore]. Defaults 0..900 = "everyone".
+        type: integer
+      minFdAmount:
+        description: |-
+          MinFDAmount is the fixed deposit the user opens to obtain the product
+          (e.g. a card against the FD). 0 when not applicable.
+        type: number
+      name:
+        type: string
+      productType:
+        type: string
+      revenueNote:
+        description: RevenueNote is an ops-facing referral/commission note.
+        type: string
+      updatedAt:
+        type: string
+    type: object
   credit-report-service_internal_models.Coupon:
     properties:
       code:
@@ -276,13 +321,22 @@ definitions:
     type: object
   credit-report-service_internal_service.BuilderStrategy:
     properties:
+      applyUrl:
+        description: Product-only fields (Kind == "product"). Zero/empty otherwise.
+        type: string
       detail:
         type: string
       estimatedPointsMax:
         type: integer
       estimatedPointsMin:
         type: integer
+      fdAmount:
+        type: number
       key:
+        type: string
+      kind:
+        type: string
+      revenueNote:
         type: string
       tag:
         type: string
@@ -597,6 +651,43 @@ definitions:
       message:
         type: string
     type: object
+  credit-report-service_internal_service.SimAction:
+    properties:
+      delta:
+        description: signed score impact when selected
+        type: integer
+      direction:
+        description: '"up" (positive) | "down" (negative)'
+        type: string
+      key:
+        type: string
+      kind:
+        description: '"advice" | "product" | "event"'
+        type: string
+      label:
+        type: string
+      selected:
+        description: ✓ selected (counts toward projection) vs ○ not
+        type: boolean
+    type: object
+  credit-report-service_internal_service.Simulation:
+    properties:
+      actions:
+        items:
+          $ref: '#/definitions/credit-report-service_internal_service.SimAction'
+        type: array
+      currentScore:
+        type: integer
+      delta:
+        description: projected - current (sum of selected action deltas)
+        type: integer
+      disclaimer:
+        type: string
+      projectedScore:
+        type: integer
+      timeframe:
+        type: string
+    type: object
   credit-report-service_internal_service.SwitchOpportunities:
     properties:
       creditScore:
@@ -719,6 +810,42 @@ definitions:
         type: string
       password:
         example: hunter2pass
+        type: string
+    type: object
+  internal_handler.offeringReq:
+    properties:
+      active:
+        example: true
+        type: boolean
+      applyUrl:
+        example: https://apply.example.com/hdfc-fd-card
+        type: string
+      estimatedPointsMax:
+        example: 80
+        type: integer
+      estimatedPointsMin:
+        example: 40
+        type: integer
+      interestRatePercent:
+        example: 7
+        type: number
+      maxCreditScore:
+        example: 650
+        type: integer
+      minCreditScore:
+        example: 0
+        type: integer
+      minFdAmount:
+        example: 15000
+        type: number
+      name:
+        example: HDFC Millennia FD-Backed Card
+        type: string
+      productType:
+        example: FD_CARD
+        type: string
+      revenueNote:
+        example: FD + secured-card referral
         type: string
     type: object
   internal_handler.providerReq:
@@ -881,6 +1008,201 @@ paths:
       summary: Set an account's role
       tags:
       - admin
+  /admin/bank-offerings:
+    get:
+      description: Returns configured offerings, optionally filtered by productType
+        (FD_CARD|SECURED_LOAN) and active. Requires 'bank-offering:manage'.
+      parameters:
+      - description: Filter by product type (FD_CARD, SECURED_LOAN)
+        in: query
+        name: productType
+        type: string
+      - description: Filter by active flag
+        in: query
+        name: active
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/credit-report-service_internal_models.BankOffering'
+            type: array
+        "400":
+          description: Invalid productType
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Missing the 'bank-offering:manage' permission
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List bank offerings (admin)
+      tags:
+      - bank-offerings
+    post:
+      consumes:
+      - application/json
+      description: 'Adds a partner product that helps a user rebuild credit (e.g.
+        an FD-secured credit card): the FD amount, the FD yield, the score band it
+        targets, the estimated point impact, the apply link, and a revenue note. Surfaced
+        by the score-builder toolkit (S28) when the user''s score falls in the band.
+        Requires the ''bank-offering:manage'' permission.'
+      parameters:
+      - description: Bank offering
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.offeringReq'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.BankOffering'
+        "400":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Missing the 'bank-offering:manage' permission
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Create a score-builder bank offering (admin)
+      tags:
+      - bank-offerings
+  /admin/bank-offerings/{id}:
+    delete:
+      parameters:
+      - description: Offering id
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{\"message\": \"Bank offering deleted\"}'
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: id must be an integer
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Missing the 'bank-offering:manage' permission
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: Bank offering not found
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Delete a bank offering (admin)
+      tags:
+      - bank-offerings
+    get:
+      parameters:
+      - description: Offering id
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.BankOffering'
+        "400":
+          description: id must be an integer
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Missing the 'bank-offering:manage' permission
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: Bank offering not found
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Fetch a bank offering by id (admin)
+      tags:
+      - bank-offerings
+    put:
+      consumes:
+      - application/json
+      description: Replaces the mutable fields of an offering. Requires 'bank-offering:manage'.
+      parameters:
+      - description: Offering id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Bank offering
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.offeringReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.BankOffering'
+        "400":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Missing the 'bank-offering:manage' permission
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: Bank offering not found
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Update a bank offering (admin)
+      tags:
+      - bank-offerings
   /admin/kyc/pan/{accountId}/verify:
     post:
       description: Marks the named account's KYC row as PAN-verified. Required before
@@ -1891,6 +2213,51 @@ paths:
       summary: Request a credit analysis from Digitap
       tags:
       - credit-analytics
+  /credit-analytics/score-simulator:
+    get:
+      description: Projects the caller's credit score under a chosen set of actions.
+        Builds a toggle-action set from the report's actual signals (positive levers
+        the file has room to improve on, plus two universal negative actions), and
+        sums the selected deltas onto the current score. By default every positive
+        action is selected; pass `actions` (a comma-separated list of action keys)
+        to override the selection. By default it uses the caller's most recent report;
+        pass reportId to simulate against a specific one (must be your own). Deltas
+        are estimates from your file, not guarantees.
+      parameters:
+      - description: Simulate against this report instead of the latest (must be your
+          own)
+        in: query
+        name: reportId
+        type: integer
+      - description: 'Comma-separated action keys to select (default: all positive
+          actions)'
+        in: query
+        name: actions
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_service.Simulation'
+        "400":
+          description: reportId must be an integer
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: No credit report found / report not found
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Score what-if simulator
+      tags:
+      - score-builder
   /kyc/pan:
     post:
       consumes:

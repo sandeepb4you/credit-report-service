@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"credit-report-service/internal/models"
 )
 
 // ---- CreditAnalyticsInput.validate ----
@@ -1209,6 +1211,105 @@ func TestExtractBureauScore_MissingOrEmpty(t *testing.T) {
 	}
 }
 
+// ---- unwrapResultObject: tolerate the full envelope stored by mistake --------
+
+// A minimal inner result object with one tradeline + a score, reused to test
+// both the inner-object and full-envelope shapes.
+const unwrapInnerJSON = `{
+	"result_json": {"INProfileResponse": {
+		"CAIS_Account": {"CAIS_Account_DETAILS": [{
+			"Payment_History_Profile": "000000000000000000000000000000000000",
+			"Portfolio_Type": "R", "Credit_Limit_Amount": "100000", "Current_Balance": "30000",
+			"Account_Status": "11"
+		}]},
+		"TotalCAPS_Summary": {"TotalCAPSLast180Days": "4"},
+		"SCORE": {"BureauScore": "610"}
+	}}
+}`
+
+// wrapAsEnvelope nests an inner result object inside the full Digitap envelope
+// shape (http_response_code / client_ref_num / result), the way a seed SQL that
+// loads the whole upstream response would store it.
+func wrapAsEnvelope(inner string) string {
+	return `{"http_response_code":200,"client_ref_num":"CA-x","request_id":"r",` +
+		`"result_code":101,"message":"success","result":` + inner + `}`
+}
+
+func TestUnwrapResultObject_FullEnvelopeUnwrapsToInner(t *testing.T) {
+	full := json.RawMessage(wrapAsEnvelope(unwrapInnerJSON))
+	insFull, err := parseReportInsights(full)
+	if err != nil {
+		t.Fatalf("parse full envelope: %v", err)
+	}
+	insInner, err := parseReportInsights(json.RawMessage(unwrapInnerJSON))
+	if err != nil {
+		t.Fatalf("parse inner object: %v", err)
+	}
+	// The two shapes must yield identical insights — that is the whole point of
+	// the unwrap. Before the fix, the envelope path returned 0 accounts.
+	if insFull.TotalAccountCount != insInner.TotalAccountCount {
+		t.Errorf("totalAccountCount: envelope=%d inner=%d (envelope must unwrap)",
+			insFull.TotalAccountCount, insInner.TotalAccountCount)
+	}
+	if insFull.TotalAccountCount != 1 {
+		t.Errorf("totalAccountCount = %d, want 1 (envelope must not read as empty)",
+			insFull.TotalAccountCount)
+	}
+	if insFull.EnquiryCount180Days != insInner.EnquiryCount180Days {
+		t.Errorf("enquiries: envelope=%d inner=%d", insFull.EnquiryCount180Days, insInner.EnquiryCount180Days)
+	}
+	if insFull.EnquiryCount180Days != 4 {
+		t.Errorf("enquiries = %d, want 4", insFull.EnquiryCount180Days)
+	}
+}
+
+func TestUnwrapResultObject_ExtractBureauScoreFromEnvelope(t *testing.T) {
+	full := json.RawMessage(wrapAsEnvelope(unwrapInnerJSON))
+	// Before the fix, extractBureauScore returned nil on the envelope because it
+	// also keyed on a top-level result_json. It must now find 610.
+	got := extractBureauScore(full)
+	if got == nil {
+		t.Fatal("extractBureauScore(envelope) = nil, want 610")
+	}
+	if *got != 610 {
+		t.Errorf("extractBureauScore(envelope) = %d, want 610", *got)
+	}
+	// Inner object still works.
+	if got2 := extractBureauScore(json.RawMessage(unwrapInnerJSON)); got2 == nil || *got2 != 610 {
+		t.Errorf("extractBureauScore(inner) = %v, want 610", got2)
+	}
+}
+
+func TestUnwrapResultObject_AlreadyInnerIsNoop(t *testing.T) {
+	// Inner object (has top-level result_json) — returned unchanged.
+	got := unwrapResultObject(json.RawMessage(unwrapInnerJSON))
+	if (string)(got) != unwrapInnerJSON {
+		t.Error("already-inner payload should be returned unchanged")
+	}
+}
+
+func TestUnwrapResultObject_DegenerateInputs(t *testing.T) {
+	// Empty / null / non-JSON / no-result-key payloads pass through untouched
+	// and never panic.
+	for _, raw := range []json.RawMessage{
+		nil,
+		{},
+		json.RawMessage(`null`),
+		json.RawMessage(`not json`),
+		json.RawMessage(`{"foo": "bar"}`), // valid JSON, neither result_json nor result
+	} {
+		_ = unwrapResultObject(raw) // must not panic
+	}
+	// extractBureauScore stays nil-safe on all of them.
+	for _, raw := range []json.RawMessage{
+		nil, {}, json.RawMessage(`null`), json.RawMessage(`not json`), json.RawMessage(`{"foo":"bar"}`),
+	} {
+		if s := extractBureauScore(raw); s != nil {
+			t.Errorf("extractBureauScore(%s) = %d, want nil", raw, *s)
+		}
+	}
+}
+
 func TestParseReportInsights_SingleAccountObject(t *testing.T) {
 	// The Digitap/Experian quirk: one tradeline -> CAIS_Account_DETAILS is a
 	// single OBJECT, not an array. It must parse to one loan account.
@@ -1282,7 +1383,8 @@ func TestBuildScoreBuilder_RebuildJourney(t *testing.T) {
 			{Name: "Credit mix", Grade: "B", Summary: "2 types"},
 		}},
 	}
-	sb := buildScoreBuilder(ins)
+	// No offerings curated -> toolkit falls back to the generic FD-card advice.
+	sb := buildScoreBuilder(ins, nil)
 	if sb == nil || sb.Journey != "rebuild" {
 		t.Fatalf("want rebuild, got %+v", sb)
 	}
@@ -1293,6 +1395,12 @@ func TestBuildScoreBuilder_RebuildJourney(t *testing.T) {
 	for _, want := range []string{"fd_secured_card", "crush_utilisation", "perfect_streak", "application_freeze", "dispute_errors"} {
 		if !keys[want] {
 			t.Errorf("rebuild toolkit missing %q", want)
+		}
+	}
+	// Fallback FD-card advice is an advice-kind strategy (no apply URL).
+	for _, s := range sb.Strategies {
+		if s.Key == "fd_secured_card" && s.Kind != "advice" {
+			t.Errorf("fallback fd_secured_card should be advice-kind, got %q", s.Kind)
 		}
 	}
 	// Strategies ordered by impact, unquantified (dispute) last.
@@ -1308,6 +1416,56 @@ func TestBuildScoreBuilder_RebuildJourney(t *testing.T) {
 	}
 }
 
+func TestBuildScoreBuilder_RebuildJourneyWithOfferings(t *testing.T) {
+	sc := int64(610)
+	ins := &ReportInsights{
+		CreditScore: &sc, OnTimePaymentPercent: 80, CardUtilizationPercent: 64,
+		EnquiryCount180Days: 4, DerogatoryAccounts: 0,
+		ReportCard: &ReportCard{Factors: []CardFactor{
+			{Name: "Payment history", Grade: "C", Summary: "2 missed", MissedCount: 2},
+			{Name: "Credit utilisation", Grade: "C", Summary: "64% used"},
+			{Name: "Credit age", Grade: "C", Summary: "2.5 years"},
+			{Name: "Enquiries", Grade: "C", Summary: "4 in 6 months"},
+			{Name: "Credit mix", Grade: "B", Summary: "2 types"},
+		}},
+	}
+	offerings := []models.BankOffering{
+		{Name: "Axis Insta Easy", ProductType: models.OfferingTypeFDCard, MinFDAmount: 15000,
+			EstimatedPointsMin: 40, EstimatedPointsMax: 80,
+			ApplyURL: "https://apply.example.com/axis", RevenueNote: "FD referral"},
+		{Name: "ICICI Coral secured", ProductType: models.OfferingTypeFDCard, MinFDAmount: 20000,
+			EstimatedPointsMin: 45, EstimatedPointsMax: 85,
+			ApplyURL: "https://apply.example.com/icici", RevenueNote: "FD referral"},
+	}
+	sb := buildScoreBuilder(ins, offerings)
+	if sb == nil || sb.Journey != "rebuild" {
+		t.Fatalf("want rebuild, got %+v", sb)
+	}
+	// Each offering becomes a product strategy; none of them carries the
+	// generic-advice fd_secured_card key fallback.
+	var products []BuilderStrategy
+	for _, s := range sb.Strategies {
+		if s.Kind == "product" {
+			products = append(products, s)
+		}
+	}
+	if len(products) != 2 {
+		t.Fatalf("want 2 product strategies, got %d (%+v)", len(products), sb.Strategies)
+	}
+	// Product titles must be the bank names, not the generic advice string, and
+	// each carries the apply/fd fields. (Order is by impact desc — ICICI 85,
+	// then Axis 80 — so don't assert position.)
+	names := map[string]bool{products[0].Title: true, products[1].Title: true}
+	if !names["Axis Insta Easy"] || !names["ICICI Coral secured"] {
+		t.Errorf("product titles = %v, want the two bank names", names)
+	}
+	for _, p := range products {
+		if p.ApplyURL == "" || p.FDAmount == 0 {
+			t.Errorf("product %q missing apply/fd fields: %+v", p.Title, p)
+		}
+	}
+}
+
 func TestBuildScoreBuilder_ProtectJourney(t *testing.T) {
 	sc := int64(815)
 	ins := &ReportInsights{
@@ -1318,7 +1476,7 @@ func TestBuildScoreBuilder_ProtectJourney(t *testing.T) {
 			{Name: "Credit age", Grade: "A+"}, {Name: "Enquiries", Grade: "A+"}, {Name: "Credit mix", Grade: "A"},
 		}},
 	}
-	sb := buildScoreBuilder(ins)
+	sb := buildScoreBuilder(ins, nil)
 	if sb.Journey != "protect" {
 		t.Fatalf("want protect, got %s", sb.Journey)
 	}

@@ -27,6 +27,7 @@ func New(
 	orders *handler.OrderHandler,
 	coupons *handler.CouponHandler,
 	loans *handler.LoanSwitchHandler,
+	scoreBuilder *handler.ScoreBuilderHandler,
 	tokens *service.TokenService,
 ) *fiber.App {
 	// Client IP resolution. X-Forwarded-For is only believed when the immediate
@@ -150,6 +151,9 @@ func New(
 	ca.Get("/reports/:id<int>", analytics.GetReport)
 	ca.Get("/reports/:id<int>/raw", analytics.GetReportRaw)
 	ca.Get("/latest-insights", analytics.GetLatestInsights)
+	// What-if simulator: any signed-in user (S29). Reads the caller's own
+	// report, so RequireAuth is sufficient.
+	ca.Get("/score-simulator", scoreBuilder.Simulate)
 
 	// ---- KYC (PAN submission) -------------------------------------------
 	k := api.Group("/kyc", requireAuth)
@@ -171,6 +175,17 @@ func New(
 	ls := api.Group("/admin/loan-switch", middleware.RequirePermission(tokens, models.PermLoanProviderManage))
 	ls.Get("/settings", loans.GetSettings)
 	ls.Put("/settings", loans.UpdateSettings)
+
+	// ---- Score builder (S28 bank offerings) -----------------------------
+	//
+	// The toolkit view rides on the insights response (no separate user route);
+	// bank-offering CRUD is admin-only, gated on 'bank-offering:manage'.
+	bo := api.Group("/admin/bank-offerings", middleware.RequirePermission(tokens, models.PermBankOfferingManage))
+	bo.Post("/", scoreBuilder.CreateOffering)
+	bo.Get("/", scoreBuilder.ListOfferings)
+	bo.Get("/:id<int>", scoreBuilder.GetOffering)
+	bo.Put("/:id<int>", scoreBuilder.UpdateOffering)
+	bo.Delete("/:id<int>", scoreBuilder.DeleteOffering)
 
 	// ---- Admin (permission-gated) ----------------------------------------
 	//

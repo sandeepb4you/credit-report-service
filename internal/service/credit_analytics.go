@@ -51,6 +51,10 @@ type CreditAnalyticsService struct {
 	// balance-transfer opportunities. Injected after construction (the two
 	// services share the analytics repo) via SetLoanSwitch.
 	loanSwitch *LoanSwitchService
+	// scoreBuilder is optional: when set, the score-builder toolkit (S28)
+	// surfaces admin-curated bank offerings instead of the generic FD-card text.
+	// Injected after construction via SetScoreBuilder.
+	scoreBuilder *ScoreBuilderService
 }
 
 func NewCreditAnalyticsService(
@@ -66,6 +70,13 @@ func NewCreditAnalyticsService(
 // no interestSavings and no interest recommendations.
 func (s *CreditAnalyticsService) SetLoanSwitch(ls *LoanSwitchService) {
 	s.loanSwitch = ls
+}
+
+// SetScoreBuilder wires the score-builder service used to enrich the toolkit
+// with admin-curated bank offerings. Optional; when unset, the toolkit falls
+// back to the generic FD-card advice for the rebuild journey.
+func (s *CreditAnalyticsService) SetScoreBuilder(sb *ScoreBuilderService) {
+	s.scoreBuilder = sb
 }
 
 // CreditAnalyticsInput is the validated payload for a credit-analytics request.
@@ -165,13 +176,25 @@ type ScoreDriver struct {
 // BuilderStrategy is one lever in the score toolkit. EstimatedPointsMin/Max are
 // nil for strategies whose payoff can't be quantified up front (e.g. disputing
 // errors), which the client renders as a "check" rather than a point range.
+//
+// Kind distinguishes the two strategy shapes the S28 screen renders:
+//   - "advice"   — behavioral guidance computed from the report (default).
+//   - "product"  — an admin-curated bank offering (e.g. an FD-secured card),
+//                  which carries ApplyURL/RevenueNote/FD amount so the client
+//                  can render the hero card with a real CTA.
 type BuilderStrategy struct {
 	Key                string `json:"key"`
 	Title              string `json:"title"`
 	Detail             string `json:"detail"`
 	Tag                string `json:"tag"`
+	Kind               string `json:"kind"`
 	EstimatedPointsMin *int   `json:"estimatedPointsMin,omitempty"`
 	EstimatedPointsMax *int   `json:"estimatedPointsMax,omitempty"`
+
+	// Product-only fields (Kind == "product"). Zero/empty otherwise.
+	ApplyURL    string  `json:"applyUrl,omitempty"`
+	RevenueNote string  `json:"revenueNote,omitempty"`
+	FDAmount    float64 `json:"fdAmount,omitempty"`
 }
 
 // Recommendation is one actionable suggestion in the unified action plan.
@@ -653,8 +676,19 @@ func (s *CreditAnalyticsService) enrich(ctx context.Context, insights *ReportIns
 			insights.InterestSavings = opps
 		}
 	}
+	// Bank offerings for the score-builder toolkit (S28). Best-effort: if the
+	// store is unavailable the toolkit falls back to generic advice.
+	var offerings []models.BankOffering
+	if s.scoreBuilder != nil && insights.CreditScore != nil {
+		if offs, err := s.scoreBuilder.OfferingsForScore(ctx, int(*insights.CreditScore)); err != nil {
+			slog.Warn("insights enrichment: bank offerings failed",
+				"report_id", insights.ReportID, "error", err)
+		} else {
+			offerings = offs
+		}
+	}
 	insights.Recommendations = buildRecommendations(insights)
-	insights.ScoreBuilder = buildScoreBuilder(insights)
+	insights.ScoreBuilder = buildScoreBuilder(insights, offerings)
 }
 
 // buildRecommendations flattens the two improvement levers into one prioritized
@@ -804,7 +838,11 @@ const scoreBuilderDisclaimer = "Point impacts and timelines are estimates from y
 // (Journey 05·C for low scores, and a protect plan for high ones). It is
 // nil-safe on a report with no card. Nothing is fabricated: positives and
 // strategies are gated on what the file actually shows.
-func buildScoreBuilder(ins *ReportInsights) *ScoreBuilder {
+//
+// offerings carries the admin-curated bank products whose score band contains
+// the user's score; when non-empty the rebuild toolkit emits one product
+// strategy per offering (the S28 hero card) instead of the generic FD-card text.
+func buildScoreBuilder(ins *ReportInsights, offerings []models.BankOffering) *ScoreBuilder {
 	if ins.ReportCard == nil {
 		return nil
 	}
@@ -856,16 +894,22 @@ func buildScoreBuilder(ins *ReportInsights) *ScoreBuilder {
 	})
 
 	// ---- Strategies (the toolkit) ----
-	sb.Strategies = buildStrategies(ins, sb.Journey)
+	sb.Strategies = buildStrategies(ins, sb.Journey, offerings)
 	return sb
 }
 
 // buildStrategies assembles the score toolkit from the report's signals, then
 // orders it highest-estimated-impact first (unquantified levers like disputing
 // errors sort last).
-func buildStrategies(ins *ReportInsights, journey string) []BuilderStrategy {
+//
+// offerings are the admin-curated bank products for the user's score. On the
+// rebuild journey, each becomes a "product" strategy (the S28 hero card with a
+// real bank name, apply CTA, and FD amount). When none are configured the
+// toolkit falls back to one generic FD-card advice entry so the lever is still
+// surfaced.
+func buildStrategies(ins *ReportInsights, journey string, offerings []models.BankOffering) []BuilderStrategy {
 	strat := func(key, title, detail, tag string, lo, hi int) BuilderStrategy {
-		s := BuilderStrategy{Key: key, Title: title, Detail: detail, Tag: tag}
+		s := BuilderStrategy{Key: key, Title: title, Detail: detail, Tag: tag, Kind: "advice"}
 		if hi > 0 {
 			l, h := lo, hi
 			s.EstimatedPointsMin, s.EstimatedPointsMax = &l, &h
@@ -899,10 +943,19 @@ func buildStrategies(ins *ReportInsights, journey string) []BuilderStrategy {
 			"PROTECT", 20, 40))
 	}
 
+	// ---- FD-secured card: curated bank offerings, else generic advice ----
 	if journey == "rebuild" {
-		out = append(out, strat("fd_secured_card", "Open an FD-secured credit card",
-			"Open a small fixed deposit and get a card against it — guaranteed approval, no hard enquiry, and the FD keeps earning interest while every on-time month builds positive history.",
-			"BEST FOR YOU", 40, 80))
+		if len(offerings) > 0 {
+			for _, o := range offerings {
+				out = append(out, bankOfferingStrategy(o))
+			}
+		} else {
+			// No products curated — keep the generic lever so the toolkit still
+			// surfaces the strategy, just without a named bank / CTA.
+			out = append(out, strat("fd_secured_card", "Open an FD-secured credit card",
+				"Open a small fixed deposit and get a card against it — guaranteed approval, no hard enquiry, and the FD keeps earning interest while every on-time month builds positive history.",
+				"BEST FOR YOU", 40, 80))
+		}
 	}
 
 	if journey == "protect" {
@@ -923,6 +976,27 @@ func buildStrategies(ins *ReportInsights, journey string) []BuilderStrategy {
 		return strategyMax(out[i]) > strategyMax(out[j])
 	})
 	return out
+}
+
+// bankOfferingStrategy turns one curated offering into a "product" strategy —
+// the S28 hero card: a named bank, the FD it sits against, an apply CTA, the
+// estimated point range, and the ops revenue note.
+func bankOfferingStrategy(o models.BankOffering) BuilderStrategy {
+	lo, hi := o.EstimatedPointsMin, o.EstimatedPointsMax
+	detail := "Open a fixed deposit and get a card against it — no approval risk, no enquiry. Spend little, autopay in full. The FD keeps earning while every month adds positive history."
+	if o.MinFDAmount > 0 {
+		detail = fmt.Sprintf("Open a ₹%.0f FD → get the %s against it (no approval risk, no enquiry). Spend little, autopay in full. The FD keeps earning while every month adds positive history.", o.MinFDAmount, o.Name)
+	}
+	s := BuilderStrategy{
+		Key: "fd_secured_card", Title: o.Name, Detail: detail,
+		Tag: "BEST FOR YOU", Kind: "product",
+		ApplyURL: o.ApplyURL, RevenueNote: o.RevenueNote, FDAmount: o.MinFDAmount,
+	}
+	if hi > 0 {
+		s.EstimatedPointsMin = &lo
+		s.EstimatedPointsMax = &hi
+	}
+	return s
 }
 
 func strategyMax(s BuilderStrategy) int {
@@ -969,6 +1043,7 @@ func insightsFromReportRow(row *models.CreditAnalyticsRequest) (*ReportInsights,
 // payload is empty, unparseable, or carries no numeric score (e.g. a failed
 // pull or a no-record response), so a missing score is never stored as 0.
 func extractBureauScore(raw json.RawMessage) *int64 {
+	raw = unwrapResultObject(raw)
 	if len(raw) == 0 {
 		return nil
 	}
@@ -993,6 +1068,39 @@ func extractBureauScore(raw json.RawMessage) *int64 {
 		return nil
 	}
 	return &score
+}
+
+// unwrapResultObject normalizes a stored Digitap payload to the inner "result"
+// object — the one whose top-level key is "result_json" — which is what the
+// service persists (env.Result) and what parseReportInsights/extractBureauScore
+// expect.
+//
+// It tolerates the easy-to-make mistake of storing the FULL upstream envelope
+// instead (e.g. via a seed SQL): {"http_response_code":..., "result":{"result_json":{...}}}.
+// The envelope has no top-level "result_json", so without unwrapping the parser
+// silently matches an empty struct and every body-derived field reads as zero
+// — a trap that looks like a parser bug. When the input is already the inner
+// object (has a top-level "result_json", or no "result" key at all) it is
+// returned unchanged.
+func unwrapResultObject(raw json.RawMessage) json.RawMessage {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return raw
+	}
+	var probe struct {
+		ResultJSON json.RawMessage `json:"result_json"`
+		Result     json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(trimmed, &probe); err != nil {
+		return raw // not even JSON — let the caller fail on it
+	}
+	if len(probe.ResultJSON) > 0 {
+		return raw // already the inner object (has top-level result_json)
+	}
+	if len(probe.Result) > 0 {
+		return probe.Result // envelope stored by mistake — unwrap one level
+	}
+	return raw
 }
 
 // caisAccountDetail is one tradeline from CAIS_Account_DETAILS.
@@ -1066,6 +1174,11 @@ func (l *caisAccountDetailList) UnmarshalJSON(data []byte) error {
 //	}
 func parseReportInsights(raw json.RawMessage) (*ReportInsights, error) {
 	insights := &ReportInsights{}
+
+	// Tolerate the full Digitap envelope being stored in place of the inner
+	// result object (a common seed-loading mistake). unwrapResultObject is a
+	// no-op when the payload is already the inner object.
+	raw = unwrapResultObject(raw)
 
 	// Navigate: result_json -> INProfileResponse
 	var wrapper struct {
