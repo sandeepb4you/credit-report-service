@@ -20,7 +20,7 @@ func NewCreditAnalyticsRepo(pool *pgxpool.Pool) *CreditAnalyticsRepo {
 
 const creditAnalyticsCols = `id, account_id, client_ref_num, mobile_no,
     request_id, result_code, http_status, message,
-    request_body, response_body, credit_score, created_at`
+    request_body, response_body, credit_score, result_pdf_url, created_at`
 
 // Create inserts a credit-analytics request row and fills the server-assigned
 // fields (id, created_at) on the supplied model.
@@ -34,6 +34,17 @@ func (r *CreditAnalyticsRepo) Create(ctx context.Context, req *models.CreditAnal
 		req.AccountID, req.ClientRefNum, req.MobileNo, req.RequestID, req.ResultCode,
 		req.HTTPStatus, req.Message, req.RequestBody, req.ResponseBody, req.CreditScore,
 	)
+}
+
+// SetResultPDFURL writes the permanent Utho PDF URL onto a row once the async
+// download+upload completes. Idempotent: re-writing the same URL is a no-op.
+// Used by the best-effort ReportUploader; a failure here just leaves the column
+// null (the raw response_body still has Digitap's source URL).
+func (r *CreditAnalyticsRepo) SetResultPDFURL(ctx context.Context, id int64, url string) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE credit_analytics_requests SET result_pdf_url = $2 WHERE id = $1`,
+		id, url)
+	return err
 }
 
 // FindByID returns a single row by id, or ErrNotFound.

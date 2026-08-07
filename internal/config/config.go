@@ -26,7 +26,60 @@ type Config struct {
 	Digitap      DigitapConfig      `mapstructure:"digitap"`
 	Log          LogConfig          `mapstructure:"log"`
 	Cashfree     CashfreeConfig     `mapstructure:"cashfree"`
+	Statement    StatementConfig    `mapstructure:"statement"`
+	Utho         UthoConfig         `mapstructure:"utho"`
 	Demo         DemoConfig         `mapstructure:"demo"`
+}
+
+// UthoConfig holds credentials and target bucket for the Utho Cloud object-
+// storage upload API. Used by the credit-analytics PDF relay to persist the
+// generated report PDF. When APIToken is empty the client runs in stub mode
+// (no I/O), so dev/CI works without credentials — same convention as the other
+// external-capability clients.
+type UthoConfig struct {
+	APIToken string        `mapstructure:"api-token"` // empty -> stub
+	DCSlug   string        `mapstructure:"dc-slug"`   // Utho datacenter slug
+	Bucket   string        `mapstructure:"bucket"`    // target bucket name
+	BaseURL  string        `mapstructure:"base-url"`  // optional override (testing)
+	Timeout  time.Duration `mapstructure:"timeout"`
+}
+
+// StatementConfig holds settings for bank-statement PDF analysis. Parser
+// selects the extraction engine ("pdf" for the real text-layer reader, "stub"
+// for the dev-only canned parser). WorkerConcurrency/WorkerBuffer configure the
+// in-process analysis pool; MaxFileSize caps a single upload; ProcessTimeout
+// bounds one analysis so a pathological PDF can't pin a worker.
+//
+// Provider selects the *flow*: "local" (client uploads a PDF, we analyze it
+// with Parser) or "digitap" (redirect/upload via Digitap's UI, we store their
+// report). Both endpoints stay available regardless; provider documents the
+// intended flow and is surfaced to the client. Digitap carries the Bank-Data
+// API credentials (separate from the credit digitap.* block — different
+// product); CallbackURL/CallbackSecret drive the public webhook.
+type StatementConfig struct {
+	Parser            string         `mapstructure:"parser"`             // stub | pdf (default pdf)
+	MaxFileSize       string         `mapstructure:"max-file-size"`      // parsed via server.parseSize
+	WorkerConcurrency int            `mapstructure:"worker-concurrency"` // worker goroutines
+	WorkerBuffer      int            `mapstructure:"worker-buffer"`      // queued jobs beyond in-flight
+	ProcessTimeout    time.Duration  `mapstructure:"process-timeout"`
+	Provider          string         `mapstructure:"provider"` // local | digitap (default local)
+	Digitap           BankDataConfig `mapstructure:"digitap"`
+	// CallbackSecret, when set, requires the public Digitap webhook to echo it
+	// as ?secret=. v1.20 of the API defines no HMAC, so this is our guard.
+	CallbackSecret   string `mapstructure:"callback-secret"`
+	DefaultReturnURL string `mapstructure:"default-return-url"`
+}
+
+// BankDataConfig holds credentials and endpoints for the Digitap Bank Data PDF
+// UI API (v1.20). When ClientID is empty the client runs in stub mode (no I/O),
+// so dev/CI works without credentials — same convention as the credit Digitap
+// client and the Cashfree gateway.
+type BankDataConfig struct {
+	BaseURL      string        `mapstructure:"base-url"`  // e.g. https://svcdemo.digitap.work/bank-data/
+	ClientID     string        `mapstructure:"client-id"` // empty -> stub
+	ClientSecret string        `mapstructure:"client-secret"`
+	CallbackURL  string        `mapstructure:"callback-url"` // public URL Digitap POSTs the callback to
+	Timeout      time.Duration `mapstructure:"timeout"`
 }
 
 // DemoConfig holds flags that relax real-world gating so the product can be
@@ -288,9 +341,40 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "text")
 
+	// Utho Cloud object storage (credit-report PDF relay). Empty api-token ->
+	// stub client, so dev/CI runs the relay with a fake URL. Set bucket + dc-slug
+	// in any environment that should store real PDFs.
+	v.SetDefault("utho.api-token", "")
+	v.SetDefault("utho.dc-slug", "")
+	v.SetDefault("utho.bucket", "")
+	v.SetDefault("utho.base-url", "")
+	v.SetDefault("utho.timeout", "60s")
+
 	v.SetDefault("cashfree.mode", "sandbox")
 	v.SetDefault("cashfree.api-version", "2025-01-01")
 	v.SetDefault("cashfree.timeout", "15s")
+
+	// Bank-statement analysis. Parser defaults to "pdf" (the real text-layer
+	// reader); set "stub" for offline/CI runs that don't have a PDF. The worker
+	// pool is small by default — analysis is CPU-bound, not latency-sensitive.
+	v.SetDefault("statement.parser", "pdf")
+	v.SetDefault("statement.max-file-size", "10MB")
+	v.SetDefault("statement.worker-concurrency", 4)
+	v.SetDefault("statement.worker-buffer", 16)
+	v.SetDefault("statement.process-timeout", "2m")
+	// Provider defaults to "local" (in-process analyzer). Set "digitap" to use
+	// the Digitap redirect/upload flow as the recommended path; both endpoints
+	// remain callable either way.
+	v.SetDefault("statement.provider", "local")
+	v.SetDefault("statement.default-return-url", "")
+	v.SetDefault("statement.callback-secret", "")
+	// Digitap Bank-Data API (v1.20). Empty client-id -> offline stub client, so
+	// the flow is exercised end-to-end in dev/CI without credentials.
+	v.SetDefault("statement.digitap.base-url", "https://svcdemo.digitap.work/bank-data/")
+	v.SetDefault("statement.digitap.client-id", "")
+	v.SetDefault("statement.digitap.client-secret", "")
+	v.SetDefault("statement.digitap.callback-url", "")
+	v.SetDefault("statement.digitap.timeout", "30s")
 
 	// Demo mode: OFF by default. Enable only for demos/UAT where the real KYC
 	// verification provider is unavailable. Set via DEMO_ENABLED=true.
@@ -317,9 +401,17 @@ func allKeys() []string {
 		"registration.ocr.provider", "registration.ocr.min-confidence",
 		"digitap.base-url", "digitap.client-id", "digitap.client-secret", "digitap.timeout",
 		"log.level", "log.format",
+		"utho.api-token", "utho.dc-slug", "utho.bucket", "utho.base-url", "utho.timeout",
 		"cashfree.mode", "cashfree.base-url", "cashfree.client-id",
 		"cashfree.client-secret", "cashfree.api-version",
 		"cashfree.return-url", "cashfree.notify-url", "cashfree.timeout",
+		"statement.parser", "statement.max-file-size",
+		"statement.worker-concurrency", "statement.worker-buffer",
+		"statement.process-timeout",
+		"statement.provider", "statement.default-return-url", "statement.callback-secret",
+		"statement.digitap.base-url", "statement.digitap.client-id",
+		"statement.digitap.client-secret", "statement.digitap.callback-url",
+		"statement.digitap.timeout",
 		"demo.enabled",
 	}
 }

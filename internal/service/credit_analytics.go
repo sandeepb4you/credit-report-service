@@ -29,7 +29,10 @@ const (
 	consentYes     = "yes"
 	deviceTypeWeb  = "web"
 	nameLookupOff  = 0 // name_lookup: 0 = use the supplied first/last name
-	reportTypeFlag = 0
+	// reportTypeFlag 3 asks Digitap to include result_pdf: a ~1-hour URL for the
+	// generated PDF report. We download it and re-upload to Utho asynchronously
+	// (ReportUploader), storing the permanent URL on the row. 0 returns JSON only.
+	reportTypeFlag = 3
 	otpDigits      = 6
 
 	// timestampLayout matches the Digitap spec's DDMMYYYY-HH:MM:SS format.
@@ -55,6 +58,10 @@ type CreditAnalyticsService struct {
 	// surfaces admin-curated bank offerings instead of the generic FD-card text.
 	// Injected after construction via SetScoreBuilder.
 	scoreBuilder *ScoreBuilderService
+	// pdfUploader is optional: when set, a successful report_type 3 pull
+	// enqueues the Digitap result_pdf for async download + Utho upload. When
+	// unset, result_pdf (if any) is ignored. Injected via SetPDFUploader.
+	pdfUploader *ReportUploader
 }
 
 func NewCreditAnalyticsService(
@@ -77,6 +84,13 @@ func (s *CreditAnalyticsService) SetLoanSwitch(ls *LoanSwitchService) {
 // back to the generic FD-card advice for the rebuild journey.
 func (s *CreditAnalyticsService) SetScoreBuilder(sb *ScoreBuilderService) {
 	s.scoreBuilder = sb
+}
+
+// SetPDFUploader wires the async PDF relay. Optional; when set, a successful
+// report_type 3 pull enqueues the Digitap result_pdf for download + Utho
+// upload. When unset, result_pdf is ignored (the JSON report is still stored).
+func (s *CreditAnalyticsService) SetPDFUploader(u *ReportUploader) {
+	s.pdfUploader = u
 }
 
 // CreditAnalyticsInput is the validated payload for a credit-analytics request.
@@ -180,8 +194,8 @@ type ScoreDriver struct {
 // Kind distinguishes the two strategy shapes the S28 screen renders:
 //   - "advice"   — behavioral guidance computed from the report (default).
 //   - "product"  — an admin-curated bank offering (e.g. an FD-secured card),
-//                  which carries ApplyURL/RevenueNote/FD amount so the client
-//                  can render the hero card with a real CTA.
+//     which carries ApplyURL/RevenueNote/FD amount so the client
+//     can render the hero card with a real CTA.
 type BuilderStrategy struct {
 	Key                string `json:"key"`
 	Title              string `json:"title"`
@@ -444,6 +458,15 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 			"result_code", env.ResultCode,
 			"latency_ms", upstreamLatency,
 		)
+		// report_type 3 carries result_pdf: a ~1-hour URL for the generated PDF.
+		// Hand it to the async relay (download → Utho → write-back) if wired.
+		// Best-effort: a missing uploader, missing field, or full queue just
+		// means result_pdf_url stays null; the report/score are unaffected.
+		if s.pdfUploader != nil && len(env.Result) > 0 {
+			if pdfURL := extractResultPDF(env.Result); pdfURL != "" {
+				s.pdfUploader.Submit(accountID, row.ID, pdfURL)
+			}
+		}
 		return row, nil
 	case httpStatus == http.StatusBadRequest:
 		slog.Warn("credit-analytics upstream bad request",
@@ -1068,6 +1091,71 @@ func extractBureauScore(raw json.RawMessage) *int64 {
 		return nil
 	}
 	return &score
+}
+
+// extractResultPDF lifts the result_pdf URL out of the Digitap response. With
+// report_type 3, Digitap returns result_pdf: a URL for the generated PDF valid
+// for ~1 hour. The field's exact nesting in the envelope isn't documented, so
+// this checks the likely locations defensively and returns "" when not found
+// (the caller treats that as "no PDF to relay" — best-effort, never an error).
+//
+// Checked locations, in order:
+//  1. Top-level of the stored result object: {"result_pdf": "...", "result_json": {...}}
+//  2. Alongside the bureau payload, under INProfileResponse: {"result_json":{"INProfileResponse":{"result_pdf":"..."}}}
+//  3. The raw envelope itself (in case env.Result is the full envelope): {"result":{"result_pdf":"..."}}
+func extractResultPDF(raw json.RawMessage) string {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return ""
+	}
+
+	// 1. Top-level of the result object.
+	if s := pdfFromObject(trimmed); s != "" {
+		return s
+	}
+
+	// 2. Nested under result_json.INProfileResponse.
+	inner := unwrapResultObject(raw)
+	if s := pdfFromINProfile(inner); s != "" {
+		return s
+	}
+
+	// 3. Full envelope: unwrap once more and retry the top-level check.
+	var envelope struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if json.Unmarshal(trimmed, &envelope) == nil && len(envelope.Result) > 0 {
+		if s := pdfFromObject(bytes.TrimSpace(envelope.Result)); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// pdfFromObject reads a top-level result_pdf string from a JSON object.
+func pdfFromObject(raw []byte) string {
+	var v struct {
+		ResultPDF string `json:"result_pdf"`
+	}
+	if json.Unmarshal(raw, &v) != nil {
+		return ""
+	}
+	return strings.TrimSpace(v.ResultPDF)
+}
+
+// pdfFromINProfile reads result_pdf from result_json.INProfileResponse.
+func pdfFromINProfile(raw json.RawMessage) string {
+	var v struct {
+		ResultJSON struct {
+			INProfileResponse struct {
+				ResultPDF string `json:"result_pdf"`
+			} `json:"INProfileResponse"`
+		} `json:"result_json"`
+	}
+	if json.Unmarshal(raw, &v) != nil {
+		return ""
+	}
+	return strings.TrimSpace(v.ResultJSON.INProfileResponse.ResultPDF)
 }
 
 // unwrapResultObject normalizes a stored Digitap payload to the inner "result"

@@ -86,6 +86,56 @@ digitap:
   client-secret: ""
   timeout: 30s
 
+utho:
+  # Utho Cloud object storage — destination for the credit-report PDF relay.
+  # Credit analytics sends report_type 3; Digitap returns a ~1-hour result_pdf
+  # URL, which we download and re-upload here, storing the permanent URL on the
+  # analytics row. Empty api-token -> stub client (fake URL, no upload); set all
+  # three in any environment that should persist real PDFs.
+  # Override via env: UTHO_API_TOKEN, UTHO_DC_SLUG, UTHO_BUCKET.
+  api-token: ""
+  dc-slug: ""
+  bucket: ""
+  base-url: ""              # leave empty for the default https://api.utho.com/v2
+  timeout: 60s
+
+statement:
+  # Bank-statement analysis. Override via env:
+  #   STATEMENT_PARSER=stub, STATEMENT_MAX_FILE_SIZE=10MB, ...
+  # parser: pdf  -> the real text-layer extractor (works on digitally-generated
+  #                 HDFC/ICICI/SBI/Axis PDFs; scanned PDFs fail with a clear msg).
+  #          stub -> dev-only canned parser (no real PDF needed; for CI/demo).
+  parser: pdf
+  max-file-size: 10MB          # per-upload cap; also raise multipart.max-request-size if you go higher
+  worker-concurrency: 4        # analysis goroutines (CPU-bound, not latency-sensitive)
+  worker-buffer: 16            # queued jobs beyond the in-flight ones
+  process-timeout: 2m          # per-job ceiling so a bad PDF can't pin a worker
+
+  # provider picks the RECOMMENDED flow; both endpoints stay available either way.
+  #   local   -> client uploads a PDF (POST /api/bank-statements/analyze); we parse it.
+  #   digitap -> redirect/upload via Digitap's UI (POST /api/bank-statements/digitap/initiate);
+  #              the PDF goes straight to Digitap and we store their report.
+  provider: local
+
+  # Optional guard on the public Digitap webhook (?secret=). Off in dev; set it
+  # in prod — the API defines no HMAC in v1.20.
+  callback-secret: ""
+  # Default browser return URL after the Digitap UI, when the client omits it.
+  default-return-url: ""
+
+  digitap:
+    # Digitap Bank Data PDF UI API (v1.20). Separate creds from digitap.* above
+    # (that's the credit-analytics product). Empty client-id -> stub client, so
+    # dev/CI runs the redirect flow with canned responses.
+    base-url: https://svcdemo.digitap.work/bank-data/
+    client-id: ""
+    client-secret: ""
+    # Public HTTPS URL Digitap POSTs the transaction-complete callback to.
+    # Empty in dev (no public host) — the GET /:id poll fallback still completes
+    # the flow. Set it (e.g. via ngrok or the load balancer) in prod.
+    callback-url: ""
+    timeout: 30s
+
 log:
   # Structured logging (log/slog). Override via LOG_LEVEL / LOG_FORMAT.
   # level: debug | info | warn | error (default info)

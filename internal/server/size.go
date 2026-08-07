@@ -9,10 +9,18 @@ import (
 // bodyLimitBytes parses a human size string ("5MB", "10 MiB", "10240") into
 // bytes. Falls back to a 10 MiB default on parse error.
 func bodyLimitBytes(s string) int {
-	if n, ok := parseSize(s); ok {
+	if n, ok := ParseSize(s); ok {
 		return n
 	}
 	return 10 * 1024 * 1024
+}
+
+// ParseSize parses a human size string ("5MB", "10 MiB", "10240") into bytes.
+// Exported so other packages (e.g. main wiring a per-upload cap from config)
+// can share the same parsing rules as the server body limit. Returns false on
+// an unrecognized unit.
+func ParseSize(s string) (int, bool) {
+	return parseSize(s)
 }
 
 func parseSize(s string) (int, bool) {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	_ "credit-report-service/docs" // generated Swagger spec; self-registers fiberSwagger
+	"credit-report-service/internal/bankdata"
 	"credit-report-service/internal/config"
 	"credit-report-service/internal/db"
 	"credit-report-service/internal/digitap"
@@ -20,6 +21,8 @@ import (
 	"credit-report-service/internal/repository"
 	"credit-report-service/internal/server"
 	"credit-report-service/internal/service"
+	"credit-report-service/internal/statement"
+	"credit-report-service/internal/utho"
 )
 
 // @title          Credit Report Service API
@@ -115,6 +118,68 @@ func main() {
 	// the FD-card hero names a real product with an apply CTA.
 	analyticsSvc.SetScoreBuilder(scoreBuilderSvc)
 
+	// Credit-report PDF relay: report_type 3 returns a short-lived Digitap URL,
+	// which we download and re-upload to Utho object storage, storing the
+	// permanent URL on the analytics row. Stub when the Utho token is empty, so
+	// dev/CI runs the relay with a fake URL. Best-effort: a real failure just
+	// leaves result_pdf_url null; the report/score are unaffected.
+	uthoClient := utho.New(utho.Config{
+		APIToken: cfg.Utho.APIToken,
+		DCSlug:   cfg.Utho.DCSlug,
+		Bucket:   cfg.Utho.Bucket,
+		BaseURL:  cfg.Utho.BaseURL,
+		Timeout:  cfg.Utho.Timeout,
+	})
+	pdfUploader := service.NewReportUploader(uthoClient, analyticsRepo, cfg.Utho.Bucket, 16)
+	analyticsSvc.SetPDFUploader(pdfUploader)
+	pdfUploader.Start(rootCtx)
+
+	// Bank-statement analysis: text-layer PDF parser + async worker pool.
+	// Parser follows the same empty-credentials-⇒-stub convention as the other
+	// external-capability packages: "stub" returns a canned statement so the
+	// analyze flow runs end-to-end without a real PDF (handy in CI/demo).
+	bankStmtRepo := repository.NewBankStatementRepo(pool)
+	var statementParser statement.Parser
+	statementStub := cfg.Statement.Parser != "pdf"
+	if statementStub {
+		slog.Warn("statement.parser is not 'pdf'; using the stub parser (canned text, no real PDF)")
+		statementParser = statement.NewStub()
+	} else {
+		statementParser = statement.NewPDFParser()
+	}
+	// Digitap Bank-Data client (redirect/upload flow). Stub when client-id is
+	// empty, like every other external-capability package. A prod deployment
+	// also needs statement.digitap.callback-url (the public webhook); warn when
+	// it's missing so the operator knows the poll fallback is all that's left.
+	bankDataClient := bankdata.New(bankdata.Config{
+		BaseURL:      cfg.Statement.Digitap.BaseURL,
+		ClientID:     cfg.Statement.Digitap.ClientID,
+		ClientSecret: cfg.Statement.Digitap.ClientSecret,
+		Timeout:      cfg.Statement.Digitap.Timeout,
+	})
+	if cfg.Statement.Provider == "digitap" && cfg.Statement.Digitap.CallbackURL == "" {
+		slog.Warn("statement.digitap.callback-url is empty; the Digitap webhook will not be reachable — relying on GET /:id poll fallback")
+	}
+	// Service and pool are mutually dependent (the service submits jobs; the
+	// pool calls the service back to process them). Break the cycle the same way
+	// analytics/loan-switch do: build the service without the pool, build the
+	// pool with the service as its processor, then wire the pool back in.
+	bankStmtSvc := service.NewBankStatementService(
+		statementParser, bankStmtRepo, bankDataClient,
+		cfg.Statement.Digitap.CallbackURL, cfg.Statement.DefaultReturnURL,
+	)
+	bankStmtPool := service.NewWorkerPool(bankStmtSvc,
+		cfg.Statement.WorkerConcurrency, cfg.Statement.WorkerBuffer, cfg.Statement.ProcessTimeout)
+	bankStmtSvc.SetPool(bankStmtPool)
+	// Reclaim rows left 'processing' by a previous crash, then start the workers
+	// on the server ctx so they drain and stop on shutdown.
+	if reclaimed, err := bankStmtRepo.ReclaimStaleProcessing(rootCtx, time.Now().Add(-service.StaleProcessingAge)); err != nil {
+		slog.Warn("bank statement stale-reclaim failed", "error", err)
+	} else if reclaimed > 0 {
+		slog.Info("reclaimed interrupted bank statement analyses", "count", reclaimed)
+	}
+	bankStmtPool.Start(rootCtx)
+
 	// Handlers.
 	healthH := handler.NewHealthHandler()
 	authH := handler.NewAuthHandler(authSvc, sessionSvc, cfg.Auth.CookieSecure)
@@ -124,6 +189,10 @@ func main() {
 	couponH := handler.NewCouponHandler(couponSvc)
 	loanH := handler.NewLoanSwitchHandler(loanSwitchSvc)
 	scoreBuilderH := handler.NewScoreBuilderHandler(scoreBuilderSvc)
+	// Statement handler gets the per-upload size cap and the optional webhook
+	// shared-secret so it can reject oversized PDFs and unauthenticated callbacks.
+	bankStmtH := handler.NewBankStatementHandler(
+		bankStmtSvc, serverMaxBytes(cfg.Statement.MaxFileSize), cfg.Statement.CallbackSecret)
 
 	// One-time configuration snapshot. No secrets: just feature flags the
 	// operator needs to confirm at boot (stub vs. live upstream, OCR provider,
@@ -134,6 +203,10 @@ func main() {
 		"digitap_stub", digitapClient.IsStub(),
 		"cashfree_stub", cashfreeStub,
 		"ocr_provider", cfg.Registration.OCR.Provider,
+		"statement_parser", cfg.Statement.Parser,
+		"statement_provider", cfg.Statement.Provider,
+		"bankdata_stub", bankDataClient.IsStub(),
+		"utho_stub", uthoClient.IsStub(),
 		"google_login_enabled", cfg.Auth.Google.ClientID != "",
 		// Demo mode auto-verifies submitted PANs; must be false in production.
 		"demo_mode", cfg.Demo.Enabled,
@@ -142,7 +215,7 @@ func main() {
 		"trusted_proxies", len(cfg.Server.TrustedProxies),
 	)
 
-	app := server.New(cfg, healthH, authH, analyticsH, kycH, orderH, couponH, loanH, scoreBuilderH, tokenSvc)
+	app := server.New(cfg, healthH, authH, analyticsH, kycH, orderH, couponH, loanH, scoreBuilderH, bankStmtH, tokenSvc)
 
 	go func() {
 		addr := ":" + itoa(cfg.Server.Port)
@@ -160,12 +233,30 @@ func main() {
 
 	<-rootCtx.Done()
 	slog.Info("shutdown signal received")
+	// Drain in-flight statement analyses before shutting down the server, so a
+	// graceful restart doesn't leave rows stuck in 'processing' (the next boot's
+	// stale-reclaim is the safety net for ungraceful stops).
+	bankStmtPool.Stop()
+	// Finish any in-flight credit-report PDF relay so a graceful restart doesn't
+	// abandon a half-uploaded PDF. Best-effort: if shutdown outlasts the relay,
+	// the row just keeps a null result_pdf_url.
+	pdfUploader.Stop()
 	shutdownCtx, cancelShut := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelShut()
 	if err := app.ShutdownWithContext(shutdownCtx); err != nil {
 		slog.Error("shutdown error", "error", err)
 	}
 	slog.Info("service stopped")
+}
+
+// serverMaxBytes parses a human size string from config (e.g. "10MB") into
+// bytes for the per-upload cap. Falls back to 10 MiB on a parse error, matching
+// the server's own body-limit default.
+func serverMaxBytes(s string) int {
+	if n, ok := server.ParseSize(s); ok {
+		return n
+	}
+	return 10 * 1024 * 1024
 }
 
 // initLogger configures the package-level slog default from config. Format

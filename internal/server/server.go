@@ -28,6 +28,7 @@ func New(
 	coupons *handler.CouponHandler,
 	loans *handler.LoanSwitchHandler,
 	scoreBuilder *handler.ScoreBuilderHandler,
+	bankStmt *handler.BankStatementHandler,
 	tokens *service.TokenService,
 ) *fiber.App {
 	// Client IP resolution. X-Forwarded-For is only believed when the immediate
@@ -108,6 +109,11 @@ func New(
 	// signature over the raw body, not by a bearer token).
 	api.Post("/payments/cashfree/webhook", orders.Webhook)
 
+	// Digitap transaction-complete webhook (public; authenticated by the
+	// x-digitap-callback-type header and an optional ?secret= guard, not a
+	// bearer token). Registered before requireAuth for the same reason.
+	api.Post("/bank-statements/digitap/callback", bankStmt.DigitapCallback)
+
 	// ---- Protected -------------------------------------------------------
 	requireAuth := middleware.RequireAuth(tokens)
 
@@ -154,6 +160,20 @@ func New(
 	// What-if simulator: any signed-in user (S29). Reads the caller's own
 	// report, so RequireAuth is sufficient.
 	ca.Get("/score-simulator", scoreBuilder.Simulate)
+
+	// ---- Bank statement analysis (PDF → salary/EMI/spending) -----------
+	//
+	// Two initiation paths: /analyze (client uploads a PDF; local parsing) and
+	// /digitap/initiate (redirect to Digitap's UI; we store their report). Both
+	// stay available regardless of statement.provider — the client picks.
+	// GET /:id is what a client polls until status flips to 'completed'/'failed'.
+	bs := api.Group("/bank-statements", requireAuth)
+	bs.Post("/analyze", bankStmt.Analyze)
+	bs.Post("/digitap/initiate", bankStmt.InitiateDigitap)
+	bs.Get("/", bankStmt.List)
+	bs.Get("/:id<int>", bankStmt.Get)
+	bs.Get("/:id<int>/raw", bankStmt.GetRaw)
+	bs.Get("/latest", bankStmt.GetLatest)
 
 	// ---- KYC (PAN submission) -------------------------------------------
 	k := api.Group("/kyc", requireAuth)
