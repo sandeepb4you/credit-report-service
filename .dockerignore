@@ -1,0 +1,35 @@
+# Keep the build context small and free of local secrets.
+# Note: docs/*.go IS needed — main.go imports the generated Swagger package.
+
+.git
+.gitignore
+.idea
+.vscode
+.zcode
+
+# Vendor API PDFs and design mockups: ~11MB, build-irrelevant.
+docs/digitap/
+docs/designs/
+docs/examples/
+
+# Local runtime data (PAN uploads) — the image creates its own empty dir.
+data/
+bin/
+
+# Per-developer configs hold real upstream credentials.
+config.dev.yaml
+config.local.yaml
+config.*.local.yaml
+.env
+.env.*
+
+# Build/test artifacts
+*.exe
+*.test
+*.out
+*.prof
+__debug_bin*
+
+README.md
+Dockerfile
+.dockerignore
