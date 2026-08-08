@@ -8,6 +8,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"credit-report-service/internal/apperr"
+	_ "credit-report-service/internal/models" // referenced by swag annotations (models.BankStatement)
 	"credit-report-service/internal/server/middleware"
 	"credit-report-service/internal/service"
 )

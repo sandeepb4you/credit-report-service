@@ -40,6 +40,11 @@ func (s *TokenService) TTL() time.Duration { return s.ttl }
 type sessionClaims struct {
 	Role      string `json:"role,omitempty"`
 	SessionID int64  `json:"sid,omitempty"`
+	// Epoch is the account's token_epoch at issue time. The permission gates
+	// compare it against the stored value and reject a stale token, so a role
+	// change does not have to wait out auth.access-ttl. Absent (zero) in tokens
+	// minted before this existed, which matches the column default.
+	Epoch int `json:"ep,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -50,13 +55,15 @@ type IssuedToken struct {
 }
 
 // Issue mints a signed access token for an account + role, bound to the
-// session (device) it was issued for.
-func (s *TokenService) Issue(accountID int64, role string, sessionID int64) (*IssuedToken, error) {
+// session (device) it was issued for and stamped with the account's current
+// token epoch.
+func (s *TokenService) Issue(accountID int64, role string, sessionID int64, epoch int) (*IssuedToken, error) {
 	now := time.Now().UTC()
 	exp := now.Add(s.ttl)
 	claims := sessionClaims{
 		Role:      role,
 		SessionID: sessionID,
+		Epoch:     epoch,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   fmt.Sprintf("%d", accountID),
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -71,10 +78,17 @@ func (s *TokenService) Issue(accountID int64, role string, sessionID int64) (*Is
 	return &IssuedToken{Token: signed, ExpiresAt: exp}, nil
 }
 
-// Parse validates a token string and returns the account id, role, and
-// session id from its claims. Any failure maps to a 401-style unauthorized
-// error. A zero session id means the token predates session tracking.
-func (s *TokenService) Parse(tokenStr string) (int64, string, int64, error) {
+// Parsed is the trusted content of a validated access token.
+type Parsed struct {
+	AccountID int64
+	Role      string
+	SessionID int64 // zero for tokens minted before session tracking
+	Epoch     int   // zero for tokens minted before epoch stamping
+}
+
+// Parse validates a token string and returns its claims. Any failure maps to a
+// 401-style unauthorized error.
+func (s *TokenService) Parse(tokenStr string) (*Parsed, error) {
 	claims := &sessionClaims{}
 	_, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -83,11 +97,16 @@ func (s *TokenService) Parse(tokenStr string) (int64, string, int64, error) {
 		return s.secret, nil
 	})
 	if err != nil {
-		return 0, "", 0, apperr.NewUnauthorized("Invalid or expired session")
+		return nil, apperr.NewUnauthorized("Invalid or expired session")
 	}
 	var accountID int64
 	if _, err := fmt.Sscanf(claims.Subject, "%d", &accountID); err != nil || accountID <= 0 {
-		return 0, "", 0, apperr.NewUnauthorized("Invalid session subject")
+		return nil, apperr.NewUnauthorized("Invalid session subject")
 	}
-	return accountID, claims.Role, claims.SessionID, nil
+	return &Parsed{
+		AccountID: accountID,
+		Role:      claims.Role,
+		SessionID: claims.SessionID,
+		Epoch:     claims.Epoch,
+	}, nil
 }

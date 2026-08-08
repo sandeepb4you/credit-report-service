@@ -383,6 +383,76 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/kyc/pan/{accountId}/reject": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Marks the named account's KYC row as REJECTED and records why. The reason is required and is shown to the account holder via GET /api/kyc/status, so it should say what to correct. Rejecting an already-verified account withdraws its access — pan_verified is cleared, so it can no longer request credit analytics. The account can re-submit a PAN, which returns the row to PENDING and clears the reason.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "kyc"
+                ],
+                "summary": "Reject an account's KYC submission (admin only)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Account id whose KYC is being rejected",
+                        "name": "accountId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Why the submission was rejected",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.rejectPanReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.KYCRecord"
+                        }
+                    },
+                    "400": {
+                        "description": "accountId must be an integer / reason missing or too long",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing the 'kyc:verify' permission",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No PAN on file for this account",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/admin/kyc/pan/{accountId}/verify": {
             "post": {
                 "security": [
@@ -390,7 +460,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Marks the named account's KYC row as PAN-verified. Required before that account can request credit analytics. The caller must be an admin.",
+                "description": "Marks the named account's KYC row as PAN-verified and clears any previous rejection reason. Required before that account can request credit analytics. Needs the 'kyc:verify' permission.",
                 "produces": [
                     "application/json"
                 ],
@@ -427,13 +497,70 @@ const docTemplate = `{
                         }
                     },
                     "403": {
-                        "description": "Not an admin",
+                        "description": "Missing the 'kyc:verify' permission",
                         "schema": {
                             "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
                     },
                     "404": {
                         "description": "No PAN on file for this account",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/kyc/pending": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns accounts that submitted a PAN and are awaiting verification, ordered newest activity first (a re-submitted PAN sorts back to the top). The rows carry the full PAN so a reviewer can check it, which is why the endpoint needs the 'kyc:verify' permission. Paged: ` + "`" + `limit` + "`" + ` defaults to 50 and is capped at 200, ` + "`" + `offset` + "`" + ` skips rows; ` + "`" + `total` + "`" + ` is the size of the whole queue, not of the page.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "kyc"
+                ],
+                "summary": "List pending KYC requests (admin only)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Max rows to return (default 50, max 200)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Rows to skip (default 0)",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.KYCReviewPage"
+                        }
+                    },
+                    "400": {
+                        "description": "limit/offset must be integers",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing the 'kyc:verify' permission",
                         "schema": {
                             "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
@@ -1366,6 +1493,349 @@ const docTemplate = `{
                 }
             }
         },
+        "/bank-statements": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns a paginated list of the caller's uploads, newest first. Each item carries the id, filename, status, transaction count, and period — not the full analysis (fetch by id for that).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "bank-statements"
+                ],
+                "summary": "List the authenticated account's bank-statement analyses",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "1-indexed page number (default 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "page size (default 20, max 100)",
+                        "name": "size",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_service.StatementPage"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/bank-statements/analyze": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Accepts a single PDF under the multipart field \"file\", persists it in 'processing' status, and queues asynchronous analysis. Returns the created row immediately with status 202; poll /bank-statements/{id} until status is 'completed' (analysis populated) or 'failed' (errorMessage set).",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "bank-statements"
+                ],
+                "summary": "Upload a bank-statement PDF for analysis",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "Bank statement PDF (text layer required; scanned PDFs are not supported yet)",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.BankStatement"
+                        }
+                    },
+                    "400": {
+                        "description": "No file uploaded / not a PDF / empty file",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "413": {
+                        "description": "File exceeds the maximum allowed size",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "503": {
+                        "description": "Analysis queue is full; retry shortly",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/bank-statements/digitap/callback": {
+            "post": {
+                "description": "Public server-to-server endpoint called by Digitap once the user finishes (or cancels) the statement upload on its UI. Not for client use: there is no bearer auth — trust comes from the x-digitap-callback-type header and, when configured, a ?secret= shared-secret query param (the API defines no HMAC in v1.20). Always returns 200 quickly; the report fetch happens after the response.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "bank-statements"
+                ],
+                "summary": "Digitap transaction-complete webhook",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "TRANSACTION_COMPLETE",
+                        "name": "x-digitap-callback-type",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Shared secret, when callback-secret is configured",
+                        "name": "secret",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{\"\"ok\"\":true}",
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        },
+        "/bank-statements/digitap/initiate": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Calls Digitap's Generate URL API and returns a redirect URL the client should send the user to. The user uploads their statement PDF on Digitap's UI (it never touches this service). Digitap calls our callback on completion; the client polls GET /bank-statements/{id} until status is 'completed' or 'failed'. Available regardless of statement.provider — the client chooses between this and the local upload (POST /analyze).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "bank-statements"
+                ],
+                "summary": "Start a Digitap bank-statement analysis (redirect flow)",
+                "parameters": [
+                    {
+                        "description": "{ ",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_service.DigitapInitiateResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "502": {
+                        "description": "Digitap rejected the request",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "503": {
+                        "description": "Digitap flow not configured",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/bank-statements/latest": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the most recent 'completed' analysis for the caller, with the full derived metrics. Returns 404 if no analysis has completed yet.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "bank-statements"
+                ],
+                "summary": "Get the latest completed bank-statement analysis",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.BankStatement"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No completed bank statement analysis found",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/bank-statements/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the analysis for one of the caller's own uploads. When status is 'processing', analysis is null; when 'completed', analysis carries the derived metrics (summary, salary, emis, subscriptions, categories, topMerchants, monthlyTotals, transactions); when 'failed', errorMessage explains why.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "bank-statements"
+                ],
+                "summary": "Fetch a bank-statement analysis by id",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Statement id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.BankStatement"
+                        }
+                    },
+                    "400": {
+                        "description": "id must be an integer",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Statement not found (or belongs to another account)",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/bank-statements/{id}/raw": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns one of the caller's own uploads including the extractedText (the PDF text layer exactly as parsed). Useful for debugging \"why wasn't my salary detected\" — the analysis is computed from this text. Never includes the raw PDF bytes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "bank-statements"
+                ],
+                "summary": "Fetch the raw extracted text for a bank statement",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Statement id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.BankStatement"
+                        }
+                    },
+                    "400": {
+                        "description": "id must be an integer",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Statement not found (or belongs to another account)",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/coupons": {
             "get": {
                 "security": [
@@ -1976,6 +2446,37 @@ const docTemplate = `{
                 }
             }
         },
+        "/kyc/status": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the account's KYC state without exposing the full PAN (only the last 4 digits). An account that has never submitted a PAN gets 200 with status NOT_SUBMITTED — \"no record\" is a state, not an error — so a client can render the onboarding step directly from ` + "`" + `status` + "`" + `. Possible values: NOT_SUBMITTED, PENDING, VERIFIED, REJECTED.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "kyc"
+                ],
+                "summary": "Get the authenticated account's KYC status",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.KYCStatus"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/loan-switch/opportunities": {
             "get": {
                 "security": [
@@ -2295,7 +2796,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the full account record for the current session.",
+                "description": "Returns the full account record for the current session, plus a \"kyc\" block carrying the account's KYC state (status, panVerified, last 4 of the PAN). Clients should read KYC completion from here rather than tracking it locally.",
                 "produces": [
                     "application/json"
                 ],
@@ -2307,7 +2808,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_models.Account"
+                            "$ref": "#/definitions/credit-report-service_internal_models.Profile"
                         }
                     },
                     "401": {
@@ -2356,7 +2857,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_models.Account"
+                            "$ref": "#/definitions/credit-report-service_internal_models.Profile"
                         }
                     },
                     "400": {
@@ -2522,6 +3023,73 @@ const docTemplate = `{
                 }
             }
         },
+        "credit-report-service_internal_models.BankStatement": {
+            "type": "object",
+            "properties": {
+                "accountId": {
+                    "type": "integer"
+                },
+                "analysis": {
+                    "description": "Analysis is the derived metrics (salary, EMI, categories, ...). Nil until\nthe row reaches status 'completed'. For local rows it's our Analysis\nstruct; for digitap rows it's Digitap's report JSON, stored verbatim.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "completedAt": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "errorMessage": {
+                    "description": "ErrorMessage is set only when Status == 'failed'.",
+                    "type": "string"
+                },
+                "extractedText": {
+                    "description": "ExtractedText is the PDF text layer. Empty until the worker runs.\nLocal-provider rows only; digitap rows leave this null.",
+                    "type": "string"
+                },
+                "filename": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "mimeType": {
+                    "type": "string"
+                },
+                "periodEnd": {
+                    "type": "string"
+                },
+                "periodStart": {
+                    "type": "string"
+                },
+                "provider": {
+                    "description": "Provider records which flow produced this row: 'local' (the client\nuploaded a PDF we parse in-process) or 'digitap' (the user uploaded to\nDigitap's UI and we fetched the report). Drives the poll fallback and how\nthe client interprets the analysis payload.",
+                    "type": "string"
+                },
+                "redirectUrl": {
+                    "type": "string"
+                },
+                "requestId": {
+                    "description": "Digitap-flow fields. Populated for provider='digitap' rows; null otherwise.\nRequestID/RedirectURL/URLExpiresAt are set at initiation; TxnID is filled\nin when the callback or status-check first names the transaction.",
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "transactionCount": {
+                    "type": "integer"
+                },
+                "txnId": {
+                    "type": "string"
+                },
+                "urlExpiresAt": {
+                    "type": "string"
+                }
+            }
+        },
         "credit-report-service_internal_models.Coupon": {
             "type": "object",
             "properties": {
@@ -2616,6 +3184,10 @@ const docTemplate = `{
                 },
                 "resultCode": {
                     "type": "integer"
+                },
+                "resultPdfUrl": {
+                    "description": "ResultPDFURL is the permanent Utho object URL of the generated PDF report.\nDigitap returns a 1-hour URL (result_pdf); we download and re-upload to\nUtho asynchronously and store the permanent URL here. Nil until the upload\ncompletes (or if it fails — best-effort). Mirrors the creditScore lift-out.",
+                    "type": "string"
                 }
             }
         },
@@ -2672,8 +3244,109 @@ const docTemplate = `{
                 "provider": {
                     "type": "string"
                 },
+                "rejectionReason": {
+                    "type": "string"
+                },
+                "reviewedAt": {
+                    "type": "string"
+                },
+                "reviewedByAccountId": {
+                    "description": "ReviewedByAccountID / ReviewedAt record which admin made the last\nverify-or-reject decision and when. Both are NULL until someone reviews\nthe submission, and are cleared again if the applicant re-submits.",
+                    "type": "integer"
+                },
                 "status": {
                     "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "verifiedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "credit-report-service_internal_models.KYCReviewItem": {
+            "type": "object",
+            "properties": {
+                "accountId": {
+                    "type": "integer"
+                },
+                "createdAt": {
+                    "description": "CreatedAt is when the account first submitted a PAN; UpdatedAt is when\nthe record last changed, and is what the queue is ordered by — a\nre-submitted PAN needs review again, so it belongs back at the top.",
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "firstName": {
+                    "type": "string"
+                },
+                "lastName": {
+                    "type": "string"
+                },
+                "pan": {
+                    "type": "string"
+                },
+                "panName": {
+                    "type": "string"
+                },
+                "phone": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "credit-report-service_internal_models.KYCReviewPage": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/credit-report-service_internal_models.KYCReviewItem"
+                    }
+                },
+                "limit": {
+                    "type": "integer"
+                },
+                "offset": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "credit-report-service_internal_models.KYCStatus": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "description": "CreatedAt is when the account first submitted a PAN; UpdatedAt is when\nthe record last changed (a re-submission or a verification).",
+                    "type": "string"
+                },
+                "panLast4": {
+                    "description": "PANLast4 is the tail of the PAN on file, enough for the user to recognise\nwhich number they submitted. Empty when nothing is on file.",
+                    "type": "string",
+                    "example": "234F"
+                },
+                "panSubmitted": {
+                    "type": "boolean"
+                },
+                "panVerified": {
+                    "type": "boolean"
+                },
+                "rejectionReason": {
+                    "description": "RejectionReason is set only on a REJECTED record; it is what the client\nshows the user so they know what to correct before re-submitting.",
+                    "type": "string"
+                },
+                "status": {
+                    "description": "Status is one of KycNotSubmitted / KycPending / KycVerified / KycRejected.",
+                    "type": "string",
+                    "example": "PENDING"
                 },
                 "updatedAt": {
                     "type": "string"
@@ -2807,7 +3480,62 @@ const docTemplate = `{
                 "currency": {
                     "type": "string"
                 },
+                "description": {
+                    "description": "Description is customer-facing copy: newline-separated feature lines that\nclients render as a checklist on the plans screen.",
+                    "type": "string"
+                },
                 "name": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "credit-report-service_internal_models.Profile": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "dateOfBirth": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "firstName": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "kyc": {
+                    "$ref": "#/definitions/credit-report-service_internal_models.KYCStatus"
+                },
+                "lastName": {
+                    "type": "string"
+                },
+                "phone": {
+                    "type": "string"
+                },
+                "profileCompleted": {
+                    "type": "boolean"
+                },
+                "referredAt": {
+                    "type": "string"
+                },
+                "referredByAccountId": {
+                    "description": "Referral attribution, set once at signup and never changed.",
+                    "type": "integer"
+                },
+                "referredByCode": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "status": {
                     "type": "string"
                 },
                 "updatedAt": {
@@ -2901,6 +3629,23 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "device_ip": {
+                    "type": "string"
+                }
+            }
+        },
+        "credit-report-service_internal_service.DigitapInitiateResponse": {
+            "type": "object",
+            "properties": {
+                "expiresAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "redirectUrl": {
+                    "type": "string"
+                },
+                "requestId": {
                     "type": "string"
                 }
             }
@@ -3345,6 +4090,55 @@ const docTemplate = `{
                 }
             }
         },
+        "credit-report-service_internal_service.StatementPage": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/credit-report-service_internal_service.StatementSummary"
+                    }
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "size": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "credit-report-service_internal_service.StatementSummary": {
+            "type": "object",
+            "properties": {
+                "completedAt": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "filename": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "periodEnd": {
+                    "type": "string"
+                },
+                "periodStart": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "transactionCount": {
+                    "type": "integer"
+                }
+            }
+        },
         "credit-report-service_internal_service.SwitchOpportunities": {
             "type": "object",
             "properties": {
@@ -3610,6 +4404,15 @@ const docTemplate = `{
                 "refreshToken": {
                     "type": "string",
                     "example": "rt_8Kx3..."
+                }
+            }
+        },
+        "internal_handler.rejectPanReq": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "example": "PAN name does not match the profile name"
                 }
             }
         },

@@ -24,9 +24,14 @@ const (
 
 // Product is the row model for the products table: the purchasable catalog.
 type Product struct {
-	Code      string    `json:"code"      db:"code"`
-	Name      string    `json:"name"      db:"name"`
-	Amount    float64   `json:"amount"    db:"amount"`
+	Code   string  `json:"code"   db:"code"`
+	Name   string  `json:"name"   db:"name"`
+	Amount float64 `json:"amount" db:"amount"`
+
+	// Description is customer-facing copy: newline-separated feature lines that
+	// clients render as a checklist on the plans screen.
+	Description string `json:"description" db:"description"`
+
 	Currency  string    `json:"currency"  db:"currency"`
 	Active    bool      `json:"active"    db:"active"`
 	CreatedAt time.Time `json:"createdAt" db:"created_at"`

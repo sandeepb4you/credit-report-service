@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -254,11 +255,16 @@ func TestLooksLikeEmail(t *testing.T) {
 		{"no-at", false},
 		{"a@@b.com", false},
 		{"", false},
+		// The column is VARCHAR(255) and Postgres rejects rather than
+		// truncates, so an over-long address must fail here — otherwise it
+		// reaches the database and becomes a 500 instead of a 400.
+		{strings.Repeat("a", maxEmailLen-len("@e.com")) + "@e.com", true},
+		{strings.Repeat("a", maxEmailLen) + "@e.com", false},
 	}
 	for _, tc := range cases {
 		got := looksLikeEmail(tc.in)
 		if got != tc.want {
-			t.Errorf("looksLikeEmail(%q) = %v, want %v", tc.in, got, tc.want)
+			t.Errorf("looksLikeEmail(len=%d) = %v, want %v", len(tc.in), got, tc.want)
 		}
 	}
 }
@@ -433,6 +439,9 @@ func TestKyc_VerifyPAN_BadAccountID(t *testing.T) {
 	h := NewKycHandler(nil)
 	app := newApp()
 	app.Use(func(c *fiber.Ctx) error {
+		// The handler records the caller as the reviewer, so it needs the id the
+		// real middleware would have published, not just the role.
+		c.Locals("accountID", int64(1))
 		c.Locals("accountRole", "admin")
 		return c.Next()
 	})
@@ -468,7 +477,7 @@ func TestRequireAuth_MissingHeader(t *testing.T) {
 
 func TestRequireAuth_ValidToken(t *testing.T) {
 	tokens := service.NewTokenService(config.AuthConfig{JWTSecret: "secret", AccessTTL: time.Hour})
-	issued, err := tokens.Issue(42, "admin", 0)
+	issued, err := tokens.Issue(42, "admin", 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -500,10 +509,10 @@ func TestRequireAuth_ValidToken(t *testing.T) {
 
 func TestRequireRole_WrongRole(t *testing.T) {
 	tokens := service.NewTokenService(config.AuthConfig{JWTSecret: "secret", AccessTTL: time.Hour})
-	issued, _ := tokens.Issue(1, "user", 0)
+	issued, _ := tokens.Issue(1, "user", 0, 0)
 
 	app := fiber.New(fiber.Config{ErrorHandler: apperr.ErrorHandler})
-	app.Use(middleware.RequireRole(tokens, "admin"))
+	app.Use(middleware.RequireRole(tokens, nil, "admin"))
 	app.Get("/", func(c *fiber.Ctx) error { return c.SendString("ok") })
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -540,10 +549,10 @@ func TestRequirePermission(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tokens := service.NewTokenService(config.AuthConfig{JWTSecret: "secret", AccessTTL: time.Hour})
-			issued, _ := tokens.Issue(1, tt.role, 0)
+			issued, _ := tokens.Issue(1, tt.role, 0, 0)
 
 			app := fiber.New(fiber.Config{ErrorHandler: apperr.ErrorHandler})
-			app.Use(middleware.RequirePermission(tokens, tt.perm))
+			app.Use(middleware.RequirePermission(tokens, nil, tt.perm))
 			app.Get("/", func(c *fiber.Ctx) error { return c.SendString("ok") })
 
 			req := httptest.NewRequest("GET", "/", nil)
@@ -564,7 +573,7 @@ func TestRequirePermission(t *testing.T) {
 func TestRequirePermission_NoTokenIs401(t *testing.T) {
 	tokens := service.NewTokenService(config.AuthConfig{JWTSecret: "secret", AccessTTL: time.Hour})
 	app := fiber.New(fiber.Config{ErrorHandler: apperr.ErrorHandler})
-	app.Use(middleware.RequirePermission(tokens, models.PermCouponCreate))
+	app.Use(middleware.RequirePermission(tokens, nil, models.PermCouponCreate))
 	app.Get("/", func(c *fiber.Ctx) error { return c.SendString("ok") })
 
 	resp, err := app.Test(httptest.NewRequest("GET", "/", nil))
@@ -579,10 +588,10 @@ func TestRequirePermission_NoTokenIs401(t *testing.T) {
 // RequireRole is a minimum-rank check, so a higher role passes a lower gate.
 func TestRequireRole_HigherRolePasses(t *testing.T) {
 	tokens := service.NewTokenService(config.AuthConfig{JWTSecret: "secret", AccessTTL: time.Hour})
-	issued, _ := tokens.Issue(1, models.RoleAdmin, 0)
+	issued, _ := tokens.Issue(1, models.RoleAdmin, 0, 0)
 
 	app := fiber.New(fiber.Config{ErrorHandler: apperr.ErrorHandler})
-	app.Use(middleware.RequireRole(tokens, models.RoleUser))
+	app.Use(middleware.RequireRole(tokens, nil, models.RoleUser))
 	app.Get("/", func(c *fiber.Ctx) error { return c.SendString("ok") })
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -600,7 +609,7 @@ func TestRequireRole_HigherRolePasses(t *testing.T) {
 // satisfy a RoleUser gate and still be refused at a RoleAdmin gate.
 func TestRequireRole_LegacyTokenIsUser(t *testing.T) {
 	tokens := service.NewTokenService(config.AuthConfig{JWTSecret: "secret", AccessTTL: time.Hour})
-	issued, _ := tokens.Issue(1, "", 0)
+	issued, _ := tokens.Issue(1, "", 0, 0)
 
 	cases := []struct {
 		gate string
@@ -611,7 +620,7 @@ func TestRequireRole_LegacyTokenIsUser(t *testing.T) {
 	}
 	for _, tc := range cases {
 		app := fiber.New(fiber.Config{ErrorHandler: apperr.ErrorHandler})
-		app.Use(middleware.RequireRole(tokens, tc.gate))
+		app.Use(middleware.RequireRole(tokens, nil, tc.gate))
 		app.Get("/", func(c *fiber.Ctx) error { return c.SendString("ok") })
 
 		req := httptest.NewRequest("GET", "/", nil)
@@ -629,10 +638,10 @@ func TestRequireRole_LegacyTokenIsUser(t *testing.T) {
 // An unrecognized role must fail closed rather than pass a lower gate.
 func TestRequireRole_UnknownRoleDenied(t *testing.T) {
 	tokens := service.NewTokenService(config.AuthConfig{JWTSecret: "secret", AccessTTL: time.Hour})
-	issued, _ := tokens.Issue(1, "superuser", 0)
+	issued, _ := tokens.Issue(1, "superuser", 0, 0)
 
 	app := fiber.New(fiber.Config{ErrorHandler: apperr.ErrorHandler})
-	app.Use(middleware.RequireRole(tokens, models.RoleUser))
+	app.Use(middleware.RequireRole(tokens, nil, models.RoleUser))
 	app.Get("/", func(c *fiber.Ctx) error { return c.SendString("ok") })
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -649,7 +658,7 @@ func TestRequireRole_UnknownRoleDenied(t *testing.T) {
 // RequireAuth normalizes a missing role claim to RoleUser in Locals.
 func TestRequireAuth_LegacyTokenRoleNormalized(t *testing.T) {
 	tokens := service.NewTokenService(config.AuthConfig{JWTSecret: "secret", AccessTTL: time.Hour})
-	issued, _ := tokens.Issue(7, "", 0)
+	issued, _ := tokens.Issue(7, "", 0, 0)
 
 	app := fiber.New(fiber.Config{ErrorHandler: apperr.ErrorHandler})
 	app.Use(middleware.RequireAuth(tokens))

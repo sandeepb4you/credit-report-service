@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -16,8 +17,16 @@ import (
 	"credit-report-service/internal/repository"
 )
 
-// minPasswordLen is the minimum accepted password length.
-const minPasswordLen = 8
+const (
+	// minPasswordLen is the minimum accepted password length.
+	minPasswordLen = 8
+	// maxPasswordLen is bcrypt's hard ceiling: GenerateFromPassword fails above
+	// 72 bytes. Without this check that failure escapes Signup unwrapped and
+	// the caller gets a 500 for what is really a rejected input. Bytes, not
+	// runes — bcrypt counts bytes, so a passphrase in a non-Latin script hits
+	// the limit at fewer visible characters.
+	maxPasswordLen = 72
+)
 
 // AuthService implements email+password signup with email-OTP verification and
 // JWT login. Additional identity providers (google, phone) slot in alongside
@@ -321,11 +330,35 @@ func (s *AuthService) GetAccount(ctx context.Context, accountID int64) (*models.
 	return acc, err
 }
 
+// GetProfile returns the account plus its KYC state — the single call a client
+// makes at app start to decide which onboarding steps remain.
+func (s *AuthService) GetProfile(ctx context.Context, accountID int64) (*models.Profile, error) {
+	acc, err := s.GetAccount(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	return s.profileFor(ctx, acc)
+}
+
+// profileFor decorates an account with its KYC state. A missing kyc_records row
+// is the normal state for a new account, so it reports NOT_SUBMITTED instead of
+// failing the profile read.
+func (s *AuthService) profileFor(ctx context.Context, acc *models.Account) (*models.Profile, error) {
+	rec, err := s.accounts.FindKYCByAccount(ctx, acc.ID)
+	if errors.Is(err, repository.ErrNotFound) {
+		rec = nil
+	} else if err != nil {
+		return nil, err
+	}
+	return &models.Profile{Account: *acc, KYC: models.NewKYCStatus(rec)}, nil
+}
+
 // UpdateProfile sets first/last name and date of birth, marking the profile
-// step complete.
+// step complete. It returns the same shape as GetProfile so a client can swap
+// its cached state for the response without a follow-up read.
 func (s *AuthService) UpdateProfile(
 	ctx context.Context, accountID int64, firstName, lastName string, dob *time.Time,
-) (*models.Account, error) {
+) (*models.Profile, error) {
 	acc, err := s.accounts.FindByID(ctx, accountID)
 	if errors.Is(err, repository.ErrNotFound) {
 		return nil, apperr.NewNotFound("Account not found")
@@ -352,7 +385,7 @@ func (s *AuthService) UpdateProfile(
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return acc, nil
+	return s.profileFor(ctx, acc)
 }
 
 // SetRole grants or revokes a role on an account. Callers must already have
@@ -369,16 +402,21 @@ func (s *AuthService) SetRole(ctx context.Context, accountID int64, role string)
 		}
 		return nil, err
 	}
-	if err := s.accounts.SetRole(ctx, accountID, role); err != nil {
+	epoch, err := s.accounts.SetRole(ctx, accountID, role)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, apperr.NewNotFound("Account not found")
+		}
 		return nil, err
 	}
 	acc, err := s.accounts.FindByID(ctx, accountID)
 	if err != nil {
 		return nil, err
 	}
-	// The account keeps whatever access its existing tokens carry until they
-	// expire; role lives in the JWT and is only re-read on refresh.
-	slog.Info("role changed", "account_id", accountID, "role", role)
+	// Bumping token_epoch (inside SetRole) invalidates the account's outstanding
+	// access tokens on the permission-gated routes, so the new role takes effect
+	// as soon as the client refreshes rather than when the old token expires.
+	slog.Info("role changed", "account_id", accountID, "role", role, "token_epoch", epoch)
 	return acc, nil
 }
 
@@ -436,7 +474,7 @@ func (s *AuthService) issueSession(
 	if err != nil {
 		return nil, err
 	}
-	tok, err := s.tokens.Issue(acc.ID, acc.Role, sess.ID)
+	tok, err := s.tokens.Issue(acc.ID, acc.Role, sess.ID, acc.TokenEpoch)
 	if err != nil {
 		return nil, err
 	}
@@ -467,7 +505,7 @@ func (s *AuthService) Refresh(
 		}
 		return nil, err
 	}
-	tok, err := s.tokens.Issue(acc.ID, acc.Role, sess.ID)
+	tok, err := s.tokens.Issue(acc.ID, acc.Role, sess.ID, acc.TokenEpoch)
 	if err != nil {
 		return nil, err
 	}
@@ -493,13 +531,18 @@ func (s *AuthService) applyAdminRole(ctx context.Context, acc *models.Account) {
 	if !s.isAdminEmail(*acc.PrimaryEmail) {
 		return
 	}
-	if err := s.accounts.SetRole(ctx, acc.ID, models.RoleAdmin); err != nil {
+	epoch, err := s.accounts.SetRole(ctx, acc.ID, models.RoleAdmin)
+	if err != nil {
 		// Don't fail the auth flow; the next login will retry the promotion.
 		slog.Warn("admin role promotion failed", "account_id", acc.ID, "error", err)
 		return
 	}
 	slog.Info("admin role granted", "account_id", acc.ID)
+	// Both fields must move together: SetRole bumped token_epoch, so a token
+	// minted from a stale in-memory copy would be refused by the permission
+	// gates the moment it was used.
 	acc.Role = models.RoleAdmin
+	acc.TokenEpoch = epoch
 }
 
 // isAdminEmail reports whether email matches the allowlist (case-insensitive).
@@ -521,9 +564,15 @@ func normalizeEmail(email string) string {
 }
 
 func validatePassword(pw string) error {
-	if len(pw) < minPasswordLen {
+	switch {
+	case len(pw) < minPasswordLen:
 		return apperr.NewValidationWith("Validation failed",
-			map[string]string{"password": "password must be at least 8 characters"})
+			map[string]string{"password": fmt.Sprintf(
+				"password must be at least %d characters", minPasswordLen)})
+	case len(pw) > maxPasswordLen:
+		return apperr.NewValidationWith("Validation failed",
+			map[string]string{"password": fmt.Sprintf(
+				"password must be at most %d bytes", maxPasswordLen)})
 	}
 	return nil
 }

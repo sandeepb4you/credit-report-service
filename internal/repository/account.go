@@ -27,7 +27,8 @@ func (r *AccountRepo) BeginTx(ctx context.Context) (pgx.Tx, error) {
 
 const accountCols = `id, status, role, primary_email, primary_phone,
     first_name, last_name, date_of_birth, profile_completed,
-    referred_by_account_id, referred_by_code, referred_at, created_at, updated_at`
+    referred_by_account_id, referred_by_code, referred_at, token_epoch,
+    created_at, updated_at`
 
 func (r *AccountRepo) FindByID(ctx context.Context, id int64) (*models.Account, error) {
 	var a models.Account
@@ -49,13 +50,37 @@ func (r *AccountRepo) FindByEmail(ctx context.Context, email string) (*models.Ac
 	return &a, err
 }
 
-// SetRole updates an account's role. Used by the admin-emails allowlist path
-// to promote a verified account to 'admin'.
-func (r *AccountRepo) SetRole(ctx context.Context, accountID int64, role string) error {
-	_, err := r.pool.Exec(ctx,
-		`UPDATE accounts SET role = $2, updated_at = now() WHERE id = $1`,
-		accountID, role)
-	return err
+// SetRole writes the account's role and invalidates its outstanding access
+// tokens by bumping token_epoch in the same statement — the two must move
+// together, or a token minted between them would carry the new epoch with the
+// old role. Returns the new epoch so the caller can mint a fresh token.
+func (r *AccountRepo) SetRole(ctx context.Context, accountID int64, role string) (int, error) {
+	var epoch int
+	err := r.pool.QueryRow(ctx,
+		`UPDATE accounts
+		    SET role        = $2,
+		        token_epoch = token_epoch + 1,
+		        updated_at  = now()
+		  WHERE id = $1
+		 RETURNING token_epoch`,
+		accountID, role).Scan(&epoch)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return epoch, err
+}
+
+// TokenEpoch reads the account's current token epoch. This is the per-request
+// lookup behind the permission gates, so it selects a single indexed column
+// rather than the whole row.
+func (r *AccountRepo) TokenEpoch(ctx context.Context, accountID int64) (int, error) {
+	var epoch int
+	err := r.pool.QueryRow(ctx,
+		`SELECT token_epoch FROM accounts WHERE id = $1`, accountID).Scan(&epoch)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return epoch, err
 }
 
 // CreateAccount inserts a new account within a transaction.
@@ -204,7 +229,8 @@ func (r *AccountRepo) UpdateChallenge(ctx context.Context, tx pgx.Tx, c *models.
 
 const kycCols = `id, account_id, pan_number, pan_name, pan_verified,
     aadhaar_last4, aadhaar_reference, aadhaar_pan_linked, status, provider,
-    verified_at, created_at, updated_at`
+    rejection_reason, verified_at, reviewed_by_account_id, reviewed_at,
+    created_at, updated_at`
 
 // UpsertPAN inserts a PENDING kyc_records row for the account, or — if one
 // already exists for this account — replaces the PAN and resets verification
@@ -224,7 +250,10 @@ func (r *AccountRepo) UpsertPAN(ctx context.Context, accountID int64, panNumber 
 		        aadhaar_pan_linked= NULL,
 		        status            = 'PENDING',
 		        provider          = NULL,
+		        rejection_reason  = NULL,
 		        verified_at       = NULL,
+		        reviewed_by_account_id = NULL,
+		        reviewed_at       = NULL,
 		        updated_at        = now()
 		 RETURNING `+kycCols,
 		accountID, panNumber,
@@ -252,19 +281,91 @@ func (r *AccountRepo) FindKYCByAccount(ctx context.Context, accountID int64) (*m
 	return &k, nil
 }
 
+// ListKYCByStatus returns the KYC review queue for one status, newest activity
+// first, joined to the submitting account. Ordering is on updated_at so a
+// re-submitted PAN — which needs reviewing again — sorts back to the top;
+// account_id breaks ties so paging is stable when timestamps collide.
+//
+// limit/offset are applied verbatim; the service clamps them.
+func (r *AccountRepo) ListKYCByStatus(
+	ctx context.Context, status string, limit, offset int,
+) ([]models.KYCReviewItem, error) {
+	var out []models.KYCReviewItem
+	err := pgxscan.Select(ctx, r.pool, &out,
+		`SELECT k.account_id, a.primary_email, a.primary_phone,
+		        a.first_name, a.last_name,
+		        k.pan_number, k.pan_name, k.status, k.created_at, k.updated_at
+		   FROM kyc_records k
+		   JOIN accounts a ON a.id = k.account_id
+		  WHERE k.status = $1
+		  ORDER BY k.updated_at DESC, k.account_id DESC
+		  LIMIT $2 OFFSET $3`,
+		status, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	// A page past the end scans to nil; callers serialize [] not null.
+	if out == nil {
+		out = []models.KYCReviewItem{}
+	}
+	return out, nil
+}
+
+// CountKYCByStatus returns how many KYC rows sit in one status, so a paged
+// review queue can show its true size rather than "at least a page".
+func (r *AccountRepo) CountKYCByStatus(ctx context.Context, status string) (int, error) {
+	var n int
+	err := r.pool.QueryRow(ctx,
+		`SELECT count(*) FROM kyc_records WHERE status = $1`, status).Scan(&n)
+	return n, err
+}
+
 // VerifyPAN marks the account's KYC row as PAN-verified. Returns the updated
 // row, or ErrNotFound if the account has no KYC row to verify.
-func (r *AccountRepo) VerifyPAN(ctx context.Context, accountID int64) (*models.KYCRecord, error) {
+func (r *AccountRepo) VerifyPAN(ctx context.Context, accountID, reviewerID int64) (*models.KYCRecord, error) {
 	var k models.KYCRecord
 	err := pgxscan.Get(ctx, r.pool, &k,
 		`UPDATE kyc_records
-		    SET pan_verified = true,
-		        status       = 'VERIFIED',
-		        verified_at  = now(),
-		        updated_at   = now()
+		    SET pan_verified     = true,
+		        status           = 'VERIFIED',
+		        rejection_reason = NULL,
+		        verified_at      = now(),
+		        reviewed_by_account_id = $2,
+		        reviewed_at      = now(),
+		        updated_at       = now()
 		  WHERE account_id = $1
 		 RETURNING `+kycCols,
-		accountID,
+		accountID, nilInt64(reviewerID),
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &k, nil
+}
+
+// RejectPAN marks the account's KYC row as rejected, recording why. Returns
+// the updated row, or ErrNotFound if the account has no KYC row.
+//
+// verified_at is cleared and pan_verified forced false, so rejecting a row
+// that was previously verified genuinely withdraws access rather than leaving
+// a REJECTED row that still satisfies the credit-analytics gate.
+func (r *AccountRepo) RejectPAN(ctx context.Context, accountID int64, reason string, reviewerID int64) (*models.KYCRecord, error) {
+	var k models.KYCRecord
+	err := pgxscan.Get(ctx, r.pool, &k,
+		`UPDATE kyc_records
+		    SET pan_verified     = false,
+		        status           = 'REJECTED',
+		        rejection_reason = $2,
+		        verified_at      = NULL,
+		        reviewed_by_account_id = $3,
+		        reviewed_at      = now(),
+		        updated_at       = now()
+		  WHERE account_id = $1
+		 RETURNING `+kycCols,
+		accountID, reason, nilInt64(reviewerID),
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound

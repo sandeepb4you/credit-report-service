@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -236,11 +237,11 @@ func (h *AuthHandler) GoogleLogin(c *fiber.Ctx) error {
 // GetProfile godoc
 //
 // @Summary      Get the authenticated account's profile
-// @Description  Returns the full account record for the current session.
+// @Description  Returns the full account record for the current session, plus a "kyc" block carrying the account's KYC state (status, panVerified, last 4 of the PAN). Clients should read KYC completion from here rather than tracking it locally.
 // @Tags         profile
 // @Produce      json
 // @Security     BearerAuth
-// @Success      200  {object}  models.Account
+// @Success      200  {object}  models.Profile
 // @Failure      401  {object}  apperr.ErrorBody  "Not authenticated"
 // @Failure      404  {object}  apperr.ErrorBody  "Account not found"
 // @Router       /profile [get]
@@ -249,11 +250,11 @@ func (h *AuthHandler) GetProfile(c *fiber.Ctx) error {
 	if !ok {
 		return apperr.NewUnauthorized("Not authenticated")
 	}
-	acc, err := h.svc.GetAccount(c.Context(), accountID)
+	prof, err := h.svc.GetProfile(c.Context(), accountID)
 	if err != nil {
 		return err
 	}
-	return c.JSON(acc)
+	return c.JSON(prof)
 }
 
 // ---- PUT /api/profile ----------------------------------------------------
@@ -273,7 +274,7 @@ type updateProfileReq struct {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        request  body      updateProfileReq  true  "Profile fields"
-// @Success      200      {object}  models.Account
+// @Success      200      {object}  models.Profile
 // @Failure      400      {object}  apperr.ErrorBody  "Validation failed"
 // @Failure      401      {object}  apperr.ErrorBody  "Not authenticated"
 // @Failure      404      {object}  apperr.ErrorBody  "Account not found"
@@ -291,21 +292,34 @@ func (h *AuthHandler) UpdateProfile(c *fiber.Ctx) error {
 	req.LastName = strings.TrimSpace(req.LastName)
 
 	var details map[string]string
-	if req.FirstName == "" {
+	switch {
+	case req.FirstName == "":
 		details = setDetail(details, "firstName", "firstName is required")
+	case len(req.FirstName) > maxNameLen:
+		details = setDetail(details, "firstName",
+			fmt.Sprintf("firstName must be at most %d characters", maxNameLen))
 	}
-	if req.LastName == "" {
+	switch {
+	case req.LastName == "":
 		details = setDetail(details, "lastName", "lastName is required")
+	case len(req.LastName) > maxNameLen:
+		details = setDetail(details, "lastName",
+			fmt.Sprintf("lastName must be at most %d characters", maxNameLen))
 	}
 
 	var dob *time.Time
 	if v := strings.TrimSpace(req.DateOfBirth); v != "" {
 		t, err := time.Parse("2006-01-02", v)
-		if err != nil {
+		switch {
+		case err != nil:
 			details = setDetail(details, "dateOfBirth", "dateOfBirth must be YYYY-MM-DD")
-		} else {
+		default:
 			utc := t.UTC()
-			dob = &utc
+			if msg := validateDOB(utc, time.Now().UTC()); msg != "" {
+				details = setDetail(details, "dateOfBirth", msg)
+			} else {
+				dob = &utc
+			}
 		}
 	}
 	if len(details) > 0 {
@@ -359,13 +373,45 @@ func (h *AuthHandler) SetAccountRole(c *fiber.Ctx) error {
 
 // ---- shared helpers ------------------------------------------------------
 
-// looksLikeEmail is a deliberately simple check (presence + exactly one @).
+// Length ceilings mirroring the column widths these values land in
+// (accounts.first_name / last_name, auth_identities.email and
+// provider_subject are all VARCHAR(255)). Postgres rejects an over-long value
+// rather than truncating it, so without these checks a long name or address
+// becomes a database error instead of a field-level 400.
+const (
+	maxEmailLen = 255
+	maxNameLen  = 255
+)
+
+// Date-of-birth bounds. A DOB must be in the past and within a plausible
+// lifespan; the ceiling exists because the column is a DATE that will happily
+// store year 1000. This deliberately does not enforce a minimum age —
+// whether the product requires 18+ is a policy decision, not a parsing one.
+const maxAgeYears = 120
+
+// looksLikeEmail is a deliberately simple check (presence + exactly one @,
+// within the column width).
 func looksLikeEmail(s string) bool {
+	if len(s) > maxEmailLen {
+		return false
+	}
 	at := strings.IndexByte(s, '@')
 	if at <= 0 || at == len(s)-1 {
 		return false
 	}
 	return strings.IndexByte(s[at+1:], '@') == -1
+}
+
+// validateDOB checks a parsed date of birth against the bounds above,
+// returning the message for the field or "" when it is acceptable.
+func validateDOB(dob, now time.Time) string {
+	switch {
+	case dob.After(now):
+		return "dateOfBirth cannot be in the future"
+	case dob.Before(now.AddDate(-maxAgeYears, 0, 0)):
+		return fmt.Sprintf("dateOfBirth cannot be more than %d years ago", maxAgeYears)
+	}
+	return ""
 }
 
 func setDetail(m map[string]string, k, v string) map[string]string {
