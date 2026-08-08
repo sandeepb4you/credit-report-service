@@ -215,7 +215,8 @@ func main() {
 		"trusted_proxies", len(cfg.Server.TrustedProxies),
 	)
 
-	app := server.New(cfg, healthH, authH, analyticsH, kycH, orderH, couponH, loanH, scoreBuilderH, bankStmtH, tokenSvc)
+	app := server.New(cfg, healthH, authH, analyticsH, kycH, orderH, couponH, loanH, scoreBuilderH, bankStmtH,
+		tokenSvc, accountRepo)
 
 	go func() {
 		addr := ":" + itoa(cfg.Server.Port)

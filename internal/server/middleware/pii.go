@@ -4,14 +4,15 @@ package middleware
 // It is the single chokepoint that enforces "no PII in logs" for body capture.
 //
 // Two layers of defense:
-//  1. Key-based: a case-insensitive allowlist of sensitive field names. Any
-//     value at one of these keys is replaced with a fixed mask, regardless of
-//     its JSON type. This is the primary mechanism — it matches the field names
-//     used across the service's request/response structs and models.
+//  1. Key-based: a case-insensitive allowlist of sensitive field names, matched
+//     against the key's trailing segments so namespaced fields from third-party
+//     payloads (Cashfree's customer_phone, customer_name) are covered too. Any
+//     value at a matching key is replaced with a fixed mask, regardless of its
+//     JSON type. This is the primary mechanism.
 //  2. Value-based (defense-in-depth): even for non-allowlisted keys, values
-//     that are recognizable PAN numbers, bearer JWTs, or email addresses are
-//     redacted too, so a novel field name carrying a known sensitive shape is
-//     still caught.
+//     that are recognizable PAN numbers, bearer JWTs, email addresses, or Indian
+//     mobile numbers are redacted too, so a novel field name carrying a known
+//     sensitive shape is still caught.
 
 import (
 	"encoding/json"
@@ -83,6 +84,16 @@ var (
 	emailRE = regexp.MustCompile(`(?i)[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}`)
 	// Bearer JWT: three base64url segments, the first decodable as a JSON header.
 	bearerRE = regexp.MustCompile(`(?i)\b(Bearer\s+)?[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`)
+	// Indian mobile number: exactly ten digits starting 6-9, with or without a
+	// +91 / 91 / 0 prefix. The prefixed forms are listed separately because RE2
+	// has no lookbehind and \b does not hold between "91" and the digits that
+	// follow it. Anchored to ten digits so the long numeric gateway references
+	// (cf_payment_id, bank_reference — 15 digits) stay readable in logs.
+	phoneRE = regexp.MustCompile(
+		`\+91[\-\s]?[6-9]\d{9}\b` +
+			`|\b91[\-\s]?[6-9]\d{9}\b` +
+			`|\b0[6-9]\d{9}\b` +
+			`|\b[6-9]\d{9}\b`)
 )
 
 // maskJSON returns a redacted copy of a JSON body. It parses the body into
@@ -134,27 +145,68 @@ func redact(v any) any {
 
 // isSensitiveKey reports whether key matches the sensitive set (case- and
 // hyphen/underscore-insensitive).
+//
+// Matching is suffix-aware over the key's segments, not just whole-name. Third
+// party payloads namespace their fields — Cashfree sends customer_name and
+// customer_phone, not name and phone — and an exact-name allowlist silently
+// lets those through. Comparing trailing segment runs means a new prefixed
+// field is covered the first time it appears, without anyone remembering to
+// add it here.
+//
+// Segment runs, not raw string suffixes: "japan_code" must not match "pan".
 func isSensitiveKey(key string) bool {
-	k := normalizeKey(key)
-	_, ok := sensitiveKeys[k]
-	return ok
+	segs := keySegments(key)
+	if len(segs) == 0 {
+		return false
+	}
+	// Whole key first ("dateofbirth"), then progressively shorter trailing
+	// runs ("ofbirth", "birth") — so customer_phone is caught by "phone".
+	for i := 0; i < len(segs); i++ {
+		if _, ok := sensitiveKeys[strings.Join(segs[i:], "")]; ok {
+			return true
+		}
+	}
+	return false
 }
 
-// normalizeKey lowercases and collapses common separators so that e.g.
-// "DateOfBirth", "date_of_birth", and "date-of-birth" all match.
-func normalizeKey(key string) string {
-	s := strings.ToLower(key)
-	s = strings.ReplaceAll(s, "-", "_")
-	return s
+// keySegments lowercases a key and splits it on separators and camelCase
+// boundaries, so "DateOfBirth", "date_of_birth", and "date-of-birth" all yield
+// the same segments.
+func keySegments(key string) []string {
+	var segs []string
+	var cur strings.Builder
+	flush := func() {
+		if cur.Len() > 0 {
+			segs = append(segs, cur.String())
+			cur.Reset()
+		}
+	}
+	for i, r := range key {
+		switch {
+		case r == '_' || r == '-' || r == '.' || r == ' ':
+			flush()
+		case r >= 'A' && r <= 'Z':
+			// Start a new segment at a camelCase hump, but not at the very
+			// start and not mid-acronym ("PANName" -> pan, name).
+			if i > 0 && !isUpperOrSep(key[i-1]) {
+				flush()
+			}
+			cur.WriteRune(r - 'A' + 'a')
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	flush()
+	return segs
+}
+
+func isUpperOrSep(b byte) bool {
+	return (b >= 'A' && b <= 'Z') || b == '_' || b == '-' || b == '.' || b == ' '
 }
 
 // maskRaw applies value-shape redaction to an arbitrary byte slice.
 func maskRaw(body []byte) []byte {
-	s := string(body)
-	s = bearerRE.ReplaceAllString(s, maskValue)
-	s = panRE.ReplaceAllString(s, maskValue)
-	s = emailRE.ReplaceAllString(s, maskValue)
-	return []byte(s)
+	return []byte(maskShapes(string(body)))
 }
 
 // maskShapes redacts PAN / email / JWT shapes within a string value.
@@ -162,6 +214,7 @@ func maskShapes(s string) string {
 	s = bearerRE.ReplaceAllString(s, maskValue)
 	s = panRE.ReplaceAllString(s, maskValue)
 	s = emailRE.ReplaceAllString(s, maskValue)
+	s = phoneRE.ReplaceAllString(s, maskValue)
 	return s
 }
 

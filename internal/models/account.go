@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Account lifecycle status.
 const (
@@ -44,6 +47,13 @@ type Account struct {
 	ReferredByCode      *string    `json:"referredByCode,omitempty"      db:"referred_by_code"`
 	ReferredAt          *time.Time `json:"referredAt,omitempty"          db:"referred_at"`
 
+	// TokenEpoch is stamped into every access token this account is issued and
+	// bumped whenever its role changes. A token carrying an older epoch is
+	// refused on the permission-gated routes, so a role change takes effect on
+	// the next refresh instead of at token expiry. Not serialized: it is an
+	// internal invalidation counter, of no use to a client.
+	TokenEpoch int `json:"-" db:"token_epoch"`
+
 	CreatedAt time.Time `json:"createdAt" db:"created_at"`
 	UpdatedAt time.Time `json:"updatedAt" db:"updated_at"`
 }
@@ -69,6 +79,12 @@ const (
 	KycPending  = "PENDING"  // PAN accepted, awaiting verification
 	KycVerified = "VERIFIED" // KYC complete; gates the analysis products
 	KycRejected = "REJECTED"
+
+	// KycNotSubmitted is reported for an account with no kyc_records row at
+	// all. It is never stored — the column only ever holds PENDING/VERIFIED/
+	// REJECTED — but the API reports it so a client can drive the onboarding
+	// step off one field instead of special-casing "no record yet".
+	KycNotSubmitted = "NOT_SUBMITTED"
 )
 
 // KYCRecord is the row model for the kyc_records table: Aadhaar + PAN
@@ -85,9 +101,113 @@ type KYCRecord struct {
 	AadhaarPanLinked *bool      `json:"aadhaarPanLinked,omitempty" db:"aadhaar_pan_linked"`
 	Status           string     `json:"status"            db:"status"`
 	Provider         *string    `json:"provider,omitempty" db:"provider"`
+	RejectionReason  *string    `json:"rejectionReason,omitempty" db:"rejection_reason"`
 	VerifiedAt       *time.Time `json:"verifiedAt,omitempty" db:"verified_at"`
-	CreatedAt        time.Time  `json:"createdAt"         db:"created_at"`
-	UpdatedAt        time.Time  `json:"updatedAt"         db:"updated_at"`
+	// ReviewedByAccountID / ReviewedAt record which admin made the last
+	// verify-or-reject decision and when. Both are NULL until someone reviews
+	// the submission, and are cleared again if the applicant re-submits.
+	ReviewedByAccountID *int64     `json:"reviewedByAccountId,omitempty" db:"reviewed_by_account_id"`
+	ReviewedAt          *time.Time `json:"reviewedAt,omitempty"          db:"reviewed_at"`
+	CreatedAt           time.Time  `json:"createdAt"         db:"created_at"`
+	UpdatedAt           time.Time  `json:"updatedAt"         db:"updated_at"`
+}
+
+// KYCStatus is the client-facing projection of an account's KYC state. It
+// exists so the API can answer "is KYC done?" without handing back the row —
+// KYCRecord carries the full PAN, which is PII the client has no reason to
+// receive on a status poll.
+type KYCStatus struct {
+	// Status is one of KycNotSubmitted / KycPending / KycVerified / KycRejected.
+	Status       string `json:"status"       example:"PENDING"`
+	PANSubmitted bool   `json:"panSubmitted"`
+	PANVerified  bool   `json:"panVerified"`
+	// PANLast4 is the tail of the PAN on file, enough for the user to recognise
+	// which number they submitted. Empty when nothing is on file.
+	PANLast4 string `json:"panLast4,omitempty"   example:"234F"`
+	// RejectionReason is set only on a REJECTED record; it is what the client
+	// shows the user so they know what to correct before re-submitting.
+	RejectionReason *string    `json:"rejectionReason,omitempty"`
+	VerifiedAt      *time.Time `json:"verifiedAt,omitempty"`
+	// CreatedAt is when the account first submitted a PAN; UpdatedAt is when
+	// the record last changed (a re-submission or a verification).
+	CreatedAt *time.Time `json:"createdAt,omitempty"`
+	UpdatedAt *time.Time `json:"updatedAt,omitempty"`
+}
+
+// NewKYCStatus projects a kyc_records row onto the client-facing view. A nil
+// record — the usual state for a fresh account — yields KycNotSubmitted rather
+// than an error, so every caller has a status to render.
+func NewKYCStatus(rec *KYCRecord) KYCStatus {
+	if rec == nil {
+		return KYCStatus{Status: KycNotSubmitted}
+	}
+	pan := strings.TrimSpace(rec.PANNumber)
+	if pan == "" {
+		// pan_number is NOT NULL, so this only happens if a row was written
+		// outside SubmitPAN. Report it as nothing on file rather than as a
+		// submitted-but-blank PAN.
+		return KYCStatus{Status: KycNotSubmitted}
+	}
+	last4 := pan
+	if n := len(last4); n > 4 {
+		last4 = last4[n-4:]
+	}
+	return KYCStatus{
+		Status:          rec.Status,
+		PANSubmitted:    true,
+		PANVerified:     rec.PANVerified,
+		PANLast4:        last4,
+		RejectionReason: rec.RejectionReason,
+		VerifiedAt:      rec.VerifiedAt,
+		CreatedAt:       &rec.CreatedAt,
+		UpdatedAt:       &rec.UpdatedAt,
+	}
+}
+
+// Done reports whether KYC is complete — the single flag a client needs to
+// decide whether the onboarding KYC step is still outstanding. It requires
+// both the status and the PAN flag so a half-written row never reads as done.
+func (k KYCStatus) Done() bool { return k.Status == KycVerified && k.PANVerified }
+
+// KYCReviewItem is one row of the admin KYC review queue: a kyc_records row
+// joined to enough of its account for a reviewer to act on it. Unlike
+// KYCStatus this carries the full PAN — the reviewer's job is to check that
+// number — so it must only ever be served behind PermKycVerify.
+type KYCReviewItem struct {
+	AccountID int64   `json:"accountId" db:"account_id"`
+	Email     *string `json:"email"     db:"primary_email"`
+	Phone     *string `json:"phone"     db:"primary_phone"`
+	FirstName *string `json:"firstName" db:"first_name"`
+	LastName  *string `json:"lastName"  db:"last_name"`
+
+	PANNumber string  `json:"pan"               db:"pan_number"`
+	PANName   *string `json:"panName,omitempty" db:"pan_name"`
+	Status    string  `json:"status"            db:"status"`
+
+	// CreatedAt is when the account first submitted a PAN; UpdatedAt is when
+	// the record last changed, and is what the queue is ordered by — a
+	// re-submitted PAN needs review again, so it belongs back at the top.
+	CreatedAt time.Time `json:"createdAt" db:"created_at"`
+	UpdatedAt time.Time `json:"updatedAt" db:"updated_at"`
+}
+
+// KYCReviewPage is one page of the admin review queue. Total is the full size
+// of the queue, not of this page, so a reviewer can see how much work is
+// waiting behind the rows they were served.
+type KYCReviewPage struct {
+	Items  []KYCReviewItem `json:"items"`
+	Total  int             `json:"total"`
+	Limit  int             `json:"limit"`
+	Offset int             `json:"offset"`
+}
+
+// Profile is an account plus its KYC state: what GET/PUT /api/profile return.
+// Account is embedded, so the JSON keeps every field it had and gains a "kyc"
+// object — one call at app start tells a client both who the user is and
+// whether they still owe us a PAN.
+type Profile struct {
+	Account
+	KYC KYCStatus `json:"kyc"`
 }
 
 // OtpChallenge is the row model for the otp_challenges table: a transient

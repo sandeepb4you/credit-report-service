@@ -30,6 +30,9 @@ func New(
 	scoreBuilder *handler.ScoreBuilderHandler,
 	bankStmt *handler.BankStatementHandler,
 	tokens *service.TokenService,
+	// epochs backs the stale-token check on the permission gates; see
+	// middleware.checkEpoch.
+	epochs middleware.EpochSource,
 ) *fiber.App {
 	// Client IP resolution. X-Forwarded-For is only believed when the immediate
 	// peer is a configured trusted proxy — otherwise any caller could forge the
@@ -146,9 +149,9 @@ func New(
 	// Every account has a referral code, not just agents, so this is plain
 	// RequireAuth. Registered before "/:code" so it is not swallowed by it.
 	cp.Get("/referral", requireAuth, coupons.MyReferralCode)
-	cp.Post("/", middleware.RequirePermission(tokens, models.PermCouponCreate), coupons.CreateCoupon)
-	cp.Get("/", middleware.RequirePermission(tokens, models.PermCouponManage), coupons.ListCoupons)
-	cp.Delete("/:code", middleware.RequirePermission(tokens, models.PermCouponManage), coupons.RevokeCoupon)
+	cp.Post("/", middleware.RequirePermission(tokens, epochs, models.PermCouponCreate), coupons.CreateCoupon)
+	cp.Get("/", middleware.RequirePermission(tokens, epochs, models.PermCouponManage), coupons.ListCoupons)
+	cp.Delete("/:code", middleware.RequirePermission(tokens, epochs, models.PermCouponManage), coupons.RevokeCoupon)
 
 	// ---- Credit analytics (Digitap proxy) -------------------------------
 	ca := api.Group("/credit-analytics", requireAuth)
@@ -177,6 +180,7 @@ func New(
 
 	// ---- KYC (PAN submission) -------------------------------------------
 	k := api.Group("/kyc", requireAuth)
+	k.Get("/status", kyc.GetStatus)
 	k.Post("/pan", kyc.SubmitPAN)
 
 	// ---- Loan switch (interest optimizer) -------------------------------
@@ -185,14 +189,14 @@ func New(
 	// settings are admin-only, gated on the 'loan-provider:manage' permission.
 	api.Get("/loan-switch/opportunities", requireAuth, loans.GetOpportunities)
 
-	lp := api.Group("/admin/loan-providers", middleware.RequirePermission(tokens, models.PermLoanProviderManage))
+	lp := api.Group("/admin/loan-providers", middleware.RequirePermission(tokens, epochs, models.PermLoanProviderManage))
 	lp.Post("/", loans.CreateProvider)
 	lp.Get("/", loans.ListProviders)
 	lp.Get("/:id<int>", loans.GetProvider)
 	lp.Put("/:id<int>", loans.UpdateProvider)
 	lp.Delete("/:id<int>", loans.DeleteProvider)
 
-	ls := api.Group("/admin/loan-switch", middleware.RequirePermission(tokens, models.PermLoanProviderManage))
+	ls := api.Group("/admin/loan-switch", middleware.RequirePermission(tokens, epochs, models.PermLoanProviderManage))
 	ls.Get("/settings", loans.GetSettings)
 	ls.Put("/settings", loans.UpdateSettings)
 
@@ -200,7 +204,7 @@ func New(
 	//
 	// The toolkit view rides on the insights response (no separate user route);
 	// bank-offering CRUD is admin-only, gated on 'bank-offering:manage'.
-	bo := api.Group("/admin/bank-offerings", middleware.RequirePermission(tokens, models.PermBankOfferingManage))
+	bo := api.Group("/admin/bank-offerings", middleware.RequirePermission(tokens, epochs, models.PermBankOfferingManage))
 	bo.Post("/", scoreBuilder.CreateOffering)
 	bo.Get("/", scoreBuilder.ListOfferings)
 	bo.Get("/:id<int>", scoreBuilder.GetOffering)
@@ -213,10 +217,12 @@ func New(
 	// re-scoping a role or adding one never touches this block. The group
 	// itself is gated on the weakest permission any member needs; individual
 	// routes tighten it where they need more.
-	admin := api.Group("/admin", middleware.RequirePermission(tokens, models.PermKycVerify))
+	admin := api.Group("/admin", middleware.RequirePermission(tokens, epochs, models.PermKycVerify))
+	admin.Get("/kyc/pending", kyc.ListPending)
 	admin.Post("/kyc/pan/:accountId<int>/verify", kyc.VerifyPAN)
+	admin.Post("/kyc/pan/:accountId<int>/reject", kyc.RejectPAN)
 	admin.Put("/accounts/:accountId<int>/role",
-		middleware.RequirePermission(tokens, models.PermAccountSetRole), auth.SetAccountRole)
+		middleware.RequirePermission(tokens, epochs, models.PermAccountSetRole), auth.SetAccountRole)
 
 	return app
 }
