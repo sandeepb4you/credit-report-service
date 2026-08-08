@@ -570,6 +570,13 @@ definitions:
     properties:
       accountNumber:
         type: string
+      active:
+        description: |-
+          Active mirrors isActiveStatus on this tradeline's Account_Status — the same
+          test that produces ActiveAccountCount, so the per-account flag and the
+          summary count can never disagree. Clients split "current" from "closed
+          history" on this; without it every account reads as closed.
+        type: boolean
       company:
         type: string
       currentBalance:
@@ -695,6 +702,10 @@ definitions:
         type: integer
       cardUtilizationPercent:
         type: number
+      createdAt:
+        description: CreatedAt is when the bureau pull ran — what a client shows as
+          "checked on".
+        type: string
       creditScore:
         type: integer
       derogatoryAccounts:
@@ -721,6 +732,11 @@ definitions:
       onTimePaymentPercent:
         type: number
       outdated:
+        description: |-
+          Outdated is true once the report is older than reportFreshWindow. Clients
+          must drive "time to refresh" off this flag rather than re-deriving it from
+          CreatedAt: the window is a product decision, and two implementations of it
+          would eventually disagree about whether the same report is stale.
         type: boolean
       recommendations:
         description: |-

@@ -3800,6 +3800,10 @@ const docTemplate = `{
                 "accountNumber": {
                     "type": "string"
                 },
+                "active": {
+                    "description": "Active mirrors isActiveStatus on this tradeline's Account_Status — the same\ntest that produces ActiveAccountCount, so the per-account flag and the\nsummary count can never disagree. Clients split \"current\" from \"closed\nhistory\" on this; without it every account reads as closed.",
+                    "type": "boolean"
+                },
                 "company": {
                     "type": "string"
                 },
@@ -3974,6 +3978,10 @@ const docTemplate = `{
                 "cardUtilizationPercent": {
                     "type": "number"
                 },
+                "createdAt": {
+                    "description": "CreatedAt is when the bureau pull ran — what a client shows as \"checked on\".",
+                    "type": "string"
+                },
                 "creditScore": {
                     "type": "integer"
                 },
@@ -4008,6 +4016,7 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "outdated": {
+                    "description": "Outdated is true once the report is older than reportFreshWindow. Clients\nmust drive \"time to refresh\" off this flag rather than re-deriving it from\nCreatedAt: the window is a product decision, and two implementations of it\nwould eventually disagree about whether the same report is stale.",
                     "type": "boolean"
                 },
                 "recommendations": {

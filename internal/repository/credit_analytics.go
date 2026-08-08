@@ -82,8 +82,22 @@ func (r *CreditAnalyticsRepo) CountByAccount(ctx context.Context, accountID int6
 	return n, err
 }
 
-// FindLatestByAccount returns the most recent successful report (2xx upstream)
-// for an account, or ErrNotFound.
+// FindLatestByAccount returns the report an account's analysis should be built
+// from: the newest successful (2xx upstream) pull that actually carries a
+// score, falling back to the newest successful pull when none of them do.
+//
+// It is deliberately not simply "the newest row". The bureau sometimes answers
+// 200 with a degraded INProfileResponse — no SCORE block and a truncated
+// account list — and such a response, being newest, would shadow a complete
+// report taken seconds earlier. That is not a hypothetical: it left an account
+// whose report had a score and three tradelines showing the "you have no score
+// yet" paywall, because a retry one second later came back score-less.
+//
+// A missing SCORE block is a data-quality event, not the user's score going
+// away, so preferring the last real one is the honest reading. Staleness is
+// handled separately: ReportInsights.Outdated still flags anything past the
+// freshness window, so an older-but-complete report cannot quietly pass as
+// current.
 func (r *CreditAnalyticsRepo) FindLatestByAccount(ctx context.Context, accountID int64) (*models.CreditAnalyticsRequest, error) {
 	var req models.CreditAnalyticsRequest
 	err := pgxscan.Get(ctx, r.pool, &req,
@@ -91,7 +105,7 @@ func (r *CreditAnalyticsRepo) FindLatestByAccount(ctx context.Context, accountID
 		 WHERE account_id = $1
 		   AND http_status >= 200 AND http_status < 300
 		   AND response_body IS NOT NULL
-		 ORDER BY id DESC
+		 ORDER BY (credit_score IS NOT NULL) DESC, id DESC
 		 LIMIT 1`, accountID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound

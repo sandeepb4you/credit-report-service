@@ -117,6 +117,11 @@ type ReportPage struct {
 	Total int64           `json:"total"`
 }
 
+// reportFreshWindow is how long a bureau pull is treated as current. Bureaus
+// refresh on roughly monthly lender-reporting cycles, so a report older than
+// this may already be describing a file that has moved on.
+const reportFreshWindow = 30 * 24 * time.Hour
+
 // ReportInsights is the derived analytics from the latest successful credit
 // report: the bureau credit score, on-time payment percentage, card
 // utilization percentage, and enquiry count for the past 180 days.
@@ -126,12 +131,18 @@ type ReportInsights struct {
 	OnTimePaymentPercent   float64 `json:"onTimePaymentPercent"`
 	CardUtilizationPercent float64 `json:"cardUtilizationPercent"`
 	EnquiryCount180Days    int64   `json:"enquiryCount180Days"`
-	Outdated               bool    `json:"outdated"`
-	TotalAccountCount      int64   `json:"totalAccountCount"`
-	ActiveAccountCount     int64   `json:"activeAccountCount"`
-	TotalOutstandingAmount float64 `json:"totalOutstandingAmount"`
-	MonthlyEMI             float64 `json:"monthlyEmi"`
-	InterestPaidPerYear    float64 `json:"interestPaidPerYear"`
+	// Outdated is true once the report is older than reportFreshWindow. Clients
+	// must drive "time to refresh" off this flag rather than re-deriving it from
+	// CreatedAt: the window is a product decision, and two implementations of it
+	// would eventually disagree about whether the same report is stale.
+	Outdated bool `json:"outdated"`
+	// CreatedAt is when the bureau pull ran — what a client shows as "checked on".
+	CreatedAt              time.Time `json:"createdAt"`
+	TotalAccountCount      int64     `json:"totalAccountCount"`
+	ActiveAccountCount     int64     `json:"activeAccountCount"`
+	TotalOutstandingAmount float64   `json:"totalOutstandingAmount"`
+	MonthlyEMI             float64   `json:"monthlyEmi"`
+	InterestPaidPerYear    float64   `json:"interestPaidPerYear"`
 	// DerogatoryAccounts counts written-off / settled / defaulted tradelines —
 	// the serious negatives the "good news" diagnosis checks for.
 	DerogatoryAccounts int           `json:"derogatoryAccounts"`
@@ -252,9 +263,14 @@ type CardFactor struct {
 // upstream file is often sparse on these), which downstream consumers such as
 // the switch optimizer must treat as "unknown", not as a real zero.
 type LoanAccount struct {
-	AccountNumber         string         `json:"accountNumber"`
-	LoanType              string         `json:"loanType"`
-	Company               string         `json:"company"`
+	AccountNumber string `json:"accountNumber"`
+	LoanType      string `json:"loanType"`
+	Company       string `json:"company"`
+	// Active mirrors isActiveStatus on this tradeline's Account_Status — the same
+	// test that produces ActiveAccountCount, so the per-account flag and the
+	// summary count can never disagree. Clients split "current" from "closed
+	// history" on this; without it every account reads as closed.
+	Active                bool           `json:"active"`
 	PercentagePaid        float64        `json:"percentagePaid"`
 	InterestRatePercent   float64        `json:"interestRatePercent"`
 	TotalTenureMonths     int64          `json:"totalTenureMonths"`
@@ -1071,7 +1087,8 @@ func insightsFromReportRow(row *models.CreditAnalyticsRequest) (*ReportInsights,
 	if insights.CreditScore == nil {
 		insights.CreditScore = extractBureauScore(row.ResponseBody)
 	}
-	insights.Outdated = time.Since(row.CreatedAt) > 30*24*time.Hour
+	insights.CreatedAt = row.CreatedAt
+	insights.Outdated = time.Since(row.CreatedAt) > reportFreshWindow
 	return insights, nil
 }
 
@@ -1411,6 +1428,7 @@ func parseReportInsights(raw json.RawMessage) (*ReportInsights, error) {
 			AccountNumber:         acct.AccountNumber,
 			LoanType:              loanTypeFor(acct.AccountType),
 			Company:               acct.SubscriberName,
+			Active:                isActiveStatus(acct.AccountStatus),
 			PercentagePaid:        pctPaid,
 			InterestRatePercent:   atofSafe(acct.RateOfInterest),
 			TotalTenureMonths:     totalTenure,

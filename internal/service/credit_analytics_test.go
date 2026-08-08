@@ -348,6 +348,31 @@ func TestParseReportInsights_AccountCountsAndOutstanding(t *testing.T) {
 	if insights.TotalOutstandingAmount != 80000 {
 		t.Errorf("totalOutstandingAmount = %.2f, want 80000.00", insights.TotalOutstandingAmount)
 	}
+
+	// The per-account flag must agree with the summary count. It didn't before —
+	// LoanAccount had no Active field at all, so every tradeline decoded as
+	// closed on the client and the whole portfolio hid behind "show closed
+	// accounts" while the header above it still claimed 2 of 3 active.
+	if len(insights.LoanAccounts) != 3 {
+		t.Fatalf("loanAccounts = %d, want 3", len(insights.LoanAccounts))
+	}
+	var flaggedActive int64
+	for _, acct := range insights.LoanAccounts {
+		if acct.Active {
+			flaggedActive++
+		}
+	}
+	if flaggedActive != insights.ActiveAccountCount {
+		t.Errorf("LoanAccounts with Active=true = %d, want %d (must match activeAccountCount)",
+			flaggedActive, insights.ActiveAccountCount)
+	}
+	// Order follows the payload: the two "11" rows are active, the "00" row is not.
+	for i, want := range []bool{true, true, false} {
+		if insights.LoanAccounts[i].Active != want {
+			t.Errorf("loanAccounts[%d].Active = %v, want %v",
+				i, insights.LoanAccounts[i].Active, want)
+		}
+	}
 }
 
 func TestParseReportInsights_EMIAndInterest(t *testing.T) {
