@@ -47,9 +47,16 @@ type pdfJob struct {
 // It is best-effort: Submit never blocks (drops + logs if the buffer is full),
 // and process never propagates errors to a caller — failures just leave the
 // row's result_pdf_url null.
+// pdfWriter is the repository seam the uploader needs. Narrowed to the one
+// write method so the relay can be tested against a fake without a database;
+// *repository.CreditAnalyticsRepo satisfies it at runtime.
+type pdfWriter interface {
+	SetResultPDFURL(ctx context.Context, id int64, url string) error
+}
+
 type ReportUploader struct {
 	client *utho.Client
-	repo   *repository.CreditAnalyticsRepo
+	repo   pdfWriter
 	bucket string
 	jobs   chan pdfJob
 	wg     sync.WaitGroup

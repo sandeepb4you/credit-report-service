@@ -1509,3 +1509,70 @@ func TestParseReportInsights_DerogatoryCount(t *testing.T) {
 		t.Errorf("want 2 derogatory (written-off + settled), got %d", ins.DerogatoryAccounts)
 	}
 }
+
+// TestExtractResultPDF covers the defensive location checks for the result_pdf
+// field: top-level of the stored result object, nested under
+// result_json.INProfileResponse, and inside the full upstream envelope. Mirrors
+// the extractBureauScore testing style.
+func TestExtractResultPDF(t *testing.T) {
+	const want = "https://credit-analytics-env.example/123/report.pdf"
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "top-level of result object",
+			raw:  `{"result_pdf":"` + want + `","result_json":{"INProfileResponse":{}}}`,
+			want: want,
+		},
+		{
+			name: "nested under result_json.INProfileResponse",
+			raw:  `{"result_json":{"INProfileResponse":{"result_pdf":"` + want + `"}}}`,
+			want: want,
+		},
+		{
+			name: "full envelope: result.result_pdf at top level",
+			raw:  `{"http_response_code":200,"result":{"result_pdf":"` + want + `","result_json":{}}}`,
+			want: want,
+		},
+		{
+			name: "full envelope: result.result_json.INProfileResponse.result_pdf",
+			raw:  `{"result":{"result_json":{"INProfileResponse":{"result_pdf":"` + want + `"}}}}`,
+			want: want,
+		},
+		{
+			name: "absent -> empty",
+			raw:  `{"result_json":{"INProfileResponse":{"SCORE":{"BureauScore":"700"}}}}`,
+			want: "",
+		},
+		{
+			name: "empty string value -> empty",
+			raw:  `{"result_pdf":""}`,
+			want: "",
+		},
+		{
+			name: "whitespace-only value -> empty",
+			raw:  `{"result_pdf":"   "}`,
+			want: "",
+		},
+		{
+			name: "not json -> empty (no panic)",
+			raw:  `not-json`,
+			want: "",
+		},
+		{
+			name: "empty input -> empty",
+			raw:  ``,
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractResultPDF(json.RawMessage(tc.raw))
+			if got != tc.want {
+				t.Errorf("extractResultPDF = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
