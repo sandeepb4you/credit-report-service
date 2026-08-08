@@ -24,13 +24,13 @@ func NewCreditAnalyticsHandler(svc *service.CreditAnalyticsService) *CreditAnaly
 // Request godoc
 //
 // @Summary      Request a credit analysis from Digitap
-// @Description  Builds the Digitap /credit_analytics/request payload from the authenticated account's profile and KYC record (mobile, name, PAN), plus server-generated values (client_ref_num, otp, timestamp), then persists the request and full upstream response and returns the stored row. Only device_ip is taken from the request body; if omitted it falls back to the detected remote IP.
+// @Description  Builds the Digitap /credit_analytics/request payload from the authenticated account's profile and KYC record (mobile, name, PAN), plus server-generated values (client_ref_num, otp, timestamp), then persists the request and full upstream response and returns the derived analytics (insights) computed from that response — bureau score, on-time payment %, card utilization %, enquiry count, account summary, report card, interest-reduction opportunities, recommendations, and a score-builder block. Only device_ip is taken from the request body; if omitted it falls back to the detected remote IP. Use /reports/{id}/raw to fetch the unprocessed Digitap response.
 // @Tags         credit-analytics
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
 // @Param        request  body      service.CreditAnalyticsInput  false  "Credit-analytics request (device_ip optional; defaults to the caller's IP)"
-// @Success      201      {object}  models.CreditAnalyticsRequest
+// @Success      201      {object}  service.ReportInsights
 // @Failure      400      {object}  apperr.ErrorBody  "Invalid request body / missing profile or PAN / upstream 400"
 // @Failure      401      {object}  apperr.ErrorBody  "Not authenticated / upstream 401"
 // @Failure      422      {object}  apperr.ErrorBody  "Upstream tradeline limit exceeded"
@@ -61,7 +61,13 @@ func (h *CreditAnalyticsHandler) Request(c *fiber.Ctx) error {
 		}
 		return err
 	}
-	return c.Status(fiber.StatusCreated).JSON(row)
+	// Return the derived analytics rather than the raw Digitap row, so a client
+	// gets the same insights shape from this endpoint as from /reports/{id}.
+	insights, err := h.svc.ReportInsightsFromRow(c.Context(), row)
+	if err != nil {
+		return err
+	}
+	return c.Status(fiber.StatusCreated).JSON(insights)
 }
 
 // ListReports godoc

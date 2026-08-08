@@ -1,0 +1,83 @@
+
+server:
+  port: 8080
+
+db:
+  # Postgres URL (pgx-native). Override via DB_URL env var.
+  url: "postgres://USER:PASSWORD@HOST:5432/credit?sslmode=require&search_path=report"
+  max-pool-size: 10
+  min-idle: 2
+
+mail:
+  host: ""        # empty -> log-only stub (OTP printed to stdout)
+  port: 587
+  username: ""
+  password: ""
+  from: "Scorr.club <noreply@scorr.club>"
+
+auth:
+  # HS256 signing secret for login JWTs. OVERRIDE in prod via AUTH_JWT_SECRET.
+  jwt-secret: ""
+  # Access JWT lifetime = the revocation lag. Keep it SHORT in production
+  # (clients refresh silently on 401); 1 week here for convenient dev/testing.
+  access-ttl: 168h   # 1 week
+  # Refresh token lifetime: how long a device stays signed in without re-login.
+  refresh-ttl: 720h  # 30 days
+  otp:
+    length: 6
+    ttl: 10m
+    resend-cooldown: 30s
+    max-attempts: 5
+    max-sends: 5
+
+multipart:
+  max-file-size: 5MB
+  max-request-size: 10MB
+
+registration:
+  pan-image-dir: ./data/pan-images
+  otp:
+    length: 6
+    ttl: 5m
+    resend-cooldown: 30s
+    max-attempts: 5
+    max-sends: 5
+  pan:
+    name-match-distance: 2
+  ocr:
+    provider: stub          # stub | google-vision
+    min-confidence: 0.8
+
+digitap:
+  # Digitap Credit Analytics API (spec V2.7). Override credentials via env:
+  #   DIGITAP_CLIENT_ID, DIGITAP_CLIENT_SECRET
+  # When client-id is empty, the service runs the upstream client in an offline
+  # stub mode (no outbound HTTP) so the build/tests work without credentials.
+  # client-id: ""
+  # client-secret: ""
+  base-url: https://apidemo.digitap.work/
+  client-id: ""
+  client-secret: ""
+  timeout: 30s
+
+cashfree:
+  mode: sandbox            # sandbox | production
+  # Credentials from the Cashfree merchant dashboard. OVERRIDE in prod via
+  # CASHFREE_CLIENT_ID / CASHFREE_CLIENT_SECRET env vars. Empty client-id ->
+  # log-only stub gateway (no real Cashfree calls; dev fallback).
+  client-id: ""
+  client-secret: ""
+  api-version: "2025-01-01"
+  # Browser redirect after payment; "{order_id}" is replaced with our order uid.
+  return-url: "http://localhost:3000/payment/result?order_id={order_id}"
+  # Public HTTPS URL of POST /api/payments/cashfree/webhook. Empty -> webhooks
+  # must be configured in the Cashfree dashboard instead.
+  notify-url: ""
+  timeout: 15s
+
+demo:
+  # Dev convenience: auto-verify a submitted PAN (status VERIFIED) so the
+  # credit-analytics flow can be exercised without the external KYC provider or
+  # the admin verify step. Enabled here for local dev; MUST stay false in
+  # production. Override via DEMO_ENABLED.
+  enabled: true

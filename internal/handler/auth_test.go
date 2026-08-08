@@ -703,13 +703,23 @@ func TestRequireAuth_InvalidScheme(t *testing.T) {
 type stubMailer struct {
 	lastOTP   string
 	lastDest  string
+	lastKind  string // "signup" | "password_reset"
 	sendErr   error
 	sentCount int
 }
 
 func (m *stubMailer) SendOTP(dest, otp string) error {
+	return m.record(dest, otp, "signup")
+}
+
+func (m *stubMailer) SendPasswordResetOTP(dest, otp string) error {
+	return m.record(dest, otp, "password_reset")
+}
+
+func (m *stubMailer) record(dest, otp, kind string) error {
 	m.lastDest = dest
 	m.lastOTP = otp
+	m.lastKind = kind
 	m.sentCount++
 	return m.sendErr
 }
@@ -727,6 +737,17 @@ func TestStubMailer_Records(t *testing.T) {
 	}
 	if m.sentCount != 1 {
 		t.Errorf("sentCount = %d, want 1", m.sentCount)
+	}
+	if m.lastKind != "signup" {
+		t.Errorf("lastKind = %q, want %q", m.lastKind, "signup")
+	}
+	// A reset code must be distinguishable from a signup code, or the stub can
+	// satisfy the Mailer interface while the user gets the wrong email.
+	if err := m.SendPasswordResetOTP("a@b.com", "654321"); err != nil {
+		t.Fatal(err)
+	}
+	if m.lastKind != "password_reset" || m.lastOTP != "654321" {
+		t.Errorf("lastKind=%q lastOTP=%q", m.lastKind, m.lastOTP)
 	}
 }
 

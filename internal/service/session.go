@@ -190,6 +190,24 @@ func (s *SessionService) Revoke(ctx context.Context, accountID, sessionID int64,
 	return nil
 }
 
+// RevokeAllForAccount signs the account out of every device, including the one
+// making the request. Unlike RevokeOthers this is not a user-initiated device
+// cleanup but a security action (see models.RevokePasswordReset), so the caller
+// supplies the reason that will be recorded on each row.
+//
+// Access tokens already minted stay valid until they expire — revocation acts
+// on the refresh half of the pair, as everywhere else in this service.
+func (s *SessionService) RevokeAllForAccount(
+	ctx context.Context, accountID int64, reason string,
+) (int64, error) {
+	n, err := s.repo.RevokeAll(ctx, accountID, 0, reason)
+	if err != nil {
+		return 0, err
+	}
+	slog.Info("all sessions revoked", "account_id", accountID, "count", n, "reason", reason)
+	return n, nil
+}
+
 // RevokeOthers signs the account out everywhere except keepID (0 revokes all).
 func (s *SessionService) RevokeOthers(ctx context.Context, accountID, keepID int64) (int64, error) {
 	n, err := s.repo.RevokeAll(ctx, accountID, keepID, models.RevokeAllOthers)

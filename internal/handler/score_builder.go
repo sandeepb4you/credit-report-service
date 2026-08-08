@@ -227,10 +227,15 @@ func (h *ScoreBuilderHandler) Simulate(c *fiber.Ctx) error {
 	// `actions` is optional: when absent the service selects all positive
 	// actions by default; when present (even if empty) the caller has taken
 	// control of the selection.
+	//
+	// Presence is tested on the raw query args, not on the parsed value: an empty
+	// `?actions=` is a client that unselected everything, and treating it as
+	// "absent" would hand back the default all-positive projection — the one
+	// answer the user just said they didn't want.
 	var selected map[string]bool
-	if raw := strings.TrimSpace(c.Query("actions")); raw != "" {
+	if c.Context().QueryArgs().Has("actions") {
 		selected = map[string]bool{}
-		for _, k := range strings.Split(raw, ",") {
+		for _, k := range strings.Split(c.Query("actions"), ",") {
 			if k = strings.TrimSpace(k); k != "" {
 				selected[k] = true
 			}

@@ -306,7 +306,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("auth.cookie-secure", true)
 	v.SetDefault("auth.otp.length", 6)
 	v.SetDefault("auth.otp.ttl", "10m")
-	v.SetDefault("auth.otp.resend-cooldown", "60s")
+	v.SetDefault("auth.otp.resend-cooldown", "30s")
 	v.SetDefault("auth.otp.max-attempts", 5)
 	v.SetDefault("auth.otp.max-sends", 5)
 	// Admin allowlist: accounts whose email matches get role=admin at verify/login.
@@ -322,7 +322,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("registration.pan-image-dir", "./data/pan-images")
 	v.SetDefault("registration.otp.length", 6)
 	v.SetDefault("registration.otp.ttl", "5m")
-	v.SetDefault("registration.otp.resend-cooldown", "60s")
+	v.SetDefault("registration.otp.resend-cooldown", "30s")
 	v.SetDefault("registration.otp.max-attempts", 5)
 	v.SetDefault("registration.otp.max-sends", 5)
 	v.SetDefault("registration.pan.name-match-distance", 2)

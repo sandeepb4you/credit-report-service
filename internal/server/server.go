@@ -103,6 +103,12 @@ func New(
 	a.Post("/otp/resend", auth.ResendOTP)
 	a.Post("/login", auth.Login)
 	a.Post("/google", auth.GoogleLogin)
+	// Forgot-password: email a code, exchange the code for a single-use reset
+	// token, redeem the token for a new password. Public by necessity — the
+	// caller cannot sign in, which is the whole point.
+	a.Post("/password/forgot", auth.ForgotPassword)
+	a.Post("/password/verify-otp", auth.VerifyPasswordResetOTP)
+	a.Post("/password/reset", auth.ResetPassword)
 	// Refresh is public: the refresh token (body for mobile, httpOnly cookie
 	// for web) is itself the credential, and the expired access token that
 	// prompted the call would fail RequireAuth.

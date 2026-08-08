@@ -210,6 +210,22 @@ type Profile struct {
 	KYC KYCStatus `json:"kyc"`
 }
 
+// PasswordResetToken is the row model for the password_reset_tokens table: the
+// single-use grant minted once a "forgot password" OTP has been verified, and
+// redeemed to actually change the password.
+//
+// TokenHash is a SHA-256 hex digest, never the token itself — the plaintext
+// exists only in the response that hands it to the client, so it can never be
+// recovered from the database or re-shown.
+type PasswordResetToken struct {
+	ID         int64      `json:"id"         db:"id"`
+	AccountID  int64      `json:"accountId"  db:"account_id"`
+	TokenHash  string     `json:"-"          db:"token_hash"`
+	ExpiresAt  time.Time  `json:"expiresAt"  db:"expires_at"`
+	ConsumedAt *time.Time `json:"-"          db:"consumed_at"`
+	CreatedAt  time.Time  `json:"createdAt"  db:"created_at"`
+}
+
 // OtpChallenge is the row model for the otp_challenges table: a transient
 // one-time-password verification for an email or phone destination.
 type OtpChallenge struct {

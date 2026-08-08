@@ -428,14 +428,27 @@ func (s *AuthService) SetRole(ctx context.Context, accountID int64, role string)
 func (s *AuthService) issueAndSend(ctx context.Context, accountID *int64, destination, purpose string) error {
 	ch, err := s.accounts.FindActiveChallenge(ctx, destination, purpose)
 	if errors.Is(err, repository.ErrNotFound) {
+		ch = nil
+	} else if err != nil {
+		return err
+	}
+
+	// An expired challenge is finished even though nobody consumed it, so the
+	// next request starts a fresh one. Reusing it would carry its exhausted
+	// send_count forward and lock the destination out permanently: OTPService
+	// says "start over", but FindActiveChallenge would keep returning the same
+	// dead row, and password reset has no other route back into the account.
+	// The limit is therefore per OTP lifetime, not per address forever.
+	if ch != nil && ch.ExpiresAt != nil && ch.ExpiresAt.Before(time.Now().UTC()) {
+		ch = nil
+	}
+	if ch == nil {
 		ch = &models.OtpChallenge{
 			AccountID:   accountID,
 			Channel:     models.ChannelEmail,
 			Destination: destination,
 			Purpose:     purpose,
 		}
-	} else if err != nil {
-		return err
 	}
 
 	plain, err := s.otp.Issue(ch)
@@ -461,6 +474,10 @@ func (s *AuthService) issueAndSend(ctx context.Context, accountID *int64, destin
 		return err
 	}
 
+	// The code is identical; only the copy differs. See Mailer.
+	if purpose == models.OtpPurposeReset {
+		return s.mailer.SendPasswordResetOTP(destination, plain)
+	}
 	return s.mailer.SendOTP(destination, plain)
 }
 

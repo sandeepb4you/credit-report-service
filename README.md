@@ -96,6 +96,9 @@ All routes are under `/api`. 🔒 = requires `Authorization: Bearer <jwt>`.
 | POST   | `/api/auth/verify-email`                   |          | Verify OTP, activate account, return JWT     |
 | POST   | `/api/auth/otp/resend`                     |          | Resend signup OTP                            |
 | POST   | `/api/auth/login`                          |          | Email + password login, return JWT           |
+| POST   | `/api/auth/password/forgot`                |          | Email a password-reset OTP                   |
+| POST   | `/api/auth/password/verify-otp`            |          | Reset OTP → single-use `resetToken`          |
+| POST   | `/api/auth/password/reset`                 |          | Set a new password, sign out every device    |
 | GET    | `/api/profile`                             | 🔒       | Get current account                          |
 | PUT    | `/api/profile`                             | 🔒       | Update first/last name, DOB                  |
 | GET    | `/api/credit-reports`                      | 🔒       | List all                                     |
@@ -112,6 +115,26 @@ All routes are under `/api`. 🔒 = requires `Authorization: Bearer <jwt>`.
    activates the account, and returns `{token, expiresAt, account}`.
 3. Use the `token` as `Authorization: Bearer <token>` for protected routes.
    `POST /api/auth/login` re-issues a token for a verified account.
+
+## Forgot password
+
+1. `POST /api/auth/password/forgot` with `{email}` — emails a reset OTP. It answers
+   `200` even when no account exists, so the endpoint cannot be used to discover which
+   addresses are registered; client copy therefore has to be conditional ("if that
+   email has an account…"). Call it again to resend, subject to the same
+   `auth.otp.resend-cooldown` (30s) and `max-sends` as signup.
+2. `POST /api/auth/password/verify-otp` with `{email, otp}` — consumes the code and
+   returns `{resetToken, expiresAt}`: a single-use, 15-minute grant. It exists so the
+   client can move to a "choose a password" screen without holding a live OTP for as
+   long as the user takes to type one.
+3. `POST /api/auth/password/reset` with `{email, resetToken, password}` — writes the
+   new password, burns the grant, and revokes **every** session (`revoked_reason =
+   'password_reset'`). The user signs in again; already-issued access tokens keep
+   working until they expire, as everywhere else in this service.
+
+Only verified email+password identities can reset. A Google-only account has no
+password to reset and an unverified signup is finished with the signup OTP instead —
+both get the same non-committal `200`.
 
 ## OCR providers
 

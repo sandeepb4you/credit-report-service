@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/georgysavva/scany/v2/pgxscan"
 	"github.com/jackc/pgx/v5"
@@ -222,6 +223,74 @@ func (r *AccountRepo) UpdateChallenge(ctx context.Context, tx pgx.Tx, c *models.
 		 WHERE id = $1`,
 		c.ID, c.OTPHash, c.ExpiresAt, c.Attempts, c.SendCount, c.LastSentAt, c.ConsumedAt,
 	)
+	return err
+}
+
+// ---- password_reset_tokens ----------------------------------------------
+
+const passwordResetCols = `id, account_id, token_hash, expires_at, consumed_at, created_at`
+
+// CreatePasswordResetToken stores the digest of a freshly minted reset grant.
+func (r *AccountRepo) CreatePasswordResetToken(
+	ctx context.Context, tx pgx.Tx, accountID int64, tokenHash string, expiresAt time.Time,
+) (*models.PasswordResetToken, error) {
+	var t models.PasswordResetToken
+	row := tx.QueryRow(ctx,
+		`INSERT INTO password_reset_tokens (account_id, token_hash, expires_at)
+		 VALUES ($1, $2, $3)
+		 RETURNING `+passwordResetCols,
+		accountID, tokenHash, expiresAt)
+	if err := row.Scan(&t.ID, &t.AccountID, &t.TokenHash,
+		&t.ExpiresAt, &t.ConsumedAt, &t.CreatedAt); err != nil {
+		return nil, classifyPgErr(err)
+	}
+	return &t, nil
+}
+
+// FindLivePasswordResetToken returns the unconsumed, unexpired grant holding
+// this digest, or ErrNotFound. Callers must not distinguish the two cases to
+// the client: "wrong token", "already used" and "expired" all mean the same
+// thing to the user — start over.
+func (r *AccountRepo) FindLivePasswordResetToken(
+	ctx context.Context, tokenHash string,
+) (*models.PasswordResetToken, error) {
+	var t models.PasswordResetToken
+	err := pgxscan.Get(ctx, r.pool, &t,
+		`SELECT `+passwordResetCols+` FROM password_reset_tokens
+		  WHERE token_hash = $1 AND consumed_at IS NULL AND expires_at > now()`,
+		tokenHash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &t, err
+}
+
+// ConsumePasswordResetToken burns a grant. The compare-and-set on consumed_at
+// makes redemption single-use under concurrency: only the first caller sees a
+// row affected, the loser gets ErrNotFound instead of a second password change.
+func (r *AccountRepo) ConsumePasswordResetToken(ctx context.Context, tx pgx.Tx, id int64) error {
+	tag, err := tx.Exec(ctx,
+		`UPDATE password_reset_tokens SET consumed_at = now()
+		  WHERE id = $1 AND consumed_at IS NULL`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// InvalidatePasswordResetTokens burns every outstanding grant for an account,
+// so only the newest one is ever redeemable. Called both when issuing a new
+// grant and after a successful reset — a password change must not leave an
+// older grant alive to change it again.
+func (r *AccountRepo) InvalidatePasswordResetTokens(
+	ctx context.Context, tx pgx.Tx, accountID int64,
+) error {
+	_, err := tx.Exec(ctx,
+		`UPDATE password_reset_tokens SET consumed_at = now()
+		  WHERE account_id = $1 AND consumed_at IS NULL`, accountID)
 	return err
 }
 

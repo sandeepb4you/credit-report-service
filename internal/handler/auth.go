@@ -194,6 +194,128 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 	return h.respondAuth(c, res, middleware.Device(c).IsWeb())
 }
 
+// ---- POST /api/auth/password/forgot --------------------------------------
+
+type forgotPasswordReq struct {
+	Email string `json:"email" example:"user@example.com"`
+}
+
+// forgotPasswordMsg is returned whether or not the address has an account —
+// see AuthService.ForgotPassword. It is phrased so that it is true either way.
+const forgotPasswordMsg = "If that email has an account, a reset code is on its way"
+
+// ForgotPassword godoc
+//
+// @Summary      Start a password reset
+// @Description  Emails a one-time code to a verified email+password account. Returns the same 200 for an address with no account, so the endpoint cannot be used to discover which emails are registered. Call again to resend, subject to the same cooldown / send limits as signup.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        request  body      forgotPasswordReq  true  "Account email"
+// @Success      200      {object}  map[string]string  "{\"message\": \"If that email has an account, a reset code is on its way\"}"
+// @Failure      400      {object}  apperr.ErrorBody  "Validation failed"
+// @Failure      409      {object}  apperr.ErrorBody  "Resend cooldown / send limit reached"
+// @Router       /auth/password/forgot [post]
+func (h *AuthHandler) ForgotPassword(c *fiber.Ctx) error {
+	var req forgotPasswordReq
+	if err := c.BodyParser(&req); err != nil {
+		return apperr.NewValidation("invalid JSON body")
+	}
+	req.Email = strings.TrimSpace(req.Email)
+	if !looksLikeEmail(req.Email) {
+		return apperr.NewValidationWith("Validation failed",
+			map[string]string{"email": "email must be valid"})
+	}
+	if err := h.svc.ForgotPassword(c.Context(), req.Email); err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"message": forgotPasswordMsg})
+}
+
+// ---- POST /api/auth/password/verify-otp ----------------------------------
+
+type verifyResetOtpReq struct {
+	Email string `json:"email" example:"user@example.com"`
+	OTP   string `json:"otp"   example:"123456"`
+}
+
+// VerifyPasswordResetOTP godoc
+//
+// @Summary      Verify a password-reset code
+// @Description  Checks the code emailed by POST /auth/password/forgot and returns a single-use `resetToken`, which POST /auth/password/reset redeems to set the new password. The code is consumed here — a wrong code counts against the same attempt limit as signup verification.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        request  body      verifyResetOtpReq  true  "Email + OTP"
+// @Success      200      {object}  service.PasswordResetGrant
+// @Failure      400      {object}  apperr.ErrorBody  "Wrong / expired / locked OTP"
+// @Failure      404      {object}  apperr.ErrorBody  "No account found for this email"
+// @Router       /auth/password/verify-otp [post]
+func (h *AuthHandler) VerifyPasswordResetOTP(c *fiber.Ctx) error {
+	var req verifyResetOtpReq
+	if err := c.BodyParser(&req); err != nil {
+		return apperr.NewValidation("invalid JSON body")
+	}
+	req.Email = strings.TrimSpace(req.Email)
+	req.OTP = strings.TrimSpace(req.OTP)
+
+	var details map[string]string
+	if !looksLikeEmail(req.Email) {
+		details = setDetail(details, "email", "email must be valid")
+	}
+	if !otpCodeRE.MatchString(req.OTP) {
+		details = setDetail(details, "otp", "otp must be 4-8 digits")
+	}
+	if len(details) > 0 {
+		return apperr.NewValidationWith("Validation failed", details)
+	}
+
+	grant, err := h.svc.VerifyPasswordResetOTP(c.Context(), req.Email, req.OTP)
+	if err != nil {
+		return err
+	}
+	return c.JSON(grant)
+}
+
+// ---- POST /api/auth/password/reset ---------------------------------------
+
+type resetPasswordReq struct {
+	Email      string `json:"email"      example:"user@example.com"`
+	ResetToken string `json:"resetToken" example:"prt_8Kd2..."`
+	Password   string `json:"password"   example:"newhunter2pass"`
+}
+
+// ResetPassword godoc
+//
+// @Summary      Set a new password with a verified reset token
+// @Description  Redeems the single-use `resetToken` from POST /auth/password/verify-otp and writes the new password. Every signed-in device is then signed out, so the caller must log in again with the new password. The token is spent whether or not the caller keeps the response.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        request  body      resetPasswordReq  true  "Email + reset token + new password"
+// @Success      200      {object}  map[string]string  "{\"message\": \"Password updated. Please sign in.\"}"
+// @Failure      400      {object}  apperr.ErrorBody  "Validation failed (password too short/long)"
+// @Failure      401      {object}  apperr.ErrorBody  "Reset token is unknown, expired or already used"
+// @Router       /auth/password/reset [post]
+func (h *AuthHandler) ResetPassword(c *fiber.Ctx) error {
+	var req resetPasswordReq
+	if err := c.BodyParser(&req); err != nil {
+		return apperr.NewValidation("invalid JSON body")
+	}
+	req.Email = strings.TrimSpace(req.Email)
+	if !looksLikeEmail(req.Email) {
+		return apperr.NewValidationWith("Validation failed",
+			map[string]string{"email": "email must be valid"})
+	}
+	// Password rules live in the service (one place for signup and reset
+	// alike); the token is validated by lookup, so nothing else to check here.
+	if err := h.svc.ResetPassword(
+		c.Context(), req.Email, req.ResetToken, req.Password); err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"message": "Password updated. Please sign in."})
+}
+
 // ---- POST /api/auth/google -----------------------------------------------
 
 type googleLoginReq struct {

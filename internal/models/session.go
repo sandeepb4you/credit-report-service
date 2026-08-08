@@ -18,6 +18,10 @@ const (
 	RevokeAllOthers  = "logout_all"  // user signed out everywhere else
 	RevokeTokenReuse = "token_reuse" // a rotated refresh token was replayed
 	RevokeRoleChange = "role_change" // privileges changed; force re-auth
+	// RevokePasswordReset marks the sign-outs caused by a completed password
+	// reset. A reset is the standard response to "someone else may have my
+	// password", so every device is signed out, not just the other ones.
+	RevokePasswordReset = "password_reset"
 )
 
 // DeviceInfo is the per-request device metadata recorded on a session.

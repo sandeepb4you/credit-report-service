@@ -17,6 +17,12 @@ import (
 // swapped in for tests / local dev (when SMTP host is empty).
 type Mailer interface {
 	SendOTP(toEmail, otp string) error
+	// SendPasswordResetOTP delivers the same kind of code for a different
+	// reason. It is a separate method rather than a flag because the copy has
+	// to say "someone asked to reset your password" — a user who did not ask
+	// needs to recognise that from the subject line, not discover it after
+	// opening a mail that looks like a routine signup verification.
+	SendPasswordResetOTP(toEmail, otp string) error
 }
 
 // MailService is the SMTP-backed Mailer. When Host is empty, it logs the OTP
@@ -36,6 +42,18 @@ func NewMailService(cfg config.MailConfig, otpValidity time.Duration) *MailServi
 }
 
 func (m *MailService) SendOTP(toEmail, otp string) error {
+	return m.sendOTP(toEmail, otp, otpKindSignup)
+}
+
+func (m *MailService) SendPasswordResetOTP(toEmail, otp string) error {
+	return m.sendOTP(toEmail, otp, otpKindPasswordReset)
+}
+
+// sendOTP is the one delivery path for every code this service mails. kind
+// selects the subject and body copy; everything else — the dev stub, the
+// PII-free logging, the multipart assembly — is identical and must stay that
+// way, so a new kind cannot accidentally start logging an address.
+func (m *MailService) sendOTP(toEmail, otp string, kind otpKind) error {
 	validMins := int(m.otpValidity.Round(time.Minute).Minutes())
 	if validMins < 1 {
 		validMins = 1
@@ -46,12 +64,13 @@ func (m *MailService) SendOTP(toEmail, otp string) error {
 		// the recipient — never the OTP or the email address.
 		slog.Info("otp email stubbed (no SMTP configured)",
 			"recipient_hash", hashEmail(toEmail),
+			"purpose", kind.slug,
 			"valid_minutes", validMins,
 		)
 		return nil
 	}
 
-	htmlBody, textBody, err := renderOTPEmail(otp, validMins)
+	htmlBody, textBody, err := renderOTPEmail(otp, validMins, kind)
 	if err != nil {
 		return err
 	}
@@ -59,7 +78,7 @@ func (m *MailService) SendOTP(toEmail, otp string) error {
 	msg := mail.NewMessage()
 	msg.SetHeader("From", m.cfg.From)
 	msg.SetHeader("To", toEmail)
-	msg.SetHeader("Subject", fmt.Sprintf("Your %s verification code", brandName))
+	msg.SetHeader("Subject", fmt.Sprintf(kind.subject, brandName))
 	// Plain text as the main body, HTML as the alternative -> multipart/alternative.
 	msg.SetBody("text/plain", textBody)
 	msg.AddAlternative("text/html", htmlBody)
@@ -70,11 +89,13 @@ func (m *MailService) SendOTP(toEmail, otp string) error {
 		// scrub any occurrence of the address before logging.
 		slog.Error("otp email send failed",
 			"recipient_hash", hashEmail(toEmail),
+			"purpose", kind.slug,
 			"error", scrubEmail(err.Error(), toEmail),
 		)
 		return fmt.Errorf("send otp email: %w", err)
 	}
-	slog.Info("otp email dispatched", "recipient_hash", hashEmail(toEmail))
+	slog.Info("otp email dispatched",
+		"recipient_hash", hashEmail(toEmail), "purpose", kind.slug)
 	return nil
 }
 

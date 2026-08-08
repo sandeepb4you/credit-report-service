@@ -591,6 +591,13 @@ definitions:
       totalTenureMonths:
         type: integer
     type: object
+  credit-report-service_internal_service.PasswordResetGrant:
+    properties:
+      expiresAt:
+        type: string
+      resetToken:
+        type: string
+    type: object
   credit-report-service_internal_service.PaymentMonth:
     properties:
       daysLate:
@@ -1022,6 +1029,12 @@ definitions:
         example: CREDIT_ANALYSIS
         type: string
     type: object
+  internal_handler.forgotPasswordReq:
+    properties:
+      email:
+        example: user@example.com
+        type: string
+    type: object
   internal_handler.googleLoginReq:
     properties:
       idToken:
@@ -1122,6 +1135,18 @@ definitions:
         example: user@example.com
         type: string
     type: object
+  internal_handler.resetPasswordReq:
+    properties:
+      email:
+        example: user@example.com
+        type: string
+      password:
+        example: newhunter2pass
+        type: string
+      resetToken:
+        example: prt_8Kd2...
+        type: string
+    type: object
   internal_handler.setRoleReq:
     properties:
       role:
@@ -1177,6 +1202,15 @@ definitions:
         type: string
     type: object
   internal_handler.verifyEmailReq:
+    properties:
+      email:
+        example: user@example.com
+        type: string
+      otp:
+        example: "123456"
+        type: string
+    type: object
+  internal_handler.verifyResetOtpReq:
     properties:
       email:
         example: user@example.com
@@ -1991,6 +2025,110 @@ paths:
       summary: Resend signup verification OTP
       tags:
       - auth
+  /auth/password/forgot:
+    post:
+      consumes:
+      - application/json
+      description: Emails a one-time code to a verified email+password account. Returns
+        the same 200 for an address with no account, so the endpoint cannot be used
+        to discover which emails are registered. Call again to resend, subject to
+        the same cooldown / send limits as signup.
+      parameters:
+      - description: Account email
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.forgotPasswordReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{\"message\": \"If that email has an account, a reset code
+            is on its way\"}'
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "409":
+          description: Resend cooldown / send limit reached
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      summary: Start a password reset
+      tags:
+      - auth
+  /auth/password/reset:
+    post:
+      consumes:
+      - application/json
+      description: Redeems the single-use `resetToken` from POST /auth/password/verify-otp
+        and writes the new password. Every signed-in device is then signed out, so
+        the caller must log in again with the new password. The token is spent whether
+        or not the caller keeps the response.
+      parameters:
+      - description: Email + reset token + new password
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.resetPasswordReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{\"message\": \"Password updated. Please sign in.\"}'
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Validation failed (password too short/long)
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Reset token is unknown, expired or already used
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      summary: Set a new password with a verified reset token
+      tags:
+      - auth
+  /auth/password/verify-otp:
+    post:
+      consumes:
+      - application/json
+      description: Checks the code emailed by POST /auth/password/forgot and returns
+        a single-use `resetToken`, which POST /auth/password/reset redeems to set
+        the new password. The code is consumed here — a wrong code counts against
+        the same attempt limit as signup verification.
+      parameters:
+      - description: Email + OTP
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.verifyResetOtpReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_service.PasswordResetGrant'
+        "400":
+          description: Wrong / expired / locked OTP
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: No account found for this email
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      summary: Verify a password-reset code
+      tags:
+      - auth
   /auth/refresh:
     post:
       consumes:
@@ -2748,8 +2886,12 @@ paths:
       description: Builds the Digitap /credit_analytics/request payload from the authenticated
         account's profile and KYC record (mobile, name, PAN), plus server-generated
         values (client_ref_num, otp, timestamp), then persists the request and full
-        upstream response and returns the stored row. Only device_ip is taken from
-        the request body; if omitted it falls back to the detected remote IP.
+        upstream response and returns the derived analytics (insights) computed from
+        that response — bureau score, on-time payment %, card utilization %, enquiry
+        count, account summary, report card, interest-reduction opportunities, recommendations,
+        and a score-builder block. Only device_ip is taken from the request body;
+        if omitted it falls back to the detected remote IP. Use /reports/{id}/raw
+        to fetch the unprocessed Digitap response.
       parameters:
       - description: Credit-analytics request (device_ip optional; defaults to the
           caller's IP)
@@ -2763,7 +2905,7 @@ paths:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/credit-report-service_internal_models.CreditAnalyticsRequest'
+            $ref: '#/definitions/credit-report-service_internal_service.ReportInsights'
         "400":
           description: Invalid request body / missing profile or PAN / upstream 400
           schema:

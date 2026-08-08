@@ -39,7 +39,7 @@ auth:
   otp:
     length: 6
     ttl: 10m
-    resend-cooldown: 60s
+    resend-cooldown: 30s
     max-attempts: 5
     max-sends: 5
 
@@ -67,7 +67,7 @@ registration:
   otp:
     length: 6
     ttl: 5m
-    resend-cooldown: 60s
+    resend-cooldown: 30s
     max-attempts: 5
     max-sends: 5
   pan:

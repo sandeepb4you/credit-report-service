@@ -1199,6 +1199,150 @@ const docTemplate = `{
                 }
             }
         },
+        "/auth/password/forgot": {
+            "post": {
+                "description": "Emails a one-time code to a verified email+password account. Returns the same 200 for an address with no account, so the endpoint cannot be used to discover which emails are registered. Call again to resend, subject to the same cooldown / send limits as signup.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Start a password reset",
+                "parameters": [
+                    {
+                        "description": "Account email",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.forgotPasswordReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{\\\"message\\\": \\\"If that email has an account, a reset code is on its way\\\"}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Resend cooldown / send limit reached",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/password/reset": {
+            "post": {
+                "description": "Redeems the single-use ` + "`" + `resetToken` + "`" + ` from POST /auth/password/verify-otp and writes the new password. Every signed-in device is then signed out, so the caller must log in again with the new password. The token is spent whether or not the caller keeps the response.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Set a new password with a verified reset token",
+                "parameters": [
+                    {
+                        "description": "Email + reset token + new password",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.resetPasswordReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{\\\"message\\\": \\\"Password updated. Please sign in.\\\"}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed (password too short/long)",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Reset token is unknown, expired or already used",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/password/verify-otp": {
+            "post": {
+                "description": "Checks the code emailed by POST /auth/password/forgot and returns a single-use ` + "`" + `resetToken` + "`" + `, which POST /auth/password/reset redeems to set the new password. The code is consumed here — a wrong code counts against the same attempt limit as signup verification.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Verify a password-reset code",
+                "parameters": [
+                    {
+                        "description": "Email + OTP",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.verifyResetOtpReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_service.PasswordResetGrant"
+                        }
+                    },
+                    "400": {
+                        "description": "Wrong / expired / locked OTP",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No account found for this email",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/refresh": {
             "post": {
                 "description": "Rotates the refresh token and issues a fresh access token. Mobile clients send the token in the JSON body; web clients send nothing — the httpOnly ` + "`" + `refresh_token` + "`" + ` cookie is read automatically. The old refresh token is invalidated on every call, so replaying one revokes the whole session as a theft signal. Public endpoint: the refresh token itself is the credential.",
@@ -2283,7 +2427,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Builds the Digitap /credit_analytics/request payload from the authenticated account's profile and KYC record (mobile, name, PAN), plus server-generated values (client_ref_num, otp, timestamp), then persists the request and full upstream response and returns the stored row. Only device_ip is taken from the request body; if omitted it falls back to the detected remote IP.",
+                "description": "Builds the Digitap /credit_analytics/request payload from the authenticated account's profile and KYC record (mobile, name, PAN), plus server-generated values (client_ref_num, otp, timestamp), then persists the request and full upstream response and returns the derived analytics (insights) computed from that response — bureau score, on-time payment %, card utilization %, enquiry count, account summary, report card, interest-reduction opportunities, recommendations, and a score-builder block. Only device_ip is taken from the request body; if omitted it falls back to the detected remote IP. Use /reports/{id}/raw to fetch the unprocessed Digitap response.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2308,7 +2452,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_models.CreditAnalyticsRequest"
+                            "$ref": "#/definitions/credit-report-service_internal_service.ReportInsights"
                         }
                     },
                     "400": {
@@ -3688,6 +3832,17 @@ const docTemplate = `{
                 }
             }
         },
+        "credit-report-service_internal_service.PasswordResetGrant": {
+            "type": "object",
+            "properties": {
+                "expiresAt": {
+                    "type": "string"
+                },
+                "resetToken": {
+                    "type": "string"
+                }
+            }
+        },
         "credit-report-service_internal_service.PaymentMonth": {
             "type": "object",
             "properties": {
@@ -4285,6 +4440,15 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_handler.forgotPasswordReq": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "example": "user@example.com"
+                }
+            }
+        },
         "internal_handler.googleLoginReq": {
             "type": "object",
             "properties": {
@@ -4425,6 +4589,23 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_handler.resetPasswordReq": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "example": "user@example.com"
+                },
+                "password": {
+                    "type": "string",
+                    "example": "newhunter2pass"
+                },
+                "resetToken": {
+                    "type": "string",
+                    "example": "prt_8Kd2..."
+                }
+            }
+        },
         "internal_handler.setRoleReq": {
             "type": "object",
             "properties": {
@@ -4500,6 +4681,19 @@ const docTemplate = `{
             }
         },
         "internal_handler.verifyEmailReq": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "example": "user@example.com"
+                },
+                "otp": {
+                    "type": "string",
+                    "example": "123456"
+                }
+            }
+        },
+        "internal_handler.verifyResetOtpReq": {
             "type": "object",
             "properties": {
                 "email": {

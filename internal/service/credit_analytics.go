@@ -502,6 +502,20 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 	}
 }
 
+// ReportInsightsFromRow derives the analytics view from an already-persisted
+// report row (e.g. the one just written by Request) and enriches it with the
+// interest-reduction opportunities, recommendations, and score-builder block.
+// It mirrors GetReport but skips the DB lookup, so a freshly-generated report
+// can be returned as insights in the same call that created it.
+func (s *CreditAnalyticsService) ReportInsightsFromRow(ctx context.Context, row *models.CreditAnalyticsRequest) (*ReportInsights, error) {
+	insights, err := s.insightsFromRow(row)
+	if err != nil {
+		return nil, err
+	}
+	s.enrich(ctx, insights)
+	return insights, nil
+}
+
 // buildPayload assembles the Digitap request from the account's profile and KYC
 // record, generating the per-request correlation id, OTP, and timestamp.
 func (s *CreditAnalyticsService) buildPayload(ctx context.Context, accountID int64, deviceIP string) (*digitapPayload, error) {
