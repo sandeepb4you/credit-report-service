@@ -1,0 +1,52 @@
+# Production stack for the single EC2 box. Lives at /opt/scorr on the server
+# next to a filled-in .env (see .env.example). nginx on the host terminates TLS
+# and proxies api.myscorr.com to 127.0.0.1:8080.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: scorr
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      POSTGRES_DB: credit
+    # Loopback only: reachable from the host and over an SSH tunnel for admin
+    # work, but never from the internet. The api container uses the compose
+    # network (host "db"), not this binding.
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scorr -d credit"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  api:
+    image: ${ECR_REGISTRY:?set ECR_REGISTRY in .env}/scorr-api:${IMAGE_TAG:-latest}
+    ports:
+      - "127.0.0.1:8080:8080"
+    env_file: .env
+    environment:
+      # The app runs migrations against this on startup; the schema itself is
+      # created once by init/01-create-schema.sql.
+      DB_URL: postgres://scorr:${DB_PASSWORD}@db:5432/credit?sslmode=disable&search_path=report
+    volumes:
+      - pan-images:/app/data/pan-images
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    # The image logs to stdout only; without these opts the json-file driver
+    # never rotates (see the note at the top of the Dockerfile).
+    logging:
+      driver: json-file
+      options:
+        max-size: 50m
+        max-file: "5"
+
+volumes:
+  pgdata:
+  pan-images:

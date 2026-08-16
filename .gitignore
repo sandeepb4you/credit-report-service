@@ -24,6 +24,7 @@ Thumbs.db
 # Local env / secrets
 .env
 .env.*
+!deploy/.env.example
 config.local.yaml
 # Per-developer profile configs hold real upstream credentials (Cashfree,
 # Digitap, DB). Keep them local; commit config.dev.yaml.example instead.
