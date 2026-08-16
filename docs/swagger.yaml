@@ -1106,6 +1106,21 @@ definitions:
         example: FD + secured-card referral
         type: string
     type: object
+  internal_handler.phoneOtpSendReq:
+    properties:
+      phone:
+        example: "+919876543210"
+        type: string
+    type: object
+  internal_handler.phoneOtpVerifyReq:
+    properties:
+      otp:
+        example: "123456"
+        type: string
+      phone:
+        example: "+919876543210"
+        type: string
+    type: object
   internal_handler.providerReq:
     properties:
       active:
@@ -2002,6 +2017,87 @@ paths:
       security:
       - BearerAuth: []
       summary: Sign out of the current device
+      tags:
+      - auth
+  /auth/otp/phone/send:
+    post:
+      consumes:
+      - application/json
+      description: 'Sends a one-time code to an Indian mobile number (bare 10 digits
+        or +91-prefixed). Unknown numbers are allowed — verifying the code creates
+        the account. Subject to the same cooldown / send limits as email OTPs. NOTE:
+        SMS delivery is a log-only stub until a provider is wired; the code is written
+        to the server log.'
+      parameters:
+      - description: Mobile number
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.phoneOtpSendReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{\"message\": \"Verification code sent\"}'
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "409":
+          description: Resend cooldown / send limit reached
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      summary: Send a phone sign-in OTP
+      tags:
+      - auth
+  /auth/otp/phone/verify:
+    post:
+      consumes:
+      - application/json
+      description: Checks the code sent by POST /auth/otp/phone/send and opens a session
+        for the calling device. A first-time number gets an account created on the
+        spot (profile incomplete); an existing number signs into its account. Returns
+        the same session payload as email login.
+      parameters:
+      - description: Stable per-device UUID
+        in: header
+        name: X-Device-Id
+        type: string
+      - description: Human-readable device name shown in the device list
+        in: header
+        name: X-Device-Name
+        type: string
+      - description: ios | android | web
+        in: header
+        name: X-Device-Platform
+        type: string
+      - description: JSON device description
+        in: header
+        name: X-Device-Info
+        type: string
+      - description: Phone + OTP
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.phoneOtpVerifyReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_service.AuthResult'
+        "400":
+          description: Validation failed / wrong / expired / locked OTP
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      summary: Verify a phone OTP and sign in
       tags:
       - auth
   /auth/otp/resend:

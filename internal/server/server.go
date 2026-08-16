@@ -73,6 +73,11 @@ func New(
 		AllowMethods:     "GET,POST,PUT,PATCH,DELETE,OPTIONS",
 		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, X-Device-Id, X-Device-Name, X-Device-Platform, X-Device-Info",
 		AllowCredentials: allowCredentials,
+		// Let browsers cache the preflight verdict per-URL. Without this the
+		// browser default (~5s in Chrome) re-sends an OPTIONS round-trip for
+		// nearly every API call from the web app. Browsers cap this anyway
+		// (Chrome 2h, Firefox 24h), so an hour is effectively "as long as allowed".
+		MaxAge: 3600,
 	}))
 
 	api := app.Group("/api")
@@ -101,6 +106,9 @@ func New(
 	a.Post("/signup", auth.Signup)
 	a.Post("/verify-email", auth.VerifyEmail)
 	a.Post("/otp/resend", auth.ResendOTP)
+	// Phone sign-in: send an SMS OTP, verify it for a session (find-or-create).
+	a.Post("/otp/phone/send", auth.SendPhoneOTP)
+	a.Post("/otp/phone/verify", auth.VerifyPhoneOTP)
 	a.Post("/login", auth.Login)
 	a.Post("/google", auth.GoogleLogin)
 	// Forgot-password: email a code, exchange the code for a single-use reset

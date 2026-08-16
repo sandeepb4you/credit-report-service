@@ -154,6 +154,75 @@ func (h *AuthHandler) ResendOTP(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "Verification code re-sent"})
 }
 
+// ---- POST /api/auth/otp/phone/send ----------------------------------------
+
+type phoneOtpSendReq struct {
+	Phone string `json:"phone" example:"+919876543210"`
+}
+
+// SendPhoneOTP godoc
+//
+// @Summary      Send a phone sign-in OTP
+// @Description  Sends a one-time code to an Indian mobile number (bare 10 digits or +91-prefixed). Unknown numbers are allowed — verifying the code creates the account. Subject to the same cooldown / send limits as email OTPs. NOTE: SMS delivery is a log-only stub until a provider is wired; the code is written to the server log.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        request  body      phoneOtpSendReq   true  "Mobile number"
+// @Success      200      {object}  map[string]string  "{\"message\": \"Verification code sent\"}"
+// @Failure      400      {object}  apperr.ErrorBody  "Validation failed"
+// @Failure      409      {object}  apperr.ErrorBody  "Resend cooldown / send limit reached"
+// @Router       /auth/otp/phone/send [post]
+func (h *AuthHandler) SendPhoneOTP(c *fiber.Ctx) error {
+	var req phoneOtpSendReq
+	if err := c.BodyParser(&req); err != nil {
+		return apperr.NewValidation("invalid JSON body")
+	}
+	if err := h.svc.SendPhoneOTP(c.Context(), strings.TrimSpace(req.Phone)); err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"message": "Verification code sent"})
+}
+
+// ---- POST /api/auth/otp/phone/verify ---------------------------------------
+
+type phoneOtpVerifyReq struct {
+	Phone string `json:"phone" example:"+919876543210"`
+	OTP   string `json:"otp"   example:"123456"`
+}
+
+// VerifyPhoneOTP godoc
+//
+// @Summary      Verify a phone OTP and sign in
+// @Description  Checks the code sent by POST /auth/otp/phone/send and opens a session for the calling device. A first-time number gets an account created on the spot (profile incomplete); an existing number signs into its account. Returns the same session payload as email login.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        X-Device-Id        header  string  false  "Stable per-device UUID"
+// @Param        X-Device-Name      header  string  false  "Human-readable device name shown in the device list"
+// @Param        X-Device-Platform  header  string  false  "ios | android | web"
+// @Param        X-Device-Info      header  string  false  "JSON device description"
+// @Param        request  body      phoneOtpVerifyReq  true  "Phone + OTP"
+// @Success      200      {object}  service.AuthResult
+// @Failure      400      {object}  apperr.ErrorBody  "Validation failed / wrong / expired / locked OTP"
+// @Router       /auth/otp/phone/verify [post]
+func (h *AuthHandler) VerifyPhoneOTP(c *fiber.Ctx) error {
+	var req phoneOtpVerifyReq
+	if err := c.BodyParser(&req); err != nil {
+		return apperr.NewValidation("invalid JSON body")
+	}
+	req.OTP = strings.TrimSpace(req.OTP)
+	if !otpCodeRE.MatchString(req.OTP) {
+		return apperr.NewValidationWith("Validation failed",
+			map[string]string{"otp": "otp must be 4-8 digits"})
+	}
+	res, err := h.svc.VerifyPhoneOTP(
+		c.Context(), strings.TrimSpace(req.Phone), req.OTP, middleware.Device(c))
+	if err != nil {
+		return err
+	}
+	return h.respondAuth(c, res, middleware.Device(c).IsWeb())
+}
+
 // ---- POST /api/auth/login -----------------------------------------------
 
 type loginReq struct {

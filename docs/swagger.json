@@ -1138,6 +1138,119 @@
                 }
             }
         },
+        "/auth/otp/phone/send": {
+            "post": {
+                "description": "Sends a one-time code to an Indian mobile number (bare 10 digits or +91-prefixed). Unknown numbers are allowed — verifying the code creates the account. Subject to the same cooldown / send limits as email OTPs. NOTE: SMS delivery is a log-only stub until a provider is wired; the code is written to the server log.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Send a phone sign-in OTP",
+                "parameters": [
+                    {
+                        "description": "Mobile number",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.phoneOtpSendReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{\\\"message\\\": \\\"Verification code sent\\\"}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Resend cooldown / send limit reached",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/otp/phone/verify": {
+            "post": {
+                "description": "Checks the code sent by POST /auth/otp/phone/send and opens a session for the calling device. A first-time number gets an account created on the spot (profile incomplete); an existing number signs into its account. Returns the same session payload as email login.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Verify a phone OTP and sign in",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Stable per-device UUID",
+                        "name": "X-Device-Id",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Human-readable device name shown in the device list",
+                        "name": "X-Device-Name",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "ios | android | web",
+                        "name": "X-Device-Platform",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "JSON device description",
+                        "name": "X-Device-Info",
+                        "in": "header"
+                    },
+                    {
+                        "description": "Phone + OTP",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.phoneOtpVerifyReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_service.AuthResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed / wrong / expired / locked OTP",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/otp/resend": {
             "post": {
                 "description": "Re-issues the signup OTP for an unverified email, subject to cooldown / send limits.",
@@ -4525,6 +4638,28 @@
                 "revenueNote": {
                     "type": "string",
                     "example": "FD + secured-card referral"
+                }
+            }
+        },
+        "internal_handler.phoneOtpSendReq": {
+            "type": "object",
+            "properties": {
+                "phone": {
+                    "type": "string",
+                    "example": "+919876543210"
+                }
+            }
+        },
+        "internal_handler.phoneOtpVerifyReq": {
+            "type": "object",
+            "properties": {
+                "otp": {
+                    "type": "string",
+                    "example": "123456"
+                },
+                "phone": {
+                    "type": "string",
+                    "example": "+919876543210"
                 }
             }
         },
