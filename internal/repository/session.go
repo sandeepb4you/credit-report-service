@@ -120,7 +120,7 @@ func (r *SessionRepo) Rotate(
 
 // ListLive returns an account's live sessions, most recently used first.
 func (r *SessionRepo) ListLive(ctx context.Context, accountID int64) ([]*models.Session, error) {
-	var out []*models.Session
+	out := []*models.Session{}
 	err := pgxscan.Select(ctx, r.pool, &out,
 		`SELECT `+sessionCols+` FROM sessions
 		  WHERE account_id = $1 AND revoked_at IS NULL AND expires_at > now()

@@ -64,7 +64,7 @@ func (r *CreditAnalyticsRepo) FindByID(ctx context.Context, id int64) (*models.C
 // FindByAccountPaged returns one page of an account's rows, newest first.
 // limit is the page size; offset is the zero-based row offset.
 func (r *CreditAnalyticsRepo) FindByAccountPaged(ctx context.Context, accountID int64, limit, offset int) ([]models.CreditAnalyticsRequest, error) {
-	var rs []models.CreditAnalyticsRequest
+	rs := []models.CreditAnalyticsRequest{}
 	err := pgxscan.Select(ctx, r.pool, &rs,
 		`SELECT `+creditAnalyticsCols+` FROM credit_analytics_requests
 		 WHERE account_id = $1

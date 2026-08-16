@@ -91,7 +91,7 @@ func (r *LoanProviderRepo) FindByID(ctx context.Context, id int64) (*models.Loan
 // List returns providers filtered by an optional loan type and an optional
 // active flag. A nil filter value means "any". Ordered by loan type then rate.
 func (r *LoanProviderRepo) List(ctx context.Context, loanType *string, active *bool) ([]models.LoanProvider, error) {
-	var ps []models.LoanProvider
+	ps := []models.LoanProvider{}
 	err := pgxscan.Select(ctx, r.pool, &ps,
 		`SELECT `+loanProviderCols+` FROM loan_providers
 		 WHERE ($1::text IS NULL OR loan_type = $1)
@@ -104,7 +104,7 @@ func (r *LoanProviderRepo) List(ctx context.Context, loanType *string, active *b
 // ListActiveByType returns the active providers for one loan type, cheapest
 // rate first. This is the optimizer's candidate set.
 func (r *LoanProviderRepo) ListActiveByType(ctx context.Context, loanType string) ([]models.LoanProvider, error) {
-	var ps []models.LoanProvider
+	ps := []models.LoanProvider{}
 	err := pgxscan.Select(ctx, r.pool, &ps,
 		`SELECT `+loanProviderCols+` FROM loan_providers
 		 WHERE loan_type = $1 AND active = TRUE

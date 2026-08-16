@@ -167,7 +167,7 @@ func (r *BankStatementRepo) FindByID(ctx context.Context, accountID, id int64) (
 
 // FindByAccountPaged returns one page of an account's rows, newest first.
 func (r *BankStatementRepo) FindByAccountPaged(ctx context.Context, accountID int64, limit, offset int) ([]models.BankStatement, error) {
-	var rs []models.BankStatement
+	rs := []models.BankStatement{}
 	err := pgxscan.Select(ctx, r.pool, &rs,
 		`SELECT `+bankStatementCols+` FROM bank_statements
 		 WHERE account_id = $1

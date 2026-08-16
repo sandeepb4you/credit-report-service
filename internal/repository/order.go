@@ -27,7 +27,7 @@ func (r *OrderRepo) BeginTx(ctx context.Context) (pgx.Tx, error) { return r.pool
 const productCols = `code, name, amount, description, currency, active, created_at, updated_at`
 
 func (r *OrderRepo) ListActiveProducts(ctx context.Context) ([]models.Product, error) {
-	var ps []models.Product
+	ps := []models.Product{}
 	err := pgxscan.Select(ctx, r.pool, &ps,
 		`SELECT `+productCols+` FROM products WHERE active ORDER BY code`)
 	return ps, err
@@ -95,7 +95,7 @@ func (r *OrderRepo) FindOrderByUID(ctx context.Context, uid string) (*models.Ord
 }
 
 func (r *OrderRepo) ListOrdersByAccount(ctx context.Context, accountID int64) ([]models.Order, error) {
-	var os []models.Order
+	os := []models.Order{}
 	err := pgxscan.Select(ctx, r.pool, &os,
 		`SELECT `+orderCols+` FROM orders
 		 WHERE account_id = $1 ORDER BY created_at DESC, id DESC`, accountID)

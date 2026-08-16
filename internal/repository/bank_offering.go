@@ -97,7 +97,7 @@ func (r *BankOfferingRepo) FindByID(ctx context.Context, id int64) (*models.Bank
 // active flag. A nil filter value means "any". Ordered by product type then
 // estimated impact (highest first), mirroring how the toolkit surfaces them.
 func (r *BankOfferingRepo) List(ctx context.Context, productType *string, active *bool) ([]models.BankOffering, error) {
-	var os []models.BankOffering
+	os := []models.BankOffering{}
 	err := pgxscan.Select(ctx, r.pool, &os,
 		`SELECT `+bankOfferingCols+` FROM bank_offerings
 		 WHERE ($1::text IS NULL OR product_type = $1)
@@ -111,7 +111,7 @@ func (r *BankOfferingRepo) List(ctx context.Context, productType *string, active
 // score band contains the given score, highest estimated impact first. This is
 // the score-builder's candidate set.
 func (r *BankOfferingRepo) ListActiveForScore(ctx context.Context, productType string, score int) ([]models.BankOffering, error) {
-	var os []models.BankOffering
+	os := []models.BankOffering{}
 	err := pgxscan.Select(ctx, r.pool, &os,
 		`SELECT `+bankOfferingCols+` FROM bank_offerings
 		 WHERE product_type = $1 AND active = TRUE

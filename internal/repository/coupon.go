@@ -75,7 +75,7 @@ func (r *CouponRepo) FindByCode(ctx context.Context, code string) (*models.Coupo
 
 // ListByCreator returns the coupons one account issued, newest first.
 func (r *CouponRepo) ListByCreator(ctx context.Context, accountID int64) ([]models.Coupon, error) {
-	var out []models.Coupon
+	out := []models.Coupon{}
 	err := pgxscan.Select(ctx, r.pool, &out,
 		`SELECT `+couponCols+` FROM coupons WHERE created_by = $1 ORDER BY created_at DESC`,
 		accountID)
@@ -84,7 +84,7 @@ func (r *CouponRepo) ListByCreator(ctx context.Context, accountID int64) ([]mode
 
 // ListAll returns every coupon, newest first. For holders of coupon:admin.
 func (r *CouponRepo) ListAll(ctx context.Context) ([]models.Coupon, error) {
-	var out []models.Coupon
+	out := []models.Coupon{}
 	err := pgxscan.Select(ctx, r.pool, &out,
 		`SELECT `+couponCols+` FROM coupons ORDER BY created_at DESC`)
 	return out, err

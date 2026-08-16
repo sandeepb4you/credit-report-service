@@ -51,6 +51,17 @@ func (r *AccountRepo) FindByEmail(ctx context.Context, email string) (*models.Ac
 	return &a, err
 }
 
+// FindByPhone looks an account up by its canonical primary phone ("+91…").
+func (r *AccountRepo) FindByPhone(ctx context.Context, phone string) (*models.Account, error) {
+	var a models.Account
+	err := pgxscan.Get(ctx, r.pool, &a,
+		`SELECT `+accountCols+` FROM accounts WHERE primary_phone = $1`, phone)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &a, err
+}
+
 // SetRole writes the account's role and invalidates its outstanding access
 // tokens by bumping token_epoch in the same statement — the two must move
 // together, or a token minted between them would carry the new epoch with the
@@ -359,7 +370,7 @@ func (r *AccountRepo) FindKYCByAccount(ctx context.Context, accountID int64) (*m
 func (r *AccountRepo) ListKYCByStatus(
 	ctx context.Context, status string, limit, offset int,
 ) ([]models.KYCReviewItem, error) {
-	var out []models.KYCReviewItem
+	out := []models.KYCReviewItem{}
 	err := pgxscan.Select(ctx, r.pool, &out,
 		`SELECT k.account_id, a.primary_email, a.primary_phone,
 		        a.first_name, a.last_name,
