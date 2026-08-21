@@ -129,19 +129,26 @@ identity (or accept that auto-read works on the release build only).
 
 ## Testing without credentials
 
-Two ways to complete a phone sign-in on a machine with no MSG91 key:
+To complete a phone sign-in on a machine with no MSG91 key, leave `auth-key` empty and use the
+**master OTP**: `123456` (`masterOTP` in `internal/service/otp.go`), accepted for any challenge
+on every OTP flow in the service.
 
-- **Stub sender** — leave `auth-key` empty and read the code from the server log:
-  `level=WARN msg="sms otp stubbed ..." destination=+919876543210 otp=123456`
-- **Master OTP** — `123456` (`masterOTP` in `internal/service/otp.go`) is accepted for any
-  challenge, on every OTP flow in the service. It is an unconditional auth bypass gated by
-  nothing, and the value is the first one anyone would guess, so it **must be deleted before
-  production** — it is a one-line change.
+The generated code is **not** recoverable in that mode — nothing logs it (see below) — so the
+master OTP is the only way through. That also means the master OTP is load-bearing for local
+development, and it is still an unconditional auth bypass gated by nothing, whose value is the
+first one anyone would guess. It **must be deleted before production**; budget for replacing it
+with a real dev path (a test-only endpoint, or a fixed challenge for a whitelisted number)
+rather than discovering at cutover that removing it makes the app untestable.
 
 ## PII in logs
 
-The real sender logs a masked number (`+91******3210`) and never the code — support can match
-a "my OTP never arrived" ticket against the log line without a plaintext mobile landing in
-every sink. The stub logs both in full, deliberately: it is the only way to test locally, and
-a configured auth key replaces it entirely, so that branch is unreachable anywhere that can
-actually send.
+No sender logs the OTP, in any mode. A one-time code in a log file is a live credential in
+plaintext wherever those logs are shipped, tailed or shared, and "only the dev stub does it"
+is not a boundary that holds in practice.
+
+Both senders log a masked number (`+91******3210`) instead of the full one, so support can
+match a "my OTP never arrived" ticket to a log line without a plaintext mobile landing in
+every sink. The real sender adds MSG91's `request_id` on success, which is what you quote to
+MSG91 support. Inbound request bodies are separately masked by the PII middleware
+(`internal/server/middleware/pii.go` has `otp` and `phone` in its field set), so the code does
+not leak through the request logger either.

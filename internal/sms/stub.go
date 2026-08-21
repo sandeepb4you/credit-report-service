@@ -14,15 +14,17 @@ func NewStubSender() *StubSender { return &StubSender{} }
 
 func (*StubSender) IsStub() bool { return true }
 
-// SendOTP logs the code in full.
+// SendOTP records that a send was skipped, WITHOUT the code.
 //
-// This is the one place in the service that deliberately writes a plaintext OTP
-// and an unmasked number to the log — it is the only way to complete a phone
-// sign-in on a machine with no SMS provider, which is exactly what the stub is
-// for. It stays safe only because a configured auth key replaces this sender
-// entirely, so the branch is unreachable in any environment that can send.
-func (*StubSender) SendOTP(_ context.Context, phone, otp string) error {
-	slog.Warn("sms otp stubbed (no MSG91 auth key configured) — code not sent, logged instead",
-		"destination", phone, "otp", otp)
+// The OTP is deliberately absent: a one-time code in a log file is a live
+// credential sitting in plaintext wherever those logs end up, and "it is only
+// the dev stub" is not a boundary that holds — log sinks get shared, tailed and
+// shipped. The number is masked for the same reason the real sender masks it.
+//
+// To complete a sign-in with no SMS provider configured, use the master OTP
+// accepted by OTPService.Verify rather than reading the code from here.
+func (*StubSender) SendOTP(_ context.Context, phone, _ string) error {
+	slog.Warn("sms otp not sent (no MSG91 auth key configured); use the master OTP to sign in",
+		"destination", MaskPhone(phone))
 	return nil
 }
