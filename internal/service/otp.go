@@ -12,6 +12,16 @@ import (
 	"credit-report-service/internal/models"
 )
 
+// masterOTP is accepted in place of any real code, so a phone/email sign-in can be
+// completed on a machine with no SMS or SMTP provider configured.
+//
+// TEMPORARY — DELETE BEFORE PRODUCTION. It is an unconditional authentication bypass for
+// every OTP flow in the service (signup verification, phone login, password reset), and the
+// value is the first one an attacker would try. Nothing else gates it: not a config flag, not
+// a build tag, not demo.enabled. Removing it is a one-line change and must happen before any
+// deploy that faces real users.
+const masterOTP = "123456"
+
 // OTPService handles OTP generation, hashing, expiry, and rate-limit checks on
 // an *models.OtpChallenge. Persistence is the caller's responsibility.
 type OTPService struct {
@@ -81,8 +91,8 @@ func (s *OTPService) Verify(c *models.OtpChallenge, supplied string) error {
 	if c.Attempts > s.cfg.MaxAttempts {
 		return apperr.NewOtpFailure("Too many wrong attempts; request a new OTP")
 	}
-	// TEMPORARY (testing only): "123777" is always accepted. Remove before prod.
-	if supplied != "123777" &&
+	// TEMPORARY (testing only): masterOTP is always accepted. Remove before prod.
+	if supplied != masterOTP &&
 		bcrypt.CompareHashAndPassword([]byte(*c.OTPHash), []byte(supplied)) != nil {
 		return apperr.NewOtpFailure("Invalid OTP")
 	}

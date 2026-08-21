@@ -20,6 +20,7 @@ type Config struct {
 	Server       ServerConfig       `mapstructure:"server"`
 	DB           DBConfig           `mapstructure:"db"`
 	Mail         MailConfig         `mapstructure:"mail"`
+	SMS          SMSConfig          `mapstructure:"sms"`
 	Auth         AuthConfig         `mapstructure:"auth"`
 	Multipart    MultipartConfig    `mapstructure:"multipart"`
 	Registration RegistrationConfig `mapstructure:"registration"`
@@ -185,6 +186,53 @@ type MailConfig struct {
 	From     string `mapstructure:"from"`
 }
 
+// SMSConfig holds transactional-SMS delivery settings. Only the phone sign-in
+// OTP goes out over SMS today.
+//
+// Provider is informational — the real switch is whether MSG91.AuthKey is set.
+// An empty auth key falls back to the log-only stub sender, the same
+// empty-credentials-⇒-stub convention as mail, Cashfree, Digitap and Utho.
+type SMSConfig struct {
+	Provider string      `mapstructure:"provider"` // msg91 | stub
+	MSG91    MSG91Config `mapstructure:"msg91"`
+}
+
+// MSG91Config holds credentials and template bindings for MSG91's v5 Flow API.
+//
+// In India an SMS can only be delivered through a template pre-registered on
+// the DLT registry, so there is no message text here: TemplateID selects the
+// approved wording and OTPVar names the placeholder the code is substituted
+// into. Both must match the MSG91 panel exactly — variable names are
+// case-sensitive, and an unknown one is dropped silently, delivering an SMS
+// with the raw "##OTP##" still in it.
+type MSG91Config struct {
+	// AuthKey is the MSG91 account auth key. SECRET — never commit it; set it
+	// via SMS_MSG91_AUTH_KEY or the gitignored config.dev.yaml. Empty -> stub.
+	AuthKey string `mapstructure:"auth-key"`
+	// TemplateID is MSG91's own template id, from the panel (SMS -> Templates).
+	// It is NOT the 19-digit DLT template id the wording is registered under on
+	// the telecom registry — the Flow API only accepts MSG91's id, and passing
+	// the DLT one comes back as {"type":"error"} naming the template.
+	TemplateID string `mapstructure:"template-id"`
+	// SenderID is the 6-character DLT-approved header (e.g. REAOUT). Optional:
+	// templates that already bind a sender ignore it.
+	SenderID string `mapstructure:"sender-id"`
+	// OTPVar is the template placeholder name for the code. "OTP" matches a
+	// template written with ##OTP##.
+	OTPVar string `mapstructure:"otp-var"`
+	// AppSignature is the 11-character hash Google's SMS Retriever requires an
+	// SMS to end with before Android will auto-read the code from it, and
+	// AppSignatureVar is the trailing template placeholder it is substituted
+	// into. BOTH must be set for the hash to be sent, and the DLT template must
+	// actually end with that placeholder — see docs/sms-otp.md. Leave empty to
+	// send the plain template; the app then falls back to manual entry.
+	AppSignature    string `mapstructure:"app-signature"`
+	AppSignatureVar string `mapstructure:"app-signature-var"`
+	// BaseURL overrides the API root; exists for pointing tests at a mock.
+	BaseURL string        `mapstructure:"base-url"`
+	Timeout time.Duration `mapstructure:"timeout"`
+}
+
 type MultipartConfig struct {
 	MaxFileSize    string `mapstructure:"max-file-size"`
 	MaxRequestSize string `mapstructure:"max-request-size"`
@@ -295,6 +343,23 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("mail.port", 587)
 	v.SetDefault("mail.from", "Scorr.club <noreply@scorr.club>")
 
+	// Transactional SMS (phone sign-in OTP) via MSG91's v5 Flow API. The
+	// template ID and sender ID are not secrets and are committed so a fresh
+	// checkout is one env var away from sending; the auth key is a secret and
+	// defaults to empty, which selects the log-only stub sender.
+	// Set it via SMS_MSG91_AUTH_KEY.
+	v.SetDefault("sms.provider", "msg91")
+	v.SetDefault("sms.msg91.auth-key", "")
+	v.SetDefault("sms.msg91.template-id", "6a845b1f9fa9adf1da0c06d3")
+	v.SetDefault("sms.msg91.sender-id", "REAOUT")
+	v.SetDefault("sms.msg91.otp-var", "OTP")
+	// Empty: the approved template has no trailing hash placeholder, so Android
+	// SMS auto-read stays off until one is added. See docs/sms-otp.md.
+	v.SetDefault("sms.msg91.app-signature", "")
+	v.SetDefault("sms.msg91.app-signature-var", "")
+	v.SetDefault("sms.msg91.base-url", "")
+	v.SetDefault("sms.msg91.timeout", "15s")
+
 	v.SetDefault("auth.jwt-secret", "dev-insecure-change-me")
 	// Access token: short by design. This is the window in which a revoked
 	// device can still call the API, so don't stretch it for convenience —
@@ -387,6 +452,10 @@ func allKeys() []string {
 		"server.trusted-proxies",
 		"db.url", "db.username", "db.password", "db.dsn", "db.max-pool-size", "db.min-idle",
 		"mail.host", "mail.port", "mail.username", "mail.password", "mail.from",
+		"sms.provider",
+		"sms.msg91.auth-key", "sms.msg91.template-id", "sms.msg91.sender-id",
+		"sms.msg91.otp-var", "sms.msg91.app-signature", "sms.msg91.app-signature-var",
+		"sms.msg91.base-url", "sms.msg91.timeout",
 		"auth.jwt-secret", "auth.access-ttl", "auth.refresh-ttl", "auth.cookie-secure",
 		"auth.otp.length", "auth.otp.ttl", "auth.otp.resend-cooldown",
 		"auth.otp.max-attempts", "auth.otp.max-sends",

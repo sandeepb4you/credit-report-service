@@ -21,6 +21,7 @@ import (
 	"credit-report-service/internal/repository"
 	"credit-report-service/internal/server"
 	"credit-report-service/internal/service"
+	"credit-report-service/internal/sms"
 	"credit-report-service/internal/statement"
 	"credit-report-service/internal/utho"
 )
@@ -95,6 +96,21 @@ func main() {
 		gateway = payments.NewCashfreeClient(cfg.Cashfree)
 	}
 
+	// SMS sender for the phone sign-in OTP: real MSG91 client when an auth key
+	// is set, otherwise the log-only stub (dev fallback, like the mail stub).
+	var smsSender sms.Sender
+	if cfg.SMS.MSG91.AuthKey == "" {
+		slog.Warn("sms.msg91.auth-key is empty; phone OTPs will be logged, not sent")
+		smsSender = sms.NewStubSender()
+	} else {
+		if cfg.SMS.MSG91.TemplateID == "" {
+			// The Flow API cannot send without a template, and the failure only
+			// shows up on the first sign-in attempt — say so at boot instead.
+			slog.Error("sms.msg91.auth-key is set but template-id is empty; every phone OTP send will fail")
+		}
+		smsSender = sms.NewMSG91Client(cfg.SMS.MSG91)
+	}
+
 	// Services.
 	otpSvc := service.NewOTPService(cfg.Auth.OTP)
 	mailSvc := service.NewMailService(cfg.Mail, cfg.Auth.OTP.TTL)
@@ -102,7 +118,7 @@ func main() {
 	sessionSvc := service.NewSessionService(sessionRepo, cfg.Auth)
 	couponSvc := service.NewCouponService(couponRepo, orderRepo)
 	authSvc := service.NewAuthService(
-		accountRepo, otpSvc, mailSvc, tokenSvc, sessionSvc, couponSvc, cfg.Auth)
+		accountRepo, otpSvc, mailSvc, smsSender, tokenSvc, sessionSvc, couponSvc, cfg.Auth)
 	analyticsSvc := service.NewCreditAnalyticsService(digitapClient, analyticsRepo, accountRepo)
 	if cfg.Demo.Enabled {
 		slog.Warn("DEMO MODE ENABLED: submitted PANs are auto-verified without the external KYC provider; do not use in production")
@@ -202,6 +218,8 @@ func main() {
 		"profile", profile,
 		"digitap_stub", digitapClient.IsStub(),
 		"cashfree_stub", cashfreeStub,
+		// True means phone OTPs are only logged — nobody receives an SMS.
+		"sms_stub", smsSender.IsStub(),
 		"ocr_provider", cfg.Registration.OCR.Provider,
 		"statement_parser", cfg.Statement.Parser,
 		"statement_provider", cfg.Statement.Provider,

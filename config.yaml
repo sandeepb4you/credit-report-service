@@ -20,6 +20,32 @@ mail:
   password: ""
   from: "Scorr.club <noreply@scorr.club>"
 
+sms:
+  # Transactional SMS (the phone sign-in OTP). MSG91 v5 Flow API.
+  provider: msg91
+  msg91:
+    # SECRET. Empty -> log-only stub sender (OTP printed to the server log),
+    # exactly like the empty MAIL_HOST behaviour. Set in the gitignored
+    # config.dev.yaml or via SMS_MSG91_AUTH_KEY.
+    auth-key: ""
+    # MSG91 template id (SMS -> Templates in the panel), NOT the 19-digit DLT
+    # template id (1777178704589774509) that template is registered under —
+    # the Flow API wants MSG91's own id. Not a secret.
+    # Template copy: "##OTP## is your OTP for verification on Reachout. This OTP
+    # is valid for 10 minutes. Please do not share it with anyone. - Reachout"
+    template-id: "6a845b1f9fa9adf1da0c06d3"
+    sender-id: "REAOUT"
+    otp-var: "OTP"
+    # Android SMS auto-read (Google SMS Retriever) needs the message to END with
+    # the app's 11-char signature hash. The approved template above has no
+    # trailing placeholder, so this stays empty and the app falls back to manual
+    # entry. To enable: get a template ending in a variable, then set both keys.
+    # See docs/sms-otp.md.
+    app-signature: ""
+    app-signature-var: ""
+    base-url: ""              # leave empty for https://control.msg91.com/api/v5
+    timeout: 15s
+
 auth:
   # HS256 signing secret for login JWTs. OVERRIDE in prod via AUTH_JWT_SECRET.
   jwt-secret: "dev-insecure-change-me"

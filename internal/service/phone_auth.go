@@ -3,9 +3,10 @@
 // the phone number, with find-or-create semantics — a first-time number gets
 // an account on successful verification, an existing one signs in.
 //
-// SMS DELIVERY IS A LOG-ONLY STUB: there is no SMS provider wired yet, so the
-// code is written to the server log exactly like the empty-SMTP mail stub.
-// Testing currently relies on the master OTP accepted by OTPService.Verify.
+// SMS delivery goes through sms.Sender (MSG91 in any environment with an auth
+// key, a log-only stub without one — same convention as the empty-SMTP mail
+// stub). Testing on a machine with no auth key relies on the stub's log line,
+// or on the master OTP accepted by OTPService.Verify.
 package service
 
 import (
@@ -19,6 +20,7 @@ import (
 	"credit-report-service/internal/apperr"
 	"credit-report-service/internal/models"
 	"credit-report-service/internal/repository"
+	"credit-report-service/internal/sms"
 )
 
 // SendPhoneOTP mints (or refreshes) a login challenge for the number and
@@ -78,10 +80,11 @@ func (s *AuthService) SendPhoneOTP(ctx context.Context, phone string) error {
 		return err
 	}
 
-	// Log-only "delivery" until an SMS provider is wired (see file header).
-	slog.Info("sms otp (log-only stub — no SMS provider configured)",
-		"destination", normalized, "otp", plain)
-	return nil
+	// Deliver only after the challenge is committed, matching issueAndSend: a
+	// code the user can receive but we have not stored is worse than the
+	// reverse. A provider failure therefore burns this send slot — the caller
+	// sees the error and can retry once the cooldown lapses.
+	return s.sms.SendOTP(ctx, normalized, plain)
 }
 
 // VerifyPhoneOTP checks the code and signs the number in, creating an active
@@ -109,7 +112,9 @@ func (s *AuthService) VerifyPhoneOTP(
 			_ = s.accounts.UpdateChallenge(ctx, tx, ch)
 			_ = tx.Commit(ctx)
 		}
-		slog.Warn("phone otp verification failed", "attempts", ch.Attempts, "error", verr.Error())
+		slog.Warn("phone otp verification failed",
+			"destination", sms.MaskPhone(normalized),
+			"attempts", ch.Attempts, "error", verr.Error())
 		return nil, verr
 	}
 

@@ -163,7 +163,7 @@ type phoneOtpSendReq struct {
 // SendPhoneOTP godoc
 //
 // @Summary      Send a phone sign-in OTP
-// @Description  Sends a one-time code to an Indian mobile number (bare 10 digits or +91-prefixed). Unknown numbers are allowed — verifying the code creates the account. Subject to the same cooldown / send limits as email OTPs. NOTE: SMS delivery is a log-only stub until a provider is wired; the code is written to the server log.
+// @Description  Sends a one-time code to an Indian mobile number (bare 10 digits or +91-prefixed). Unknown numbers are allowed — verifying the code creates the account. Subject to the same cooldown / send limits as email OTPs. Delivered by SMS through MSG91 when an auth key is configured; without one the code is written to the server log instead.
 // @Tags         auth
 // @Accept       json
 // @Produce      json

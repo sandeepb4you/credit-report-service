@@ -15,6 +15,7 @@ import (
 	"credit-report-service/internal/config"
 	"credit-report-service/internal/models"
 	"credit-report-service/internal/repository"
+	"credit-report-service/internal/sms"
 )
 
 const (
@@ -35,6 +36,7 @@ type AuthService struct {
 	accounts       *repository.AccountRepo
 	otp            *OTPService
 	mailer         Mailer
+	sms            sms.Sender // phone-OTP delivery; log-only stub without an auth key
 	tokens         *TokenService
 	sessions       *SessionService
 	coupons        *CouponService // resolves referral codes at signup
@@ -46,6 +48,7 @@ func NewAuthService(
 	accounts *repository.AccountRepo,
 	otp *OTPService,
 	mailer Mailer,
+	smsSender sms.Sender,
 	tokens *TokenService,
 	sessions *SessionService,
 	coupons *CouponService,
@@ -61,6 +64,7 @@ func NewAuthService(
 		accounts:       accounts,
 		otp:            otp,
 		mailer:         mailer,
+		sms:            smsSender,
 		tokens:         tokens,
 		sessions:       sessions,
 		coupons:        coupons,
