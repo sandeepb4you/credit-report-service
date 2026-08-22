@@ -87,7 +87,31 @@ The db container creates the `report` schema on first boot and the api applies
 its embedded migrations on startup — the stack comes up with a fresh, fully
 migrated database.
 
-## 5. Operations
+## 5. MSG91 (phone sign-in OTP)
+
+The OTP for phone sign-in goes out through MSG91, and the key lives only in
+`/opt/scorr/.env` as `SMS_MSG91_AUTH_KEY` — never in `config.yaml`, which is
+baked into the image. Everything else (template id, sender id, variable name)
+has a default in `docker-compose.yml`.
+
+**MSG91 filters on the calling host's IP.** Add the box's Elastic IP under
+Settings -> IP Security in the MSG91 panel before the first deploy, or every
+send is rejected — including a key that works fine from a developer's laptop.
+The rejection arrives as HTTP 200 with `{"type":"error"}`, so watch the logs
+rather than the status code:
+
+```sh
+docker compose logs -f api | grep "sms otp"
+# sms otp dispatched request_id=...   -> accepted by MSG91
+# sms otp rejected by provider ...    -> read the reason; usually IP or balance
+```
+
+With no key set the service starts in stub mode (`sms_stub=true` on the boot
+line) and sends nothing. **No sender logs the code in any mode**, so in that
+state phone sign-in is only completable with the dev master OTP — see
+`docs/sms-otp.md`, which also covers why Android auto-read is still off.
+
+## 6. Operations
 
 - **Admin DB access** (never open 5432 in the security group):
   `ssh -N -L 5433:localhost:5432 ec2-user@api.myscorr.com`, then connect to

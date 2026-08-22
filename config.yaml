@@ -24,9 +24,13 @@ sms:
   # Transactional SMS (the phone sign-in OTP). MSG91 v5 Flow API.
   provider: msg91
   msg91:
-    # SECRET. Empty -> log-only stub sender (OTP printed to the server log),
-    # exactly like the empty MAIL_HOST behaviour. Set in the gitignored
-    # config.dev.yaml or via SMS_MSG91_AUTH_KEY.
+    # SECRET. Empty -> stub sender: nothing is sent, and nothing is logged
+    # either (no sender writes a plaintext code), so an OTP screen is then
+    # completable only with the master OTP. Set it in the gitignored
+    # config.dev.yaml for local work, or via SMS_MSG91_AUTH_KEY — which is how
+    # every deployment gets it, out of the compose stack's env file
+    # (deploy/.env.example). Never fill it in here: this file is tracked and is
+    # baked into the image.
     auth-key: ""
     # MSG91 template id (SMS -> Templates in the panel), NOT the 19-digit DLT
     # template id (1777178704589774509) that template is registered under —

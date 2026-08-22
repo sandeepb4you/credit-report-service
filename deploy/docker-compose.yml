@@ -33,6 +33,30 @@ services:
       # The app runs migrations against this on startup; the schema itself is
       # created once by init/01-create-schema.sql.
       DB_URL: postgres://scorr:${DB_PASSWORD}@db:5432/credit?sslmode=disable&search_path=report
+
+      # --- SMS (MSG91), the phone sign-in OTP --------------------------------
+      # SMS_MSG91_AUTH_KEY is a secret and is NOT listed here: it arrives
+      # through env_file above, so this tracked file never carries one. With it
+      # empty the service falls back to the stub sender, which sends nothing —
+      # and since no sender logs the code, phone sign-in is then completable
+      # only with the master OTP. The boot line reports which you got:
+      # `sms_stub=true|false`.
+      #
+      # These non-secret keys are set explicitly rather than left to the
+      # config.yaml baked into the image, so what a deployment sends is visible
+      # in the deployment, not in a layer you have to `docker run cat` to read.
+      SMS_PROVIDER: ${SMS_PROVIDER:-msg91}
+      # MSG91's own template id (panel -> SMS -> Templates), NOT the 19-digit
+      # DLT id the wording is registered under; the Flow API rejects that one.
+      SMS_MSG91_TEMPLATE_ID: ${SMS_MSG91_TEMPLATE_ID:-6a845b1f9fa9adf1da0c06d3}
+      SMS_MSG91_SENDER_ID: ${SMS_MSG91_SENDER_ID:-REAOUT}
+      SMS_MSG91_OTP_VAR: ${SMS_MSG91_OTP_VAR:-OTP}
+      # Android auto-read (SMS Retriever). Set these only once a DLT template
+      # that ENDS in a variable is approved — appending the hash to the current
+      # template puts it 5 bytes over Google's 140-byte limit, so auto-read
+      # cannot fire regardless of what is configured. See docs/sms-otp.md.
+      SMS_MSG91_APP_SIGNATURE: ${SMS_MSG91_APP_SIGNATURE:-}
+      SMS_MSG91_APP_SIGNATURE_VAR: ${SMS_MSG91_APP_SIGNATURE_VAR:-}
     volumes:
       - pan-images:/app/data/pan-images
     depends_on:
