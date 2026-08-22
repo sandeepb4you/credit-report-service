@@ -9,7 +9,7 @@ server:
 
 db:
   # Postgres URL (pgx-native). Override via DB_URL env var.
-  url: postgres://serpapp:serp1234@35.200.255.84:5432/credit?sslmode=disable&search_path=report
+  url: postgres://serpapp:serp1234@13.207.119.240:5432/credit?sslmode=disable&search_path=report
   max-pool-size: 10
   min-idle: 2
 
@@ -63,7 +63,7 @@ auth:
   google:
     client-id: ""
   otp:
-    length: 6
+    length: 4
     ttl: 10m
     resend-cooldown: 30s
     max-attempts: 5
@@ -91,7 +91,7 @@ cashfree:
 registration:
   pan-image-dir: ./data/pan-images
   otp:
-    length: 6
+    length: 4
     ttl: 5m
     resend-cooldown: 30s
     max-attempts: 5

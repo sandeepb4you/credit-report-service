@@ -4661,7 +4661,7 @@ const docTemplate = `{
             "properties": {
                 "otp": {
                     "type": "string",
-                    "example": "123456"
+                    "example": "1234"
                 },
                 "phone": {
                     "type": "string",
@@ -4833,7 +4833,7 @@ const docTemplate = `{
                 },
                 "otp": {
                     "type": "string",
-                    "example": "123456"
+                    "example": "1234"
                 }
             }
         },
@@ -4846,7 +4846,7 @@ const docTemplate = `{
                 },
                 "otp": {
                     "type": "string",
-                    "example": "123456"
+                    "example": "1234"
                 }
             }
         }

@@ -24,7 +24,7 @@ auth:
   # Refresh token lifetime: how long a device stays signed in without re-login.
   refresh-ttl: 720h  # 30 days
   otp:
-    length: 6
+    length: 4
     ttl: 10m
     resend-cooldown: 30s
     max-attempts: 5
@@ -37,7 +37,7 @@ multipart:
 registration:
   pan-image-dir: ./data/pan-images
   otp:
-    length: 6
+    length: 4
     ttl: 5m
     resend-cooldown: 30s
     max-attempts: 5

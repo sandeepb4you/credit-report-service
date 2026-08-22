@@ -1115,7 +1115,7 @@ definitions:
   internal_handler.phoneOtpVerifyReq:
     properties:
       otp:
-        example: "123456"
+        example: "1234"
         type: string
       phone:
         example: "+919876543210"
@@ -1238,7 +1238,7 @@ definitions:
         example: user@example.com
         type: string
       otp:
-        example: "123456"
+        example: "1234"
         type: string
     type: object
   internal_handler.verifyResetOtpReq:
@@ -1247,7 +1247,7 @@ definitions:
         example: user@example.com
         type: string
       otp:
-        example: "123456"
+        example: "1234"
         type: string
     type: object
 host: localhost:8080

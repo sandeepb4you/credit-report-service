@@ -9,7 +9,7 @@ them to arrive.
 app  POST /api/auth/otp/phone/send   { "phone": "+919876543210" }
         └─ AuthService.SendPhoneOTP
              ├─ normalizePhone      -> "+91XXXXXXXXXX"
-             ├─ OTPService.Issue    -> 6-digit code, bcrypt-hashed, 10m TTL,
+             ├─ OTPService.Issue    -> 4-digit code, bcrypt-hashed, 10m TTL,
              │                         30s resend cooldown, max 5 sends
              ├─ commit the challenge
              └─ sms.Sender.SendOTP  -> MSG91 Flow API   (or the log-only stub)
@@ -130,7 +130,7 @@ identity (or accept that auto-read works on the release build only).
 ## Testing without credentials
 
 To complete a phone sign-in on a machine with no MSG91 key, leave `auth-key` empty and use the
-**master OTP**: `123456` (`masterOTP` in `internal/service/otp.go`), accepted for any challenge
+**master OTP**: `1234` (`masterOTP` in `internal/service/otp.go`), accepted for any challenge
 on every OTP flow in the service.
 
 The generated code is **not** recoverable in that mode — nothing logs it (see below) — so the
@@ -139,6 +139,27 @@ development, and it is still an unconditional auth bypass gated by nothing, whos
 first one anyone would guess. It **must be deleted before production**; budget for replacing it
 with a real dev path (a test-only endpoint, or a fixed challenge for a whitelisted number)
 rather than discovering at cutover that removing it makes the app untestable.
+
+## Why the code is 4 digits, and what that costs
+
+`auth.otp.length` and `registration.otp.length` are both **4** (`config.yaml`), down from 6 —
+a shorter code is measurably easier to type on the screen with the worst drop-off in the funnel.
+
+The trade is keyspace: 10,000 combinations instead of 1,000,000. What keeps that safe is not
+the code length but the attempt cap, so treat `auth.otp.max-attempts` as a security control
+rather than a UX knob:
+
+- `max-attempts: 5` wrong guesses per issued code, then the challenge is dead.
+- `max-sends: 5` re-issues per challenge, each resetting the attempt counter — so **25 guesses
+  per challenge**, and a challenge lives `ttl: 10m`.
+- Every re-issue sends a real SMS to the victim's handset. Covering half the keyspace needs
+  ~5,000 guesses, i.e. ~33 hours and ~1,000 texts to a phone whose owner is watching them
+  arrive. Loud, slow, and self-reporting — but not impossible.
+
+There is **no per-IP or per-destination rate limit** in front of these endpoints today; the
+per-challenge counters above are the entire defence. Adding one (or dropping `max-attempts`
+to 3, which cuts the window to 15 guesses per challenge) is the cheapest way to buy the margin
+back if 4 digits stays.
 
 ## PII in logs
 

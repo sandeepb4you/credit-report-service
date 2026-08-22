@@ -15,7 +15,7 @@ import (
 // constructing challenges directly.
 func otpTestCfg() config.OTPConfig {
 	return config.OTPConfig{
-		Length:         6,
+		Length:         4,
 		TTL:            10 * time.Minute,
 		ResendCooldown: time.Second,
 		MaxAttempts:    3,
@@ -38,8 +38,11 @@ func TestIssue_AndVerify_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
-	if len(plain) != 6 {
-		t.Errorf("otp length = %d, want 6", len(plain))
+	// Assert against the configured length rather than a literal: the whole point of
+	// OTPConfig.Length is that the digit count is policy, and a hard-coded 6 here went
+	// stale the moment that policy changed.
+	if want := otpTestCfg().Length; len(plain) != want {
+		t.Errorf("otp length = %d, want %d", len(plain), want)
 	}
 	if c.OTPHash == nil || c.ExpiresAt == nil {
 		t.Error("Issue did not stamp hash/expiry")
@@ -131,7 +134,7 @@ func TestIssue_MaxSends(t *testing.T) {
 func TestIssue_NoOTPHashOnVerify(t *testing.T) {
 	s := newOTPSvc()
 	c := freshChallenge()
-	if err := s.Verify(c, "123456"); !isConflict(err) {
+	if err := s.Verify(c, "1234"); !isConflict(err) {
 		t.Fatalf("verify never-issued want Conflict, got %v", err)
 	}
 }

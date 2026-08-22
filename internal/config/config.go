@@ -369,7 +369,7 @@ func setDefaults(v *viper.Viper) {
 	// credentials. Rotated on every use.
 	v.SetDefault("auth.refresh-ttl", "720h") // 30 days
 	v.SetDefault("auth.cookie-secure", true)
-	v.SetDefault("auth.otp.length", 6)
+	v.SetDefault("auth.otp.length", 4)
 	v.SetDefault("auth.otp.ttl", "10m")
 	v.SetDefault("auth.otp.resend-cooldown", "30s")
 	v.SetDefault("auth.otp.max-attempts", 5)
@@ -385,7 +385,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("multipart.max-request-size", "10MB")
 
 	v.SetDefault("registration.pan-image-dir", "./data/pan-images")
-	v.SetDefault("registration.otp.length", 6)
+	v.SetDefault("registration.otp.length", 4)
 	v.SetDefault("registration.otp.ttl", "5m")
 	v.SetDefault("registration.otp.resend-cooldown", "30s")
 	v.SetDefault("registration.otp.max-attempts", 5)

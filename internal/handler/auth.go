@@ -74,7 +74,7 @@ func (h *AuthHandler) Signup(c *fiber.Ctx) error {
 
 type verifyEmailReq struct {
 	Email string `json:"email" example:"user@example.com"`
-	OTP   string `json:"otp"   example:"123456"`
+	OTP   string `json:"otp"   example:"1234"`
 }
 
 // VerifyEmail godoc
@@ -187,7 +187,7 @@ func (h *AuthHandler) SendPhoneOTP(c *fiber.Ctx) error {
 
 type phoneOtpVerifyReq struct {
 	Phone string `json:"phone" example:"+919876543210"`
-	OTP   string `json:"otp"   example:"123456"`
+	OTP   string `json:"otp"   example:"1234"`
 }
 
 // VerifyPhoneOTP godoc
@@ -305,7 +305,7 @@ func (h *AuthHandler) ForgotPassword(c *fiber.Ctx) error {
 
 type verifyResetOtpReq struct {
 	Email string `json:"email" example:"user@example.com"`
-	OTP   string `json:"otp"   example:"123456"`
+	OTP   string `json:"otp"   example:"1234"`
 }
 
 // VerifyPasswordResetOTP godoc
