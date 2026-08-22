@@ -63,6 +63,13 @@ scp deploy/.env.staging ec2-user@api.myscorr.com:/opt/scorr/.env   # or .env.exa
 scp deploy/nginx/*.conf ec2-user@api.myscorr.com:/tmp/
 ```
 
+Only `init/` and the nginx confs are genuinely one-time. `deploy.sh` re-syncs
+`docker-compose.yml` and the env file on every run, because the image carries
+none of that configuration — an SMS or Cashfree setting changed locally and not
+synced would leave a deploy reporting success while the server kept the old
+value. `SYNC_CONFIG=0 ./deploy/deploy.sh` skips it for an image-only redeploy,
+and `ENV_FILE=/path/to/env` picks a different env file than `.env.staging`.
+
 On the server (AL2023 nginx has no sites-enabled — drop straight into conf.d):
 
 ```sh
@@ -119,6 +126,9 @@ state phone sign-in is only completable with the dev master OTP — see
   natively from their connection dialog.
 - **Rollback**: set `IMAGE_TAG=<git-sha>` in `/opt/scorr/.env`, then
   `docker compose up -d api`. `deploy.sh` pushes every SHA, so any prior tag works.
+  Note the next `deploy.sh` overwrites that file and returns you to the tag it
+  just built — pin the SHA in your local `.env.staging` if it needs to survive a
+  deploy. The run before it is kept on the server as `.env.bak`.
 - **Logs**: `docker compose logs -f api` in `/opt/scorr`.
 - **Backups** (the pgdata volume is not a backup) — `crontab -e` on the server:
 
