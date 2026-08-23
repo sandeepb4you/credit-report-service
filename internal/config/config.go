@@ -425,7 +425,7 @@ func setDefaults(v *viper.Viper) {
 	// Mobile to Prefill. Production host by default: unlike Credit Analytics
 	// there is no demo tier in use here, and a UAT host answering production
 	// credentials fails as a 401 that reads like bad credentials.
-	v.SetDefault("digitap.prefill.base-url", "https://svc.digitap.ai/")
+	v.SetDefault("digitap.prefill.base-url", "https://api.digitap.ai/")
 	v.SetDefault("digitap.prefill.client-id", "")
 	v.SetDefault("digitap.prefill.client-secret", "")
 	v.SetDefault("digitap.prefill.timeout", "30s")

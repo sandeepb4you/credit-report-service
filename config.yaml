@@ -127,7 +127,7 @@ digitap:
   # that runs the offline stub, which confirms nothing about the real person.
   # Override via DIGITAP_PREFILL_CLIENT_ID / DIGITAP_PREFILL_CLIENT_SECRET.
   prefill:
-    base-url: https://svc.digitap.ai/
+    base-url: https://api.digitap.ai/
     client-id: ""
     client-secret: ""
     timeout: 30s

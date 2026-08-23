@@ -47,7 +47,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	base := "https://svc.digitap.ai/"
+	base := "https://api.digitap.ai/"
 	if *uat {
 		base = "https://svcdemo.digitap.work/"
 	}

@@ -49,7 +49,7 @@ cleared by pressing the button again.
 ```yaml
 digitap:
   prefill:
-    base-url: https://svc.digitap.ai/      # UAT: https://svcdemo.digitap.work/
+    base-url: https://api.digitap.ai/      # UAT: https://svcdemo.digitap.work/
     client-id: ""                          # falls back to digitap.client-id
     client-secret: ""
 ```
@@ -61,11 +61,13 @@ Analytics.** A credential pair that authenticates fine for the bureau pull can
 still return `401 Client Authentication Failed` here. Verified against the live
 API on 2026-08-23:
 
-| Endpoint | Host | Result |
-| --- | --- | --- |
-| `/mobile_prefill/request` | `svc.digitap.ai` | 401 |
-| `/mobile_prefill/request` | `svcdemo.digitap.work` | 401 |
-| `/credit_analytics/request` | `svc.digitap.ai` | 400 (auth passed, payload rejected) |
+| Endpoint | `api.digitap.ai` | `svc.digitap.ai` | `svcdemo.digitap.work` |
+| --- | --- | --- | --- |
+| `/mobile_prefill/request` | 401 | 401 | 401 |
+| `/credit_analytics/request` | 400 | 400 | 401 |
+
+(400 = the request passed authentication and failed on its payload.) The two
+production hostnames behave identically, so the host is not the variable here.
 
 That 400 is what proves the credentials themselves are valid — the request got
 past authentication and failed on its payload. Enabling the product, and the
