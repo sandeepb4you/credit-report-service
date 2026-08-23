@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"strings"
 	"time"
 )
@@ -101,6 +102,14 @@ type KYCRecord struct {
 	AadhaarPanLinked *bool      `json:"aadhaarPanLinked,omitempty" db:"aadhaar_pan_linked"`
 	Status           string     `json:"status"            db:"status"`
 	Provider         *string    `json:"provider,omitempty" db:"provider"`
+	// ProviderRef is the verification provider's own id for the lookup that
+	// decided this record — the handle their support needs to trace it. Not
+	// serialized to clients: it is an operational detail, of no use in the app.
+	ProviderRef *string `json:"-" db:"provider_ref"`
+	// VerificationAttempts counts failed automated checks since the PAN last
+	// changed, and is what the retry cap is enforced against. Not serialized:
+	// telling a client how many guesses remain helps only an attacker.
+	VerificationAttempts int `json:"-" db:"verification_attempts"`
 	RejectionReason  *string    `json:"rejectionReason,omitempty" db:"rejection_reason"`
 	VerifiedAt       *time.Time `json:"verifiedAt,omitempty" db:"verified_at"`
 	// ReviewedByAccountID / ReviewedAt record which admin made the last
@@ -208,6 +217,29 @@ type KYCReviewPage struct {
 type Profile struct {
 	Account
 	KYC KYCStatus `json:"kyc"`
+}
+
+// PrefillLookup is one call to the Mobile to Prefill API, kept so a PAN
+// verification decision can be explained after the fact.
+//
+// ResponseRaw holds only the fields the service decodes — name, DOB, PAN,
+// official documents — not the whole upstream body. That bound is deliberate:
+// enabling an option at Digitap (addresses, alternate numbers, employment)
+// would otherwise start depositing that data here with no code change and no
+// decision to collect it. Nothing in this struct is served to a client.
+type PrefillLookup struct {
+	ID          int64           `json:"-" db:"id"`
+	AccountID   int64           `json:"-" db:"account_id"`
+	RequestID   *string         `json:"-" db:"request_id"`
+	ClientRef   *string         `json:"-" db:"client_ref"`
+	ResultCode  *int            `json:"-" db:"result_code"`
+	Message     *string         `json:"-" db:"message"`
+	PANMatched  *bool           `json:"-" db:"pan_matched"`
+	NameMatched *bool           `json:"-" db:"name_matched"`
+	Verified    bool            `json:"-" db:"verified"`
+	ProviderGap bool            `json:"-" db:"provider_gap"`
+	ResponseRaw json.RawMessage `json:"-" db:"response_raw"`
+	CreatedAt   time.Time       `json:"-" db:"created_at"`
 }
 
 // PasswordResetToken is the row model for the password_reset_tokens table: the

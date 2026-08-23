@@ -120,6 +120,24 @@ type DigitapConfig struct {
 	ClientID     string        `mapstructure:"client-id"`
 	ClientSecret string        `mapstructure:"client-secret"`
 	Timeout      time.Duration `mapstructure:"timeout"`
+
+	Prefill PrefillConfig `mapstructure:"prefill"`
+}
+
+// PrefillConfig configures the Digitap Mobile to Prefill API (spec v1.4), used
+// to confirm at signup that a PAN and name belong to the mobile number the user
+// just verified over SMS.
+//
+// It is a separate product from Credit Analytics above, on a different host and
+// — per the spec — a separately provisioned client id. ClientID/ClientSecret
+// therefore stand alone, but fall back to the Credit Analytics credentials when
+// left empty, since one Digitap account often covers both. Empty after that
+// fallback means the offline stub.
+type PrefillConfig struct {
+	BaseURL      string        `mapstructure:"base-url"`
+	ClientID     string        `mapstructure:"client-id"`
+	ClientSecret string        `mapstructure:"client-secret"`
+	Timeout      time.Duration `mapstructure:"timeout"`
 }
 
 // AuthConfig holds token and session settings for the auth flows.
@@ -255,6 +273,10 @@ type OTPConfig struct {
 
 type PANConfig struct {
 	NameMatchDistance int `mapstructure:"name-match-distance"`
+	// MaxVerificationAttempts caps failed provider checks per submitted PAN.
+	// PAN-plus-name is guessable for a known person, so an uncapped retry loop
+	// is a brute-force oracle billed to us per call.
+	MaxVerificationAttempts int `mapstructure:"max-verification-attempts"`
 }
 
 type OCRConfig struct {
@@ -391,6 +413,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("registration.otp.max-attempts", 5)
 	v.SetDefault("registration.otp.max-sends", 5)
 	v.SetDefault("registration.pan.name-match-distance", 2)
+	v.SetDefault("registration.pan.max-verification-attempts", 3)
 	v.SetDefault("registration.ocr.provider", "stub")
 	v.SetDefault("registration.ocr.min-confidence", 0.8)
 
@@ -399,6 +422,13 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("digitap.client-id", "")
 	v.SetDefault("digitap.client-secret", "")
 	v.SetDefault("digitap.timeout", "30s")
+	// Mobile to Prefill. Production host by default: unlike Credit Analytics
+	// there is no demo tier in use here, and a UAT host answering production
+	// credentials fails as a 401 that reads like bad credentials.
+	v.SetDefault("digitap.prefill.base-url", "https://svc.digitap.ai/")
+	v.SetDefault("digitap.prefill.client-id", "")
+	v.SetDefault("digitap.prefill.client-secret", "")
+	v.SetDefault("digitap.prefill.timeout", "30s")
 
 	// Structured logging (log/slog). Override level via LOG_LEVEL.
 	// Format defaults to "text" (human-readable) and falls back to it on any
@@ -467,8 +497,11 @@ func allKeys() []string {
 		"registration.otp.resend-cooldown", "registration.otp.max-attempts",
 		"registration.otp.max-sends",
 		"registration.pan.name-match-distance",
+		"registration.pan.max-verification-attempts",
 		"registration.ocr.provider", "registration.ocr.min-confidence",
 		"digitap.base-url", "digitap.client-id", "digitap.client-secret", "digitap.timeout",
+		"digitap.prefill.base-url", "digitap.prefill.client-id",
+		"digitap.prefill.client-secret", "digitap.prefill.timeout",
 		"log.level", "log.format",
 		"utho.api-token", "utho.dc-slug", "utho.bucket", "utho.base-url", "utho.timeout",
 		"cashfree.mode", "cashfree.base-url", "cashfree.client-id",

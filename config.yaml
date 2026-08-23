@@ -102,6 +102,10 @@ registration:
     max-sends: 5
   pan:
     name-match-distance: 2
+    # Failed provider checks allowed per submitted PAN before the account has
+    # to contact support. PAN plus a name is guessable for a known person, so
+    # an uncapped retry loop is a brute-force oracle we pay for per call.
+    max-verification-attempts: 3
   ocr:
     provider: stub          # stub | google-vision
     min-confidence: 0.8
@@ -115,6 +119,18 @@ digitap:
   client-id: ""
   client-secret: ""
   timeout: 30s
+  # Mobile to Prefill (spec v1.4) — the PAN check at signup. A DIFFERENT
+  # Digitap product from Credit Analytics above: different host, and per the
+  # spec a separately provisioned client id, so credentials that work for the
+  # bureau pull can still come back 401 here until the service is enabled.
+  # Leave client-id empty to fall back to digitap.client-id above; empty after
+  # that runs the offline stub, which confirms nothing about the real person.
+  # Override via DIGITAP_PREFILL_CLIENT_ID / DIGITAP_PREFILL_CLIENT_SECRET.
+  prefill:
+    base-url: https://svc.digitap.ai/
+    client-id: ""
+    client-secret: ""
+    timeout: 30s
 
 utho:
   # Utho Cloud object storage — destination for the credit-report PDF relay.

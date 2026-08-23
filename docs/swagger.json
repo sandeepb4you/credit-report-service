@@ -2647,7 +2647,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Accepts a PAN (Permanent Account Number), validates the format, and upserts it against the account's KYC record. A re-submission overwrites any existing PAN and resets verification to PENDING.",
+                "description": "Accepts a PAN and the full name printed on it, then verifies both against the mobile number registered on the account, using Digitap's Mobile to Prefill API. A match returns a VERIFIED record. A mismatch returns 422 and counts against a retry cap. If the provider holds no record for the number, the PAN is stored PENDING and 201 is returned — the user is not blocked for a gap in someone else's data. A re-submission overwrites any existing PAN and resets verification.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2657,10 +2657,10 @@
                 "tags": [
                     "kyc"
                 ],
-                "summary": "Submit the authenticated account's PAN",
+                "summary": "Submit and verify the authenticated account's PAN",
                 "parameters": [
                     {
-                        "description": "PAN to store",
+                        "description": "PAN and full name as printed on the card",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -2690,6 +2690,12 @@
                     },
                     "409": {
                         "description": "PAN already linked to another account",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "PAN or name does not match the mobile number, or retries exhausted",
                         "schema": {
                             "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
@@ -4795,6 +4801,11 @@
         "internal_handler.submitPanReq": {
             "type": "object",
             "properties": {
+                "fullName": {
+                    "description": "FullName as printed on the PAN card. Verified against the name the\nprovider holds for the account's mobile number, with a small edit-distance\ntolerance — it does not have to match character for character.",
+                    "type": "string",
+                    "example": "JOHN DOE"
+                },
                 "pan": {
                     "type": "string",
                     "example": "ABCDE1234F"

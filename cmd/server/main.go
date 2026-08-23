@@ -85,6 +85,26 @@ func main() {
 		Timeout:      cfg.Digitap.Timeout,
 	})
 
+	// Mobile to Prefill — a separate Digitap product from Credit Analytics
+	// above, on its own host. Credentials fall back to the Credit Analytics
+	// pair, since one Digitap account commonly covers both; empty after that
+	// selects the offline stub and PAN verification stops proving anything.
+	prefillID := cfg.Digitap.Prefill.ClientID
+	prefillSecret := cfg.Digitap.Prefill.ClientSecret
+	if prefillID == "" {
+		prefillID, prefillSecret = cfg.Digitap.ClientID, cfg.Digitap.ClientSecret
+	}
+	prefillClient := digitap.NewPrefill(digitap.PrefillConfig{
+		BaseURL:      cfg.Digitap.Prefill.BaseURL,
+		ClientID:     prefillID,
+		ClientSecret: prefillSecret,
+		Timeout:      cfg.Digitap.Prefill.Timeout,
+	})
+	if prefillClient.IsStub() {
+		slog.Warn("digitap prefill credentials are empty; PAN verification runs against the offline stub " +
+			"and confirms nothing about the real person")
+	}
+
 	// Payment gateway: real Cashfree client when credentials are set,
 	// otherwise the log-only stub (dev fallback, like the mail stub).
 	var gateway payments.Gateway
@@ -123,7 +143,12 @@ func main() {
 	if cfg.Demo.Enabled {
 		slog.Warn("DEMO MODE ENABLED: submitted PANs are auto-verified without the external KYC provider; do not use in production")
 	}
-	kycSvc := service.NewKycService(accountRepo, cfg.Demo.Enabled)
+	kycSvc := service.NewKycService(
+		accountRepo,
+		service.NewPrefillVerifier(prefillClient, cfg.Registration.PAN),
+		cfg.Registration.PAN,
+		cfg.Demo.Enabled,
+	)
 	orderSvc := service.NewOrderService(orderRepo, accountRepo, couponSvc, gateway, cfg.Cashfree)
 	loanSwitchSvc := service.NewLoanSwitchService(loanRepo, analyticsRepo)
 	// Enrich analytics insights with interest-reduction opportunities so a single

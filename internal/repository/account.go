@@ -137,6 +137,48 @@ func (r *AccountRepo) UpdateAccount(ctx context.Context, tx pgx.Tx, a *models.Ac
 	return classifyPgErr(err)
 }
 
+// FillNamesIfEmpty writes first/last name only where the account has none, and
+// recomputes profile_completed from the result.
+//
+// Used after PAN verification: the provider has just told us the name on record
+// for this person, which is the same fact the onboarding profile form asks for.
+// Filling it here is what lets a phone signup go straight to the dashboard
+// instead of stopping to retype a name we already hold.
+//
+// Existing values are never overwritten — a name the user entered themselves
+// outranks one inferred from a third party.
+func (r *AccountRepo) FillNamesIfEmpty(ctx context.Context, accountID int64, first, last string) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE accounts a SET
+		        first_name        = f.first,
+		        last_name         = f.last,
+		        profile_completed = (f.first IS NOT NULL AND f.first <> ''
+		                             AND f.last IS NOT NULL AND f.last <> ''),
+		        updated_at        = now()
+		   FROM (SELECT COALESCE(NULLIF(first_name, ''), NULLIF($2, '')) AS first,
+		                COALESCE(NULLIF(last_name,  ''), NULLIF($3, '')) AS last
+		           FROM accounts WHERE id = $1) f
+		  WHERE a.id = $1`,
+		accountID, first, last,
+	)
+	return classifyPgErr(err)
+}
+
+// RecordPrefillLookup stores one provider call. Best-effort by contract: the
+// caller logs a failure and carries on, because losing the audit row must not
+// fail a verification that the provider already answered.
+func (r *AccountRepo) RecordPrefillLookup(ctx context.Context, l *models.PrefillLookup) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO prefill_lookups
+		     (account_id, request_id, client_ref, result_code, message,
+		      pan_matched, name_matched, verified, provider_gap, response_raw)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		l.AccountID, l.RequestID, l.ClientRef, l.ResultCode, l.Message,
+		l.PANMatched, l.NameMatched, l.Verified, l.ProviderGap, l.ResponseRaw,
+	)
+	return classifyPgErr(err)
+}
+
 // ---- auth_identities ----------------------------------------------------
 
 const identityCols = `id, account_id, provider, provider_subject, email, phone,
@@ -309,8 +351,60 @@ func (r *AccountRepo) InvalidatePasswordResetTokens(
 
 const kycCols = `id, account_id, pan_number, pan_name, pan_verified,
     aadhaar_last4, aadhaar_reference, aadhaar_pan_linked, status, provider,
+    provider_ref, verification_attempts,
     rejection_reason, verified_at, reviewed_by_account_id, reviewed_at,
     created_at, updated_at`
+
+// MarkPANVerifiedByProvider records an automated verification: the provider
+// confirmed the PAN and name belong to the account's mobile number.
+//
+// Distinct from VerifyPAN, which records a human decision and stamps a
+// reviewer. Here reviewed_by_account_id stays NULL and provider/provider_ref
+// say which system decided and which lookup decided it, so the two kinds of
+// approval remain tellable apart in an audit.
+func (r *AccountRepo) MarkPANVerifiedByProvider(
+	ctx context.Context, accountID int64, panName, provider, providerRef string,
+) (*models.KYCRecord, error) {
+	var k models.KYCRecord
+	err := pgxscan.Get(ctx, r.pool, &k,
+		`UPDATE kyc_records
+		    SET pan_verified          = true,
+		        status                = 'VERIFIED',
+		        pan_name              = NULLIF($2, ''),
+		        provider              = NULLIF($3, ''),
+		        provider_ref          = NULLIF($4, ''),
+		        rejection_reason      = NULL,
+		        verified_at           = now(),
+		        verification_attempts = 0,
+		        updated_at            = now()
+		  WHERE account_id = $1
+		 RETURNING `+kycCols,
+		accountID, panName, provider, providerRef,
+	)
+	if err != nil {
+		return nil, classifyPgErr(err)
+	}
+	return &k, nil
+}
+
+// RecordPANVerificationAttempt increments the failed-attempt counter and
+// returns the new total, so the caller can enforce the cap.
+func (r *AccountRepo) RecordPANVerificationAttempt(ctx context.Context, accountID int64, providerRef string) (int, error) {
+	var attempts int
+	err := r.pool.QueryRow(ctx,
+		`UPDATE kyc_records
+		    SET verification_attempts = verification_attempts + 1,
+		        provider_ref          = COALESCE(NULLIF($2, ''), provider_ref),
+		        updated_at            = now()
+		  WHERE account_id = $1
+		 RETURNING verification_attempts`,
+		accountID, providerRef,
+	).Scan(&attempts)
+	if err != nil {
+		return 0, classifyPgErr(err)
+	}
+	return attempts, nil
+}
 
 // UpsertPAN inserts a PENDING kyc_records row for the account, or — if one
 // already exists for this account — replaces the PAN and resets verification
@@ -334,6 +428,17 @@ func (r *AccountRepo) UpsertPAN(ctx context.Context, accountID int64, panNumber 
 		        verified_at       = NULL,
 		        reviewed_by_account_id = NULL,
 		        reviewed_at       = NULL,
+		        -- A different PAN is a different claim, so it gets a fresh attempt
+		        -- budget: someone who mistypes twice and then enters the right
+		        -- number would otherwise be locked out by their own typos.
+		        -- Re-submitting the SAME PAN keeps the count, or the cap could be
+		        -- cleared by simply pressing the button again.
+		        verification_attempts = CASE
+		            WHEN kyc_records.pan_number IS DISTINCT FROM EXCLUDED.pan_number
+		            THEN 0 ELSE kyc_records.verification_attempts END,
+		        provider_ref      = CASE
+		            WHEN kyc_records.pan_number IS DISTINCT FROM EXCLUDED.pan_number
+		            THEN NULL ELSE kyc_records.provider_ref END,
 		        updated_at        = now()
 		 RETURNING `+kycCols,
 		accountID, panNumber,

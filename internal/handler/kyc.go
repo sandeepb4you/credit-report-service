@@ -23,21 +23,26 @@ func NewKycHandler(svc *service.KycService) *KycHandler {
 
 type submitPanReq struct {
 	PAN string `json:"pan" example:"ABCDE1234F"`
+	// FullName as printed on the PAN card. Verified against the name the
+	// provider holds for the account's mobile number, with a small edit-distance
+	// tolerance — it does not have to match character for character.
+	FullName string `json:"fullName" example:"JOHN DOE"`
 }
 
 // SubmitPAN godoc
 //
-// @Summary      Submit the authenticated account's PAN
-// @Description  Accepts a PAN (Permanent Account Number), validates the format, and upserts it against the account's KYC record. A re-submission overwrites any existing PAN and resets verification to PENDING.
+// @Summary      Submit and verify the authenticated account's PAN
+// @Description  Accepts a PAN and the full name printed on it, then verifies both against the mobile number registered on the account, using Digitap's Mobile to Prefill API. A match returns a VERIFIED record. A mismatch returns 422 and counts against a retry cap. If the provider holds no record for the number, the PAN is stored PENDING and 201 is returned — the user is not blocked for a gap in someone else's data. A re-submission overwrites any existing PAN and resets verification.
 // @Tags         kyc
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        request  body      submitPanReq  true  "PAN to store"
+// @Param        request  body      submitPanReq  true  "PAN and full name as printed on the card"
 // @Success      201      {object}  models.KYCRecord
 // @Failure      400      {object}  apperr.ErrorBody  "Invalid JSON body / PAN format"
 // @Failure      401      {object}  apperr.ErrorBody  "Not authenticated"
 // @Failure      409      {object}  apperr.ErrorBody  "PAN already linked to another account"
+// @Failure      422      {object}  apperr.ErrorBody  "PAN or name does not match the mobile number, or retries exhausted"
 // @Router       /kyc/pan [post]
 func (h *KycHandler) SubmitPAN(c *fiber.Ctx) error {
 	accountID, ok := middleware.AccountID(c)
@@ -49,12 +54,18 @@ func (h *KycHandler) SubmitPAN(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return apperr.NewValidation("invalid JSON body")
 	}
+	missing := map[string]string{}
 	if strings.TrimSpace(req.PAN) == "" {
-		return apperr.NewValidationWith("Validation failed",
-			map[string]string{"pan": "pan is required"})
+		missing["pan"] = "pan is required"
+	}
+	if strings.TrimSpace(req.FullName) == "" {
+		missing["fullName"] = "fullName is required"
+	}
+	if len(missing) > 0 {
+		return apperr.NewValidationWith("Validation failed", missing)
 	}
 
-	rec, err := h.svc.SubmitPAN(c.Context(), accountID, req.PAN)
+	rec, err := h.svc.SubmitPAN(c.Context(), accountID, req.PAN, req.FullName)
 	if err != nil {
 		return err
 	}

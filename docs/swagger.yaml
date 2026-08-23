@@ -1216,6 +1216,13 @@ definitions:
     type: object
   internal_handler.submitPanReq:
     properties:
+      fullName:
+        description: |-
+          FullName as printed on the PAN card. Verified against the name the
+          provider holds for the account's mobile number, with a small edit-distance
+          tolerance — it does not have to match character for character.
+        example: JOHN DOE
+        type: string
       pan:
         example: ABCDE1234F
         type: string
@@ -3084,11 +3091,15 @@ paths:
     post:
       consumes:
       - application/json
-      description: Accepts a PAN (Permanent Account Number), validates the format,
-        and upserts it against the account's KYC record. A re-submission overwrites
-        any existing PAN and resets verification to PENDING.
+      description: Accepts a PAN and the full name printed on it, then verifies both
+        against the mobile number registered on the account, using Digitap's Mobile
+        to Prefill API. A match returns a VERIFIED record. A mismatch returns 422
+        and counts against a retry cap. If the provider holds no record for the number,
+        the PAN is stored PENDING and 201 is returned — the user is not blocked for
+        a gap in someone else's data. A re-submission overwrites any existing PAN
+        and resets verification.
       parameters:
-      - description: PAN to store
+      - description: PAN and full name as printed on the card
         in: body
         name: request
         required: true
@@ -3113,9 +3124,13 @@ paths:
           description: PAN already linked to another account
           schema:
             $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "422":
+          description: PAN or name does not match the mobile number, or retries exhausted
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
       security:
       - BearerAuth: []
-      summary: Submit the authenticated account's PAN
+      summary: Submit and verify the authenticated account's PAN
       tags:
       - kyc
   /kyc/status:
