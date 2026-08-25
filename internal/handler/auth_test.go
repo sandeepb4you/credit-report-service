@@ -757,3 +757,87 @@ func TestStubMailer_Close(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// ---- phone registration handler tests ----
+//
+// The service call needs a database, so these cover what the handler decides on
+// its own: that a session is required, and that a malformed body or OTP is
+// rejected before the service is reached (h.svc is nil, so anything that got
+// through would panic rather than pass).
+
+func TestSendPhoneRegistration_Unauthenticated(t *testing.T) {
+	h := NewAuthHandler(nil, nil, false)
+	app := newApp()
+	app.Post("/api/auth/phone/send", h.SendPhoneRegistration)
+
+	body, _ := json.Marshal(map[string]string{"phone": "9876543210"})
+	req := httptest.NewRequest("POST", "/api/auth/phone/send", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 401 {
+		t.Errorf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestSendPhoneRegistration_BadBody(t *testing.T) {
+	h := NewAuthHandler(nil, nil, false)
+	app := newApp()
+	app.Use(func(c *fiber.Ctx) error {
+		c.Locals("accountID", int64(1))
+		return c.Next()
+	})
+	app.Post("/api/auth/phone/send", h.SendPhoneRegistration)
+
+	req := httptest.NewRequest("POST", "/api/auth/phone/send", bytes.NewReader([]byte("not-json")))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 400 {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestVerifyPhoneRegistration_Unauthenticated(t *testing.T) {
+	h := NewAuthHandler(nil, nil, false)
+	app := newApp()
+	app.Post("/api/auth/phone/verify", h.VerifyPhoneRegistration)
+
+	body, _ := json.Marshal(map[string]string{"phone": "9876543210", "otp": "1234"})
+	req := httptest.NewRequest("POST", "/api/auth/phone/verify", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 401 {
+		t.Errorf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestVerifyPhoneRegistration_BadOTP(t *testing.T) {
+	h := NewAuthHandler(nil, nil, false)
+	app := newApp()
+	app.Use(func(c *fiber.Ctx) error {
+		c.Locals("accountID", int64(1))
+		return c.Next()
+	})
+	app.Post("/api/auth/phone/verify", h.VerifyPhoneRegistration)
+
+	for _, otp := range []string{"", "12", "abcd", "123456789"} {
+		body, _ := json.Marshal(map[string]string{"phone": "9876543210", "otp": otp})
+		req := httptest.NewRequest("POST", "/api/auth/phone/verify", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != 400 {
+			t.Errorf("otp %q: status = %d, want 400", otp, resp.StatusCode)
+		}
+	}
+}

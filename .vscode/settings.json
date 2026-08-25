@@ -1,0 +1,21 @@
+{
+  "go.useLanguageServer": true,
+  "gopls": {
+    "ui.semanticTokens": true
+  },
+  // Format + organize imports on save, matching gofmt output in the repo.
+  "editor.formatOnSave": true,
+  "[go]": {
+    "editor.defaultFormatter": "golang.go",
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "explicit"
+    }
+  },
+  "go.lintOnSave": "package",
+  "go.vetOnSave": "package",
+  // config.dev.yaml is gitignored and holds live credentials; keep it out of
+  // quick-open/search noise but still openable by path.
+  "search.exclude": {
+    "**/docs/digitap/**": true
+  }
+}

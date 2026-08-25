@@ -10,9 +10,9 @@ __debug_bin*
 # Local data (PAN image uploads)
 /data/
 
-# Editor / IDE
+# Editor / IDE. .vscode/ is deliberately TRACKED — its run configs set
+# APP_PROFILE=dev, without which startup dies against the closed prod DB.
 /.idea/
-/.vscode/
 *.iml
 
 /.zcode/

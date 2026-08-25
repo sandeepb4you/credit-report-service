@@ -48,18 +48,23 @@ cleared by pressing the button again.
 
 ```yaml
 digitap:
+  base-url: https://api.digitap.ai/        # UAT: https://svcdemo.digitap.work/
+  client-id: "..."                         # one pair serves BOTH products
+  client-secret: "..."
   prefill:
-    base-url: https://api.digitap.ai/      # UAT: https://svcdemo.digitap.work/
-    client-id: ""                          # falls back to digitap.client-id
+    client-id: ""                          # empty -> falls back to digitap.client-id
     client-secret: ""
 ```
 
 Env: `DIGITAP_PREFILL_CLIENT_ID` / `DIGITAP_PREFILL_CLIENT_SECRET`.
 
-**Mobile to Prefill is provisioned per client id, separately from Credit
-Analytics.** A credential pair that authenticates fine for the bureau pull can
-still return `401 Client Authentication Failed` here. Verified against the live
-API on 2026-08-23:
+**Mobile to Prefill and Credit Analytics share one host and one credential
+pair.** Leave the `prefill.*` credentials empty: `cmd/server/main.go` falls the
+PAN check back to `digitap.client-id`/`-secret`. The `prefill.*` keys exist only
+in case Digitap ever issues a distinct pair.
+
+That was not always so. Against the earlier client id `36537966`, the live API
+answered on 2026-08-23:
 
 | Endpoint | `api.digitap.ai` | `svc.digitap.ai` | `svcdemo.digitap.work` |
 | --- | --- | --- | --- |
@@ -73,8 +78,9 @@ That 400 is what proves the credentials themselves are valid — the request got
 past authentication and failed on its payload. Enabling the product, and the
 name-lookup service inside it, is a request to the Digitap RM.
 
-Note also that `digitap.base-url` (Credit Analytics) still points at the demo
-host while the credentials are production, so that pull would 401 too.
+`digitap.base-url` defaults to the production host for both products as of
+2026-08-25; it was `apidemo.digitap.work` before that, which rejected production
+credentials, so every environment had to override the host as well.
 
 ### Checking it without the app
 

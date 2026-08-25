@@ -136,6 +136,14 @@ func New(
 
 	// Sessions / signed-in devices. Mounted on the same /auth group but behind
 	// RequireAuth, unlike the public flows above.
+	// Mobile-number registration for an account that already has a session —
+	// the mandatory step after an email signup, which arrives with a verified
+	// email and no number. Behind RequireAuth, unlike the /auth/otp/phone/*
+	// sign-in pair, so the number lands on the caller's own account and cannot
+	// switch them into the account that already owns it.
+	a.Post("/phone/send", requireAuth, auth.SendPhoneRegistration)
+	a.Post("/phone/verify", requireAuth, auth.VerifyPhoneRegistration)
+
 	a.Post("/logout", requireAuth, auth.Logout)
 	a.Get("/sessions", requireAuth, auth.ListSessions)
 	a.Delete("/sessions", requireAuth, auth.RevokeOtherSessions)

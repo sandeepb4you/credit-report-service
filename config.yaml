@@ -115,17 +115,22 @@ digitap:
   #   DIGITAP_CLIENT_ID, DIGITAP_CLIENT_SECRET
   # When client-id is empty, the service runs the upstream client in an offline
   # stub mode (no outbound HTTP) so the build/tests work without credentials.
-  base-url: https://apidemo.digitap.work/
+  # Production host. It was apidemo.digitap.work until 2026-08-25, which meant
+  # every environment had to override the host alongside its credentials, and
+  # production credentials 401 against the demo host. Set DIGITAP_BASE_URL to
+  # https://svcdemo.digitap.work/ for UAT.
+  base-url: https://api.digitap.ai/
   client-id: ""
   client-secret: ""
   timeout: 30s
-  # Mobile to Prefill (spec v1.4) — the PAN check at signup. A DIFFERENT
-  # Digitap product from Credit Analytics above: different host, and per the
-  # spec a separately provisioned client id, so credentials that work for the
-  # bureau pull can still come back 401 here until the service is enabled.
-  # Leave client-id empty to fall back to digitap.client-id above; empty after
-  # that runs the offline stub, which confirms nothing about the real person.
-  # Override via DIGITAP_PREFILL_CLIENT_ID / DIGITAP_PREFILL_CLIENT_SECRET.
+  # Mobile to Prefill (spec v1.4) — the PAN check at signup. A separate Digitap
+  # product from Credit Analytics above, but it runs on the SAME host and the
+  # SAME credential pair: leaving these empty makes the PAN check fall back to
+  # digitap.client-id/-secret, which is the intended arrangement. (The v1.4 spec
+  # describes a separately provisioned client id; that is out of date.) Empty
+  # after the fallback runs the offline stub, which confirms nothing about the
+  # real person. Override via DIGITAP_PREFILL_CLIENT_ID / _SECRET only if
+  # Digitap ever does issue a distinct pair.
   prefill:
     base-url: https://api.digitap.ai/
     client-id: ""

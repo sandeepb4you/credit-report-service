@@ -28,6 +28,14 @@ const (
 	OtpPurposeSignup = "signup"
 	OtpPurposeLogin  = "login"
 	OtpPurposeReset  = "reset"
+
+	// OtpPurposeAddIdentity verifies a contact point for an account that already
+	// exists and is already signed in — today, the mandatory mobile number on an
+	// email signup. Deliberately not OtpPurposeLogin: a login challenge is
+	// find-or-create and keyed on the number alone, so redeeming one signs the
+	// caller into whichever account owns that number. These challenges are bound
+	// to the account that requested them and can only ever add to it.
+	OtpPurposeAddIdentity = "add_identity"
 )
 
 // Account is the row model for the accounts table: one per user. Nullable

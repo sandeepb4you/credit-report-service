@@ -96,6 +96,8 @@ All routes are under `/api`. 🔒 = requires `Authorization: Bearer <jwt>`.
 | POST   | `/api/auth/verify-email`                   |          | Verify OTP, activate account, return JWT     |
 | POST   | `/api/auth/otp/resend`                     |          | Resend signup OTP                            |
 | POST   | `/api/auth/login`                          |          | Email + password login, return JWT           |
+| POST   | `/api/auth/phone/send`                     | 🔒       | Register a mobile number: send an SMS OTP    |
+| POST   | `/api/auth/phone/verify`                   | 🔒       | Verify it, attach the number to the account  |
 | POST   | `/api/auth/password/forgot`                |          | Email a password-reset OTP                   |
 | POST   | `/api/auth/password/verify-otp`            |          | Reset OTP → single-use `resetToken`          |
 | POST   | `/api/auth/password/reset`                 |          | Set a new password, sign out every device    |
@@ -115,6 +117,14 @@ All routes are under `/api`. 🔒 = requires `Authorization: Bearer <jwt>`.
    activates the account, and returns `{token, expiresAt, account}`.
 3. Use the `token` as `Authorization: Bearer <token>` for protected routes.
    `POST /api/auth/login` re-issues a token for a verified account.
+4. `POST /api/auth/phone/send` then `/api/auth/phone/verify`, both with that
+   bearer token — registers a mobile number onto the account. Mandatory for an
+   email signup: PAN verification checks the PAN against the account's number
+   (`internal/service/pan_prefill.go`), so an account without one has no route
+   through KYC. These are **not** `/api/auth/otp/phone/*`, which are public,
+   find-or-create, and sign a number *in* — sending a signed-in user down that
+   path would switch them into whichever account already owns the number.
+   See `internal/service/phone_register.go`.
 
 ## Forgot password
 

@@ -223,6 +223,90 @@ func (h *AuthHandler) VerifyPhoneOTP(c *fiber.Ctx) error {
 	return h.respondAuth(c, res, middleware.Device(c).IsWeb())
 }
 
+// ---- POST /api/auth/phone/send -------------------------------------------
+//
+// Registering a mobile number onto the signed-in account, as opposed to the
+// /auth/otp/phone/* pair above, which signs a number *in*. Both are authed
+// differently for a reason: these two require a session and act on it, so the
+// number can only ever be added to the caller's own account.
+
+type phoneRegisterSendReq struct {
+	Phone string `json:"phone" example:"+919876543210"`
+}
+
+// SendPhoneRegistration godoc
+//
+// @Summary      Send an OTP to register a mobile number
+// @Description  Sends a one-time code to the mobile number the signed-in account wants to register. Mandatory for email signups: PAN verification checks the PAN against the account's mobile number, so an account without one cannot complete KYC. Refuses a number already registered to another account. Same cooldown / send limits as every other OTP.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        request  body      phoneRegisterSendReq  true  "Mobile number"
+// @Success      200      {object}  map[string]string  "{\"message\": \"Verification code sent\"}"
+// @Failure      400      {object}  apperr.ErrorBody  "Validation failed"
+// @Failure      401      {object}  apperr.ErrorBody  "Not authenticated"
+// @Failure      409      {object}  apperr.ErrorBody  "Number already registered / resend cooldown / send limit reached"
+// @Router       /auth/phone/send [post]
+func (h *AuthHandler) SendPhoneRegistration(c *fiber.Ctx) error {
+	accountID, ok := middleware.AccountID(c)
+	if !ok {
+		return apperr.NewUnauthorized("Not authenticated")
+	}
+	var req phoneRegisterSendReq
+	if err := c.BodyParser(&req); err != nil {
+		return apperr.NewValidation("invalid JSON body")
+	}
+	if err := h.svc.SendPhoneRegistrationOTP(
+		c.Context(), accountID, strings.TrimSpace(req.Phone)); err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"message": "Verification code sent"})
+}
+
+// ---- POST /api/auth/phone/verify -----------------------------------------
+
+type phoneRegisterVerifyReq struct {
+	Phone string `json:"phone" example:"+919876543210"`
+	OTP   string `json:"otp"   example:"1234"`
+}
+
+// VerifyPhoneRegistration godoc
+//
+// @Summary      Verify and register a mobile number
+// @Description  Checks the code sent by POST /auth/phone/send and attaches the number to the signed-in account as a verified phone identity. Returns the updated profile, in the same shape as GET /profile. No new session is issued — the access token is unaffected, so the client keeps the one it has.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        request  body      phoneRegisterVerifyReq  true  "Phone + OTP"
+// @Success      200      {object}  models.Profile
+// @Failure      400      {object}  apperr.ErrorBody  "Validation failed / wrong / expired / locked OTP"
+// @Failure      401      {object}  apperr.ErrorBody  "Not authenticated"
+// @Failure      409      {object}  apperr.ErrorBody  "Number already registered to another account"
+// @Router       /auth/phone/verify [post]
+func (h *AuthHandler) VerifyPhoneRegistration(c *fiber.Ctx) error {
+	accountID, ok := middleware.AccountID(c)
+	if !ok {
+		return apperr.NewUnauthorized("Not authenticated")
+	}
+	var req phoneRegisterVerifyReq
+	if err := c.BodyParser(&req); err != nil {
+		return apperr.NewValidation("invalid JSON body")
+	}
+	req.OTP = strings.TrimSpace(req.OTP)
+	if !otpCodeRE.MatchString(req.OTP) {
+		return apperr.NewValidationWith("Validation failed",
+			map[string]string{"otp": "otp must be 4-8 digits"})
+	}
+	prof, err := h.svc.VerifyPhoneRegistration(
+		c.Context(), accountID, strings.TrimSpace(req.Phone), req.OTP)
+	if err != nil {
+		return err
+	}
+	return c.JSON(prof)
+}
+
 // ---- POST /api/auth/login -----------------------------------------------
 
 type loginReq struct {

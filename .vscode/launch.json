@@ -1,0 +1,42 @@
+{
+  // Debug configs for cmd/server. APP_PROFILE=dev merges config.dev.yaml
+  // (gitignored, holds the real Digitap/MSG91 creds and the local DB url)
+  // on top of config.yaml — without it the base config points at the EC2 box,
+  // whose 5432 is closed, and startup dies on the migration step.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run server (dev)",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/server",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "APP_PROFILE": "dev"
+      }
+    },
+    {
+      // Same, with slog at debug level — upstream request/response detail.
+      "name": "Run server (dev, debug logs)",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/server",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "APP_PROFILE": "dev",
+        "LOG_LEVEL": "debug"
+      }
+    },
+    {
+      // Runs whichever *_test.go package is open in the editor.
+      "name": "Test current package",
+      "type": "go",
+      "request": "launch",
+      "mode": "test",
+      "program": "${fileDirname}",
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

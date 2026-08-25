@@ -418,7 +418,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("registration.ocr.min-confidence", 0.8)
 
 	// Digitap Credit Analytics API. Empty client-id -> offline stub client.
-	v.SetDefault("digitap.base-url", "https://apidemo.digitap.work/")
+	v.SetDefault("digitap.base-url", "https://api.digitap.ai/")
 	v.SetDefault("digitap.client-id", "")
 	v.SetDefault("digitap.client-secret", "")
 	v.SetDefault("digitap.timeout", "30s")
