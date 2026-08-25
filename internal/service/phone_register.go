@@ -63,58 +63,10 @@ func (s *AuthService) SendPhoneRegistrationOTP(ctx context.Context, accountID in
 		return err
 	}
 
-	ch, err := s.accounts.FindActiveChallenge(ctx, normalized, models.OtpPurposeAddIdentity)
-	if errors.Is(err, repository.ErrNotFound) {
-		ch = nil
-	} else if err != nil {
-		return err
-	}
-	// Same expiry rule as issueAndSend: a dead challenge must not pin its
-	// exhausted send_count on the number forever.
-	if ch != nil && ch.ExpiresAt != nil && ch.ExpiresAt.Before(time.Now().UTC()) {
-		ch = nil
-	}
-	// Someone else's abandoned attempt on this number must not spend this
-	// caller's sends — or, worse, be resumable by them. Start a fresh challenge;
-	// the stale one stays unconsumed and expires on its own.
-	if ch != nil && (ch.AccountID == nil || *ch.AccountID != accountID) {
-		ch = nil
-	}
-	if ch == nil {
-		ch = &models.OtpChallenge{
-			AccountID:   &accountID,
-			Channel:     models.ChannelSMS,
-			Destination: normalized,
-			Purpose:     models.OtpPurposeAddIdentity,
-		}
-	}
-
-	plain, err := s.otp.Issue(ch)
+	plain, err := s.issueAddIdentityChallenge(ctx, accountID, models.ChannelSMS, normalized)
 	if err != nil {
 		return err
 	}
-
-	tx, err := s.accounts.BeginTx(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	if ch.ID == 0 {
-		if err := s.accounts.CreateChallenge(ctx, tx, ch); err != nil {
-			return err
-		}
-	} else {
-		if err := s.accounts.UpdateChallenge(ctx, tx, ch); err != nil {
-			return err
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return err
-	}
-
-	// Deliver only after the challenge is committed, matching issueAndSend and
-	// SendPhoneOTP: a code the user can receive but we have not stored is worse
-	// than the reverse.
 	return s.sms.SendOTP(ctx, normalized, plain)
 }
 
@@ -133,32 +85,10 @@ func (s *AuthService) VerifyPhoneRegistration(
 		return nil, err
 	}
 
-	ch, err := s.accounts.FindActiveChallenge(ctx, normalized, models.OtpPurposeAddIdentity)
-	if errors.Is(err, repository.ErrNotFound) {
-		return nil, apperr.NewOtpFailure("No pending verification; request a new code")
-	}
+	ch, err := s.verifyAddIdentityChallenge(
+		ctx, accountID, normalized, otp, sms.MaskPhone(normalized))
 	if err != nil {
 		return nil, err
-	}
-	// A challenge raised by another account is reported as no challenge at all.
-	// Saying "that code isn't yours" would confirm someone else is registering
-	// this number, and the code is not ours to spend attempts against.
-	if ch.AccountID == nil || *ch.AccountID != accountID {
-		slog.Warn("phone registration: challenge belongs to another account",
-			"account_id", accountID, "destination", sms.MaskPhone(normalized))
-		return nil, apperr.NewOtpFailure("No pending verification; request a new code")
-	}
-
-	if verr := s.otp.Verify(ch, otp); verr != nil {
-		// Persist the incremented attempt counter, then surface the failure.
-		if tx, err := s.accounts.BeginTx(ctx); err == nil {
-			_ = s.accounts.UpdateChallenge(ctx, tx, ch)
-			_ = tx.Commit(ctx)
-		}
-		slog.Warn("phone registration otp failed",
-			"account_id", accountID, "destination", sms.MaskPhone(normalized),
-			"attempts", ch.Attempts, "error", verr.Error())
-		return nil, verr
 	}
 
 	acc, err := s.accounts.FindByID(ctx, accountID)

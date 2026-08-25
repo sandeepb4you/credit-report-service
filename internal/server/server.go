@@ -144,6 +144,12 @@ func New(
 	a.Post("/phone/send", requireAuth, auth.SendPhoneRegistration)
 	a.Post("/phone/verify", requireAuth, auth.VerifyPhoneRegistration)
 
+	// The mirror: linking an email onto a phone signup. Optional where the
+	// number is mandatory, and authenticated for the same reason — the address
+	// joins the caller's own account rather than signing them into another.
+	a.Post("/email/send", requireAuth, auth.SendEmailLink)
+	a.Post("/email/verify", requireAuth, auth.VerifyEmailLink)
+
 	a.Post("/logout", requireAuth, auth.Logout)
 	a.Get("/sessions", requireAuth, auth.ListSessions)
 	a.Delete("/sessions", requireAuth, auth.RevokeOtherSessions)

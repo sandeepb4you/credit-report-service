@@ -841,3 +841,89 @@ func TestVerifyPhoneRegistration_BadOTP(t *testing.T) {
 		}
 	}
 }
+
+// ---- email link handler tests ----
+//
+// As with the phone pair, the service call needs a database, so these cover what
+// the handler settles on its own (h.svc is nil, so anything reaching it panics
+// rather than passing).
+
+func TestSendEmailLink_Unauthenticated(t *testing.T) {
+	h := NewAuthHandler(nil, nil, false)
+	app := newApp()
+	app.Post("/api/auth/email/send", h.SendEmailLink)
+
+	body, _ := json.Marshal(map[string]string{"email": "user@example.com"})
+	req := httptest.NewRequest("POST", "/api/auth/email/send", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 401 {
+		t.Errorf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestSendEmailLink_InvalidEmail(t *testing.T) {
+	h := NewAuthHandler(nil, nil, false)
+	app := newApp()
+	app.Use(func(c *fiber.Ctx) error {
+		c.Locals("accountID", int64(1))
+		return c.Next()
+	})
+	app.Post("/api/auth/email/send", h.SendEmailLink)
+
+	for _, email := range []string{"", "not-an-email", "@example.com"} {
+		body, _ := json.Marshal(map[string]string{"email": email})
+		req := httptest.NewRequest("POST", "/api/auth/email/send", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != 400 {
+			t.Errorf("email %q: status = %d, want 400", email, resp.StatusCode)
+		}
+	}
+}
+
+func TestVerifyEmailLink_Unauthenticated(t *testing.T) {
+	h := NewAuthHandler(nil, nil, false)
+	app := newApp()
+	app.Post("/api/auth/email/verify", h.VerifyEmailLink)
+
+	body, _ := json.Marshal(map[string]string{"email": "user@example.com", "otp": "1234"})
+	req := httptest.NewRequest("POST", "/api/auth/email/verify", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 401 {
+		t.Errorf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestVerifyEmailLink_BadOTP(t *testing.T) {
+	h := NewAuthHandler(nil, nil, false)
+	app := newApp()
+	app.Use(func(c *fiber.Ctx) error {
+		c.Locals("accountID", int64(1))
+		return c.Next()
+	})
+	app.Post("/api/auth/email/verify", h.VerifyEmailLink)
+
+	for _, otp := range []string{"", "12", "abcd", "123456789"} {
+		body, _ := json.Marshal(map[string]string{"email": "user@example.com", "otp": otp})
+		req := httptest.NewRequest("POST", "/api/auth/email/verify", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != 400 {
+			t.Errorf("otp %q: status = %d, want 400", otp, resp.StatusCode)
+		}
+	}
+}

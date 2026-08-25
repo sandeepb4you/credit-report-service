@@ -22,6 +22,11 @@ mail:
 
 sms:
   # Transactional SMS (the phone sign-in OTP). MSG91 v5 Flow API.
+  #
+  # msg91 | stub. "stub" never contacts the provider and sends nothing, whatever
+  # auth-key is set — that is how a local run avoids texting real people while
+  # real credentials sit in the gitignored config.dev.yaml. An empty auth-key
+  # falls back to the stub too.
   provider: msg91
   msg91:
     # SECRET. Empty -> stub sender: nothing is sent, and nothing is logged
@@ -70,8 +75,20 @@ auth:
     length: 4
     ttl: 10m
     resend-cooldown: 30s
+    # The keyspace at length 4 is 10,000, so THIS is what makes the code safe,
+    # not the digit count. Treat it as a security control.
     max-attempts: 5
     max-sends: 5
+    # A fixed code accepted in place of any real OTP, on every flow. Empty here
+    # on purpose: this file is tracked and baked into the image, so the shipped
+    # value is "no bypass".
+    #
+    # Set it in the gitignored config.dev.yaml (or AUTH_OTP_MASTER_CODE) to
+    # complete an OTP screen on a machine with no SMS/SMTP provider — no sender
+    # ever logs the real code. config.Load REFUSES TO START the service if it is
+    # set under any APP_PROFILE other than dev/local, so it cannot reach a
+    # deployment by accident.
+    master-code: ""
 
 multipart:
   max-file-size: 5MB

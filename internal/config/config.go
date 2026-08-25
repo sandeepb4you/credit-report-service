@@ -207,9 +207,11 @@ type MailConfig struct {
 // SMSConfig holds transactional-SMS delivery settings. Only the phone sign-in
 // OTP goes out over SMS today.
 //
-// Provider is informational — the real switch is whether MSG91.AuthKey is set.
-// An empty auth key falls back to the log-only stub sender, the same
-// empty-credentials-⇒-stub convention as mail, Cashfree, Digitap and Utho.
+// Provider selects the sender outright: "stub" never contacts a provider, and
+// is how a local run avoids texting real people while a real auth key sits in
+// config.dev.yaml. Any other value falls back to the empty-credentials-⇒-stub
+// convention shared with mail, Cashfree, Digitap and Utho — an empty auth key
+// also yields the stub.
 type SMSConfig struct {
 	Provider string      `mapstructure:"provider"` // msg91 | stub
 	MSG91    MSG91Config `mapstructure:"msg91"`
@@ -269,6 +271,15 @@ type OTPConfig struct {
 	ResendCooldown time.Duration `mapstructure:"resend-cooldown"`
 	MaxAttempts    int           `mapstructure:"max-attempts"`
 	MaxSends       int           `mapstructure:"max-sends"`
+	// MasterCode is a fixed code accepted in place of any real OTP, so a sign-in
+	// can be completed on a machine with no SMS or SMTP provider configured.
+	//
+	// It is an unconditional authentication bypass across every OTP flow, so it
+	// is empty by default — which is the value baked into the tracked config and
+	// therefore into every image — and Load REFUSES TO START the service if it
+	// is set under a non-local APP_PROFILE. Set it in the gitignored
+	// config.dev.yaml, or via AUTH_OTP_MASTER_CODE, and nowhere else.
+	MasterCode string `mapstructure:"master-code"`
 }
 
 type PANConfig struct {
@@ -336,7 +347,49 @@ func Load(profile string) (*Config, error) {
 		cfg.Server.TrustedProxies = splitList(raw)
 	}
 
+	if err := cfg.validateLocalOnly(profile); err != nil {
+		return nil, err
+	}
+
 	return &cfg, nil
+}
+
+// localProfiles are the APP_PROFILE values that count as a developer machine.
+//
+// An empty profile is deliberately NOT one of them: a deployment runs config.yaml
+// with no overlay, so treating "" as local would make the bypasses below available
+// in exactly the place they must never be. Fail closed — a new local profile has
+// to be added here on purpose.
+var localProfiles = map[string]bool{"dev": true, "local": true}
+
+// validateLocalOnly refuses to start when a local-development bypass is set under
+// a profile that is not local.
+//
+// Refusing rather than quietly ignoring it: a deployment carrying an
+// authentication bypass in its config is a mistake that must be seen, and a
+// service that boots anyway hides it until someone tries "1234" in production.
+// Only auth.otp.master-code is checked: registration.otp is not wired to any
+// service (NewOTPService is built from Auth.OTP alone), so a master code set
+// there does nothing, and guarding it would imply otherwise.
+func (c *Config) validateLocalOnly(profile string) error {
+	if c.Auth.OTP.MasterCode == "" {
+		return nil
+	}
+	if !localProfiles[profile] {
+		return fmt.Errorf(
+			"auth.otp.master-code is set under APP_PROFILE=%q, which is not a local profile: "+
+				"the master code is an authentication bypass for every OTP flow and must only "+
+				"exist on a developer machine (local profiles: dev, local). Unset it in config, "+
+				"or unset AUTH_OTP_MASTER_CODE",
+			profile)
+	}
+	if len(c.Auth.OTP.MasterCode) != c.Auth.OTP.Length {
+		return fmt.Errorf(
+			"auth.otp.master-code must be %d digits to match auth.otp.length; the app's code "+
+				"field stops accepting input at that many, so a longer one cannot be typed in",
+			c.Auth.OTP.Length)
+	}
+	return nil
 }
 
 // splitList parses a comma-separated env value, dropping blanks.
@@ -396,6 +449,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("auth.otp.resend-cooldown", "30s")
 	v.SetDefault("auth.otp.max-attempts", 5)
 	v.SetDefault("auth.otp.max-sends", 5)
+	// Empty: no master code. See OTPConfig.MasterCode — this default is what
+	// ships in the image, and the service refuses to boot with it set outside a
+	// local profile.
+	v.SetDefault("auth.otp.master-code", "")
 	// Admin allowlist: accounts whose email matches get role=admin at verify/login.
 	// Defaults to empty (no admins). Set via AUTH_ADMIN_EMAILS=a@x.com,b@y.com.
 	v.SetDefault("auth.admin-emails", []string{})

@@ -158,3 +158,66 @@ func TestLoad_BadProfileFile(t *testing.T) {
 		t.Fatal("expected error for invalid profile YAML")
 	}
 }
+
+// ---- master-code profile gate ----
+//
+// The master code is an authentication bypass for every OTP flow, so the thing
+// worth testing is not that it loads but that a non-local profile refuses to
+// start at all.
+
+func writeMasterCodeConfig(t *testing.T, code string) {
+	t.Helper()
+	dir := t.TempDir()
+	content := `auth:
+  jwt-secret: test-secret
+  otp:
+    length: 4
+    master-code: "` + code + `"
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	t.Cleanup(func() { os.Chdir(origDir) })
+}
+
+func TestLoad_MasterCode_RejectedOutsideLocalProfile(t *testing.T) {
+	// The empty profile is the important case: a deployment runs config.yaml with
+	// no overlay, so "" must not count as local.
+	for _, profile := range []string{"", "prod", "staging"} {
+		writeMasterCodeConfig(t, "1234")
+		if _, err := Load(profile); err == nil {
+			t.Errorf("Load(%q) accepted a master code outside a local profile", profile)
+		}
+	}
+}
+
+func TestLoad_MasterCode_AllowedOnLocalProfiles(t *testing.T) {
+	for _, profile := range []string{"dev", "local"} {
+		writeMasterCodeConfig(t, "1234")
+		cfg, err := Load(profile)
+		if err != nil {
+			t.Fatalf("Load(%q) = %v, want nil", profile, err)
+		}
+		if cfg.Auth.OTP.MasterCode != "1234" {
+			t.Errorf("Load(%q) master code = %q, want 1234", profile, cfg.Auth.OTP.MasterCode)
+		}
+	}
+}
+
+func TestLoad_MasterCode_MustMatchOTPLength(t *testing.T) {
+	// The app's code field stops accepting input at auth.otp.length, so a longer
+	// master code is one nobody can type.
+	writeMasterCodeConfig(t, "123456")
+	if _, err := Load("dev"); err == nil {
+		t.Error("Load accepted a master code longer than auth.otp.length")
+	}
+}
+
+func TestLoad_NoMasterCode_LoadsAnywhere(t *testing.T) {
+	writeMasterCodeConfig(t, "")
+	if _, err := Load("prod"); err != nil {
+		t.Errorf("Load(prod) with no master code = %v, want nil", err)
+	}
+}

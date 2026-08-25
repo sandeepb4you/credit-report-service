@@ -98,6 +98,8 @@ All routes are under `/api`. 🔒 = requires `Authorization: Bearer <jwt>`.
 | POST   | `/api/auth/login`                          |          | Email + password login, return JWT           |
 | POST   | `/api/auth/phone/send`                     | 🔒       | Register a mobile number: send an SMS OTP    |
 | POST   | `/api/auth/phone/verify`                   | 🔒       | Verify it, attach the number to the account  |
+| POST   | `/api/auth/email/send`                     | 🔒       | Link an email address: send an OTP           |
+| POST   | `/api/auth/email/verify`                   | 🔒       | Verify it, attach the address to the account |
 | POST   | `/api/auth/password/forgot`                |          | Email a password-reset OTP                   |
 | POST   | `/api/auth/password/verify-otp`            |          | Reset OTP → single-use `resetToken`          |
 | POST   | `/api/auth/password/reset`                 |          | Set a new password, sign out every device    |
@@ -125,6 +127,13 @@ All routes are under `/api`. 🔒 = requires `Authorization: Bearer <jwt>`.
    find-or-create, and sign a number *in* — sending a signed-in user down that
    path would switch them into whichever account already owns the number.
    See `internal/service/phone_register.go`.
+5. `POST /api/auth/email/send` then `/api/auth/email/verify` — the mirror, for an
+   account that signed up by phone. Optional: nothing is blocked without an email.
+   Nothing is written until the code passes. The identity row is created with a
+   NULL password hash, so `login` still rejects the address while
+   `password/forgot` accepts it — the route by which a phone-first user gives
+   themselves a password. See `internal/service/email_link.go`; the challenge
+   handling both flows share is in `internal/service/link_identity.go`.
 
 ## Forgot password
 

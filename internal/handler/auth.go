@@ -307,6 +307,97 @@ func (h *AuthHandler) VerifyPhoneRegistration(c *fiber.Ctx) error {
 	return c.JSON(prof)
 }
 
+// ---- POST /api/auth/email/send -------------------------------------------
+//
+// The mirror of /auth/phone/*: links an email onto the signed-in account. Also
+// authenticated, and for the same reason — the address lands on the caller's own
+// account and cannot sign them into one that already holds it.
+
+type emailLinkSendReq struct {
+	Email string `json:"email" example:"user@example.com"`
+}
+
+// SendEmailLink godoc
+//
+// @Summary      Send an OTP to link an email address
+// @Description  Mails a one-time code to the address the signed-in account wants to link. Optional, unlike the mobile number: a phone signup is complete without one. Refuses an address already registered to another account, and refuses to change an address this account has already linked. Same cooldown / send limits as every other OTP.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        request  body      emailLinkSendReq  true  "Email address"
+// @Success      200      {object}  map[string]string  "{\"message\": \"Verification code sent\"}"
+// @Failure      400      {object}  apperr.ErrorBody  "Validation failed"
+// @Failure      401      {object}  apperr.ErrorBody  "Not authenticated"
+// @Failure      409      {object}  apperr.ErrorBody  "Already registered / already linked / resend cooldown"
+// @Router       /auth/email/send [post]
+func (h *AuthHandler) SendEmailLink(c *fiber.Ctx) error {
+	accountID, ok := middleware.AccountID(c)
+	if !ok {
+		return apperr.NewUnauthorized("Not authenticated")
+	}
+	var req emailLinkSendReq
+	if err := c.BodyParser(&req); err != nil {
+		return apperr.NewValidation("invalid JSON body")
+	}
+	req.Email = strings.TrimSpace(req.Email)
+	if !looksLikeEmail(req.Email) {
+		return apperr.NewValidationWith("Validation failed",
+			map[string]string{"email": "email must be valid"})
+	}
+	if err := h.svc.SendEmailLinkOTP(c.Context(), accountID, req.Email); err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"message": "Verification code sent"})
+}
+
+// ---- POST /api/auth/email/verify -----------------------------------------
+
+type emailLinkVerifyReq struct {
+	Email string `json:"email" example:"user@example.com"`
+	OTP   string `json:"otp"   example:"1234"`
+}
+
+// VerifyEmailLink godoc
+//
+// @Summary      Verify and link an email address
+// @Description  Checks the code sent by POST /auth/email/send and attaches the address to the signed-in account as a verified identity. Nothing is written until the code passes. Returns the updated profile, in the same shape as GET /profile. No new session is issued. The linked identity carries no password, so email+password login stays unavailable until one is set through the forgot-password flow.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        request  body      emailLinkVerifyReq  true  "Email + OTP"
+// @Success      200      {object}  models.Profile
+// @Failure      400      {object}  apperr.ErrorBody  "Validation failed / wrong / expired / locked OTP"
+// @Failure      401      {object}  apperr.ErrorBody  "Not authenticated"
+// @Failure      409      {object}  apperr.ErrorBody  "Already registered to another account"
+// @Router       /auth/email/verify [post]
+func (h *AuthHandler) VerifyEmailLink(c *fiber.Ctx) error {
+	accountID, ok := middleware.AccountID(c)
+	if !ok {
+		return apperr.NewUnauthorized("Not authenticated")
+	}
+	var req emailLinkVerifyReq
+	if err := c.BodyParser(&req); err != nil {
+		return apperr.NewValidation("invalid JSON body")
+	}
+	req.Email = strings.TrimSpace(req.Email)
+	if !looksLikeEmail(req.Email) {
+		return apperr.NewValidationWith("Validation failed",
+			map[string]string{"email": "email must be valid"})
+	}
+	req.OTP = strings.TrimSpace(req.OTP)
+	if !otpCodeRE.MatchString(req.OTP) {
+		return apperr.NewValidationWith("Validation failed",
+			map[string]string{"otp": "otp must be 4-8 digits"})
+	}
+	prof, err := h.svc.VerifyEmailLink(c.Context(), accountID, req.Email, req.OTP)
+	if err != nil {
+		return err
+	}
+	return c.JSON(prof)
+}
+
 // ---- POST /api/auth/login -----------------------------------------------
 
 type loginReq struct {

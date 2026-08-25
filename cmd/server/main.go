@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -118,11 +119,19 @@ func main() {
 
 	// SMS sender for the phone sign-in OTP: real MSG91 client when an auth key
 	// is set, otherwise the log-only stub (dev fallback, like the mail stub).
+	//
+	// sms.provider: stub forces the stub even with a working auth key, which is
+	// what a local run wants — config.dev.yaml holds real credentials, and
+	// nothing on a developer machine should be texting real people.
 	var smsSender sms.Sender
-	if cfg.SMS.MSG91.AuthKey == "" {
+	switch {
+	case strings.EqualFold(cfg.SMS.Provider, "stub"):
+		slog.Warn("sms.provider is \"stub\"; phone OTPs will not be sent to anyone")
+		smsSender = sms.NewStubSender()
+	case cfg.SMS.MSG91.AuthKey == "":
 		slog.Warn("sms.msg91.auth-key is empty; phone OTPs will be logged, not sent")
 		smsSender = sms.NewStubSender()
-	} else {
+	default:
 		if cfg.SMS.MSG91.TemplateID == "" {
 			// The Flow API cannot send without a template, and the failure only
 			// shows up on the first sign-in attempt — say so at boot instead.
@@ -132,6 +141,14 @@ func main() {
 	}
 
 	// Services.
+	if cfg.Auth.OTP.MasterCode != "" {
+		// Loud, and by name: config.Load has already established this is a local
+		// profile, but a developer who forgets it is on will not understand why
+		// every wrong code is accepted.
+		slog.Warn("OTP MASTER CODE ENABLED: a fixed code is accepted in place of every real "+
+			"OTP (signup, phone sign-in, password reset, contact linking); local profiles only",
+			"profile", profile)
+	}
 	otpSvc := service.NewOTPService(cfg.Auth.OTP)
 	mailSvc := service.NewMailService(cfg.Mail, cfg.Auth.OTP.TTL)
 	tokenSvc := service.NewTokenService(cfg.Auth)
@@ -245,6 +262,8 @@ func main() {
 		"cashfree_stub", cashfreeStub,
 		// True means phone OTPs are only logged — nobody receives an SMS.
 		"sms_stub", smsSender.IsStub(),
+		// True means a fixed code is accepted in place of every real OTP.
+		"otp_master_code", cfg.Auth.OTP.MasterCode != "",
 		"ocr_provider", cfg.Registration.OCR.Provider,
 		"statement_parser", cfg.Statement.Parser,
 		"statement_provider", cfg.Statement.Provider,

@@ -166,3 +166,81 @@ func isOtpFailure(err error) bool {
 func contains(s, sub string) bool {
 	return strings.Contains(s, sub)
 }
+
+// ---- master code ----
+//
+// The local-development bypass. These pin down that it is off unless configured,
+// that configuring it does not hand out extra guesses, and that a wrong code is
+// still wrong — the three ways a bypass like this turns into a real hole.
+
+func masterOTPSvc(code string) *OTPService {
+	cfg := otpTestCfg()
+	cfg.MasterCode = code
+	return NewOTPService(cfg)
+}
+
+// TestVerify_MasterCode_RejectedWhenUnconfigured: the shipped state. "1234" is
+// the first thing an attacker tries, and with no master code set it is just a
+// wrong guess.
+func TestVerify_MasterCode_RejectedWhenUnconfigured(t *testing.T) {
+	s := newOTPSvc()
+	c := freshChallenge()
+	if _, err := s.Issue(c); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Verify(c, "1234"); err == nil {
+		t.Fatal("Verify accepted 1234 with no master code configured")
+	}
+	if c.ConsumedAt != nil {
+		t.Error("challenge was consumed by a rejected code")
+	}
+}
+
+// TestVerify_MasterCode_AcceptedWhenConfigured: what the local flow relies on.
+func TestVerify_MasterCode_AcceptedWhenConfigured(t *testing.T) {
+	s := masterOTPSvc("1234")
+	c := freshChallenge()
+	if _, err := s.Issue(c); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Verify(c, "1234"); err != nil {
+		t.Fatalf("Verify(master) = %v, want nil", err)
+	}
+	if c.ConsumedAt == nil {
+		t.Error("challenge not consumed after a successful master-code verify")
+	}
+	if c.OTPHash != nil {
+		t.Error("otp hash not scrubbed after consumption")
+	}
+}
+
+// TestVerify_MasterCode_DoesNotBypassAttemptCap: the master code is checked after
+// the attempt counter, so it cannot be used to keep a locked-out challenge alive.
+func TestVerify_MasterCode_DoesNotBypassAttemptCap(t *testing.T) {
+	s := masterOTPSvc("1234")
+	c := freshChallenge()
+	if _, err := s.Issue(c); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < otpTestCfg().MaxAttempts; i++ {
+		if err := s.Verify(c, "0000"); err == nil {
+			t.Fatal("wrong code accepted")
+		}
+	}
+	if err := s.Verify(c, "1234"); err == nil {
+		t.Fatal("master code accepted after the attempt cap was exhausted")
+	}
+}
+
+// TestVerify_MasterCode_WrongCodeStillWrong: configuring a master code must not
+// make every code pass.
+func TestVerify_MasterCode_WrongCodeStillWrong(t *testing.T) {
+	s := masterOTPSvc("1234")
+	c := freshChallenge()
+	if _, err := s.Issue(c); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Verify(c, "4321"); err == nil {
+		t.Fatal("Verify accepted a code that is neither the real one nor the master")
+	}
+}

@@ -129,16 +129,32 @@ identity (or accept that auto-read works on the release build only).
 
 ## Testing without credentials
 
-To complete a phone sign-in on a machine with no MSG91 key, leave `auth-key` empty and use the
-**master OTP**: `1234` (`masterOTP` in `internal/service/otp.go`), accepted for any challenge
-on every OTP flow in the service.
+To complete a phone sign-in on a machine with no MSG91 key, or with credentials you would
+rather not spend on real messages, set both switches in the gitignored `config.dev.yaml`:
+
+```yaml
+sms:
+  provider: stub        # never contact MSG91, whatever auth-key says
+auth:
+  otp:
+    master-code: "1234" # accepted in place of any real code
+```
 
 The generated code is **not** recoverable in that mode — nothing logs it (see below) — so the
-master OTP is the only way through. That also means the master OTP is load-bearing for local
-development, and it is still an unconditional auth bypass gated by nothing, whose value is the
-first one anyone would guess. It **must be deleted before production**; budget for replacing it
-with a real dev path (a test-only endpoint, or a fixed challenge for a whitelisted number)
-rather than discovering at cutover that removing it makes the app untestable.
+master code is the only way through, which makes it load-bearing for local development.
+
+Two things stop it from travelling:
+
+- `config.yaml` is tracked and baked into the image, and its `master-code` is `""`. The shipped
+  default is "no bypass".
+- `config.Load` **refuses to start the service** when `master-code` is set under any
+  `APP_PROFILE` other than `dev` or `local` (`validateLocalOnly` in `internal/config`). An empty
+  profile counts as non-local, because that is what a deployment runs. A production config that
+  carries a bypass fails at boot instead of quietly honouring `1234`.
+
+It is still a fixed, guessable code, so it is checked *after* the per-challenge attempt cap and
+buys no extra guesses. A whitelisted-number fixed challenge would be a better long-term answer,
+but nothing now depends on deleting it before cutover.
 
 ## Why the code is 4 digits, and what that costs
 

@@ -5,9 +5,9 @@ import (
 	"log/slog"
 )
 
-// StubSender is the dev fallback used when no MSG91 auth key is configured. It
-// writes the code to the log instead of sending, mirroring the empty-SMTP mail
-// stub and the Cashfree stub gateway.
+// StubSender is the local-development sender, selected by sms.provider: "stub"
+// or by an empty MSG91 auth key. It sends nothing at all, mirroring the
+// empty-SMTP mail stub and the Cashfree stub gateway.
 type StubSender struct{}
 
 func NewStubSender() *StubSender { return &StubSender{} }
@@ -21,10 +21,11 @@ func (*StubSender) IsStub() bool { return true }
 // the dev stub" is not a boundary that holds — log sinks get shared, tailed and
 // shipped. The number is masked for the same reason the real sender masks it.
 //
-// To complete a sign-in with no SMS provider configured, use the master OTP
-// accepted by OTPService.Verify rather than reading the code from here.
+// To complete a sign-in with this sender in place, configure auth.otp.master-code
+// (see config.yaml) rather than trying to recover the code from here — it is not
+// written anywhere.
 func (*StubSender) SendOTP(_ context.Context, phone, _ string) error {
-	slog.Warn("sms otp not sent (no MSG91 auth key configured); use the master OTP to sign in",
+	slog.Warn("sms otp not sent (stub sender); sign in with auth.otp.master-code",
 		"destination", MaskPhone(phone))
 	return nil
 }

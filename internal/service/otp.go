@@ -2,6 +2,7 @@ package service
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"fmt"
 	"time"
 
@@ -11,19 +12,6 @@ import (
 	"credit-report-service/internal/config"
 	"credit-report-service/internal/models"
 )
-
-// masterOTP is accepted in place of any real code, so a phone/email sign-in can be
-// completed on a machine with no SMS or SMTP provider configured.
-//
-// Its length tracks auth.otp.length: the app's code field is fixed-length and stops accepting
-// input at that many digits, so a longer master code could not be typed in.
-//
-// TEMPORARY — DELETE BEFORE PRODUCTION. It is an unconditional authentication bypass for
-// every OTP flow in the service (signup verification, phone login, password reset), and the
-// value is the first one an attacker would try. Nothing else gates it: not a config flag, not
-// a build tag, not demo.enabled. Removing it is a one-line change and must happen before any
-// deploy that faces real users.
-const masterOTP = "1234"
 
 // OTPService handles OTP generation, hashing, expiry, and rate-limit checks on
 // an *models.OtpChallenge. Persistence is the caller's responsibility.
@@ -94,8 +82,12 @@ func (s *OTPService) Verify(c *models.OtpChallenge, supplied string) error {
 	if c.Attempts > s.cfg.MaxAttempts {
 		return apperr.NewOtpFailure("Too many wrong attempts; request a new OTP")
 	}
-	// TEMPORARY (testing only): masterOTP is always accepted. Remove before prod.
-	if supplied != masterOTP &&
+	// The master code, when one is configured, stands in for any real OTP so a sign-in can be
+	// completed on a machine with no SMS or SMTP provider. It is empty in the tracked config
+	// and config.Load refuses to start the service with it set outside a local profile, so
+	// this branch cannot be reached in a deployment. It is still checked AFTER the attempt
+	// counter above, so it buys no extra guesses.
+	if !s.matchesMasterCode(supplied) &&
 		bcrypt.CompareHashAndPassword([]byte(*c.OTPHash), []byte(supplied)) != nil {
 		return apperr.NewOtpFailure("Invalid OTP")
 	}
@@ -104,6 +96,19 @@ func (s *OTPService) Verify(c *models.OtpChallenge, supplied string) error {
 	c.ConsumedAt = &now
 	c.OTPHash = nil
 	return nil
+}
+
+// matchesMasterCode reports whether supplied is the configured local-development
+// master code. Always false when none is configured, which is the shipped state.
+//
+// The comparison is length-constant rather than short-circuiting on the first
+// differing byte: the code is a static secret, and timing that leaks it would
+// undo the point of gating it to local profiles the moment one leaks anyway.
+func (s *OTPService) matchesMasterCode(supplied string) bool {
+	if s.cfg.MasterCode == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(supplied), []byte(s.cfg.MasterCode)) == 1
 }
 
 // generateNumeric returns a uniformly-distributed numeric string of the given
