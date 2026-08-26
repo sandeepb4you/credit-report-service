@@ -121,7 +121,46 @@ type DigitapConfig struct {
 	ClientSecret string        `mapstructure:"client-secret"`
 	Timeout      time.Duration `mapstructure:"timeout"`
 
+	// LogRequestCurl logs each Credit Analytics call as a copy-pasteable curl
+	// command just before it goes out, for reproducing an upstream failure by
+	// hand.
+	//
+	// DEVELOPER MACHINES ONLY. The command embeds the account's PAN, full name
+	// and mobile number, plus our Digitap client secret in the -u flag — so
+	// enabling it turns the application log into a store of bureau-grade
+	// personal data and a credential leak. Load refuses to start the service if
+	// it is set under any profile other than dev/local, the same way it refuses
+	// a non-local auth.otp.master-code.
+	LogRequestCurl bool `mapstructure:"log-request-curl"`
+
 	Prefill PrefillConfig `mapstructure:"prefill"`
+}
+
+// PrefillStubSentinel, set as digitap.prefill.client-id, forces the offline
+// prefill stub even when digitap.client-id holds working credentials. It mirrors
+// sms.provider: "stub".
+//
+// It exists because an EMPTY prefill client id means "borrow the Credit
+// Analytics pair", so emptiness cannot also mean "run offline". Without the
+// sentinel there is no way to stub PAN verification while credit-analytics talks
+// to a real upstream — which is exactly what Digitap's UAT needs, since the UAT
+// client id carries Credit Analytics but not the prefill name-lookup service.
+const PrefillStubSentinel = "stub"
+
+// ResolvePrefillCredentials picks the credentials the Mobile to Prefill client
+// should use, and reports whether the offline stub was explicitly forced.
+//
+// Precedence: the sentinel wins, then an explicit prefill pair, then the Credit
+// Analytics pair. A forced stub returns empty strings, which is what
+// digitap.NewPrefill reads as "stub".
+func (d DigitapConfig) ResolvePrefillCredentials() (clientID, clientSecret string, forcedStub bool) {
+	if strings.EqualFold(strings.TrimSpace(d.Prefill.ClientID), PrefillStubSentinel) {
+		return "", "", true
+	}
+	if strings.TrimSpace(d.Prefill.ClientID) != "" {
+		return d.Prefill.ClientID, d.Prefill.ClientSecret, false
+	}
+	return d.ClientID, d.ClientSecret, false
 }
 
 // PrefillConfig configures the Digitap Mobile to Prefill API (spec v1.4), used
@@ -368,10 +407,39 @@ var localProfiles = map[string]bool{"dev": true, "local": true}
 // Refusing rather than quietly ignoring it: a deployment carrying an
 // authentication bypass in its config is a mistake that must be seen, and a
 // service that boots anyway hides it until someone tries "1234" in production.
-// Only auth.otp.master-code is checked: registration.otp is not wired to any
-// service (NewOTPService is built from Auth.OTP alone), so a master code set
-// there does nothing, and guarding it would imply otherwise.
+//
+// Three keys are checked. registration.otp.master-code is deliberately not one
+// of them: it is not wired to any service (NewOTPService is built from Auth.OTP
+// alone), so a master code set there does nothing, and guarding it would imply
+// otherwise.
 func (c *Config) validateLocalOnly(profile string) error {
+	// demo.enabled auto-verifies any submitted PAN with provider='demo' and no
+	// provider call at all, which reduces KYC to a text field: nothing checks
+	// that the PAN exists, belongs to the user, or matches their mobile. It is
+	// the most consequential of the three, because credit analytics is gated on
+	// a VERIFIED PAN and this hands out that status for free.
+	//
+	// Checked before the master-code block below, which returns early.
+	if c.Demo.Enabled && !localProfiles[profile] {
+		return fmt.Errorf(
+			"demo.enabled is true under APP_PROFILE=%q, which is not a local profile: "+
+				"demo mode auto-verifies every PAN submitted to POST /api/kyc/pan without "+
+				"calling the verification provider, so no account's identity would be checked "+
+				"at all (local profiles: dev, local). Unset it in config, or set "+
+				"DEMO_ENABLED=false",
+			profile)
+	}
+
+	if c.Digitap.LogRequestCurl && !localProfiles[profile] {
+		return fmt.Errorf(
+			"digitap.log-request-curl is set under APP_PROFILE=%q, which is not a local profile: "+
+				"the logged command embeds the account's PAN, full name and mobile number "+
+				"together with our Digitap client secret, so it must only ever be written on a "+
+				"developer machine (local profiles: dev, local). Unset it in config, or unset "+
+				"DIGITAP_LOG_REQUEST_CURL",
+			profile)
+	}
+
 	if c.Auth.OTP.MasterCode == "" {
 		return nil
 	}
@@ -479,6 +547,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("digitap.client-id", "")
 	v.SetDefault("digitap.client-secret", "")
 	v.SetDefault("digitap.timeout", "30s")
+	v.SetDefault("digitap.log-request-curl", false)
 	// Mobile to Prefill. Production host by default: unlike Credit Analytics
 	// there is no demo tier in use here, and a UAT host answering production
 	// credentials fails as a 401 that reads like bad credentials.
@@ -557,6 +626,7 @@ func allKeys() []string {
 		"registration.pan.max-verification-attempts",
 		"registration.ocr.provider", "registration.ocr.min-confidence",
 		"digitap.base-url", "digitap.client-id", "digitap.client-secret", "digitap.timeout",
+		"digitap.log-request-curl",
 		"digitap.prefill.base-url", "digitap.prefill.client-id",
 		"digitap.prefill.client-secret", "digitap.prefill.timeout",
 		"log.level", "log.format",

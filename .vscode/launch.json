@@ -3,10 +3,18 @@
   // (gitignored, holds the real Digitap/MSG91 creds and the local DB url)
   // on top of config.yaml — without it the base config points at the EC2 box,
   // whose 5432 is closed, and startup dies on the migration step.
+  //
+  // The LIVE and UAT configs differ ONLY in which Digitap upstream they talk
+  // to. Everything else — DB, MSG91 stub, OTP master code — comes from the dev
+  // profile either way, so switching runners switches the credit bureau and
+  // nothing else. See docs/digitap-uat.md for the UAT test identities.
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Run server (dev)",
+      // Digitap PRODUCTION (api.digitap.ai) via config.dev.yaml. Real bureau
+      // pulls against real PANs, billed per call. Prefill name-lookup works
+      // here, so the PAN screen wants a genuine PAN + the name on it.
+      "name": "Run server (dev · Digitap LIVE)",
       "type": "go",
       "request": "launch",
       "mode": "auto",
@@ -17,8 +25,36 @@
       }
     },
     {
-      // Same, with slog at debug level — upstream request/response detail.
-      "name": "Run server (dev, debug logs)",
+      // Digitap UAT (apidemo.digitap.work). Use the test identities in
+      // docs/digitap-uat.md — a real PAN returns nothing useful here.
+      //
+      // Credentials come from .env.digitap-uat (gitignored) rather than being
+      // inlined, because THIS file is tracked. If VS Code reports the envFile
+      // missing, that is the file to create; docs/digitap-uat.md lists it.
+      //
+      // The real prefill check cannot run here (the UAT client id has no
+      // name-lookup service). With demo.enabled — currently the default —
+      // POST /api/kyc/pan auto-verifies whatever is submitted, so enter the
+      // test identity's real PAN and name. Then PUT /profile before requesting
+      // a report: demo mode does not fill the account name, and the payload
+      // will not build without it.
+      "name": "Run server (dev · Digitap UAT)",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/server",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "APP_PROFILE": "dev"
+      },
+      "envFile": "${workspaceFolder}/.env.digitap-uat"
+    },
+    {
+      // Same as LIVE, with slog at debug level. For the outgoing payload
+      // specifically prefer digitap.log-request-curl (already on in
+      // config.dev.yaml), which prints a runnable curl — debug level alone
+      // does not include the request body.
+      "name": "Run server (dev · Digitap LIVE, debug logs)",
       "type": "go",
       "request": "launch",
       "mode": "auto",
@@ -28,6 +64,19 @@
         "APP_PROFILE": "dev",
         "LOG_LEVEL": "debug"
       }
+    },
+    {
+      "name": "Run server (dev · Digitap UAT, debug logs)",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/server",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "APP_PROFILE": "dev",
+        "LOG_LEVEL": "debug"
+      },
+      "envFile": "${workspaceFolder}/.env.digitap-uat"
     },
     {
       // Runs whichever *_test.go package is open in the editor.

@@ -63,20 +63,52 @@ pair.** Leave the `prefill.*` credentials empty: `cmd/server/main.go` falls the
 PAN check back to `digitap.client-id`/`-secret`. The `prefill.*` keys exist only
 in case Digitap ever issues a distinct pair.
 
-That was not always so. Against the earlier client id `36537966`, the live API
-answered on 2026-08-23:
+### Provisioning history
+
+Read 401 vs 400 as the diagnostic throughout: **400 means the request passed
+authentication and failed on its payload**, so it proves the credential is good.
+A 401 on an empty body proves only that the credential was rejected.
+
+`36537966`, on 2026-08-23 — authenticated for Credit Analytics, but Mobile to
+Prefill was not yet provisioned on it:
 
 | Endpoint | `api.digitap.ai` | `svc.digitap.ai` | `svcdemo.digitap.work` |
 | --- | --- | --- | --- |
 | `/mobile_prefill/request` | 401 | 401 | 401 |
 | `/credit_analytics/request` | 400 | 400 | 401 |
 
-(400 = the request passed authentication and failed on its payload.) The two
-production hostnames behave identically, so the host is not the variable here.
+The two production hostnames behave identically, so the host is never the
+variable here.
 
-That 400 is what proves the credentials themselves are valid — the request got
-past authentication and failed on its payload. Enabling the product, and the
-name-lookup service inside it, is a request to the Digitap RM.
+`71568641`, issued 2026-08-25 — **never activated.** It answered
+`Client Authentication Failed` 401 on both products from all four hosts, which
+took credit-analytics and PAN verification down together until 2026-08-26. Do
+not resurrect it.
+
+`36537966` with a secret reissued 2026-08-26 — current. Both products
+authenticate (empty body -> 400, not 401), and Mobile to Prefill now returns a
+`result_code` 101 record with the name-lookup service enabled, so the gap in the
+first table is closed.
+
+### Probing this safely
+
+An empty `{}` body is enough to tell a credential problem from a payload
+problem, and it is the only probe that is safe to run ad hoc.
+
+**Do not probe production with a made-up mobile number.** India's numbering plan
+is densely assigned, so an arbitrary-looking 10-digit number is likely to belong
+to a real person, and a `name_lookup: 1` call against it returns their name, DOB,
+PAN, email and address. That is a billable lookup and an unconsented
+personal-data pull with no purpose behind it — exactly what the consent record in
+`prefill_lookups` exists to justify.
+
+When you need a real lookup rather than a credential check, use Digitap's UAT
+test identities: five synthetic records that exist for this, listed in
+[digitap-uat.md](digitap-uat.md). Note that the name-lookup service is not
+currently enabled on the UAT client id, so UAT answers `401 "name look-up
+service is not enabled"` — which is itself the only safe way to confirm the route
+and credential are right. Otherwise verify end-to-end through the app with a test
+account whose number you control.
 
 `digitap.base-url` defaults to the production host for both products as of
 2026-08-25; it was `apidemo.digitap.work` before that, which rejected production

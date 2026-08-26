@@ -17,6 +17,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -37,6 +38,14 @@ type Config struct {
 	ClientID     string
 	ClientSecret string
 	Timeout      time.Duration
+
+	// LogRequestCurl writes every outgoing request as a runnable curl command.
+	// Developer machines only — see config.DigitapConfig.LogRequestCurl for
+	// what it exposes and the boot guard that keeps it off a deployment.
+	LogRequestCurl bool
+	// CurlOut is where that command goes. Nil means os.Stderr; tests inject a
+	// buffer.
+	CurlOut io.Writer
 }
 
 // Response is the Digitap response envelope (section 1.4.2). Result carries the
@@ -54,17 +63,22 @@ type Response struct {
 // Client calls the Digitap Credit Analytics API. The zero value is not usable;
 // construct one with New.
 type Client struct {
-	cfg  Config
-	http *http.Client
-	stub bool
+	cfg     Config
+	http    *http.Client
+	stub    bool
+	curlOut io.Writer
 }
 
 // New returns a Digitap client. If cfg.ClientID is empty, a stub client is
 // returned: Request never performs I/O and replies with a canned 101 envelope.
 func New(cfg Config) *Client {
 	c := &Client{
-		cfg:  cfg,
-		http: &http.Client{Timeout: cfg.Timeout},
+		cfg:     cfg,
+		http:    &http.Client{Timeout: cfg.Timeout},
+		curlOut: cfg.CurlOut,
+	}
+	if c.curlOut == nil {
+		c.curlOut = os.Stderr
 	}
 	if cfg.Timeout == 0 {
 		c.http.Timeout = 30 * time.Second
@@ -77,6 +91,29 @@ func New(cfg Config) *Client {
 
 // IsStub reports whether this client is the offline stub.
 func (c *Client) IsStub() bool { return c.stub }
+
+// curlCommand renders a request as a runnable curl command, so an upstream
+// failure can be reproduced by hand without rebuilding the payload.
+//
+// -u is used rather than a pre-encoded Authorization header because that is the
+// form a person can edit: curl base64s "id:secret" itself, producing the exact
+// same header SetBasicAuth does. Nothing here is redacted — a redacted command
+// will not run, which would defeat the only reason to log one.
+func curlCommand(url, clientID, clientSecret string, body []byte) string {
+	return fmt.Sprintf("curl -X POST %s -u %s -H 'Content-Type: application/json' -d %s",
+		shellQuote(url),
+		shellQuote(clientID+":"+clientSecret),
+		shellQuote(string(body)),
+	)
+}
+
+// shellQuote wraps s in single quotes for a POSIX shell, escaping any single
+// quote inside it by closing, escaping, and reopening the quoted run. Needed
+// because the JSON body is full of double quotes and could contain an
+// apostrophe in a name.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
 
 // Request calls POST <base_url>/credit_analytics/request with the supplied
 // payload. The payload is JSON-marshalable (typically json.RawMessage already
@@ -102,6 +139,17 @@ func (c *Client) Request(ctx context.Context, payload any) (*Response, int, erro
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.SetBasicAuth(c.cfg.ClientID, c.cfg.ClientSecret)
+
+	if c.cfg.LogRequestCurl {
+		// Written raw rather than through slog. Any slog handler quotes an
+		// attribute value and escapes the quotes inside it, so the JSON body
+		// comes out as {\"pan\":\"...\"} and the command cannot be pasted into a
+		// shell — which is the only reason to emit one. The banner carries the
+		// warning that a log level otherwise would.
+		fmt.Fprintf(c.curlOut,
+			"\n--- digitap request %s — CONTAINS PAN, NAME, MOBILE AND THE CLIENT SECRET ---\n%s\n--- end digitap request ---\n\n",
+			refNum, curlCommand(url, c.cfg.ClientID, c.cfg.ClientSecret, body))
+	}
 
 	slog.Debug("calling digitap upstream", "client_ref_num", refNum, "url", url)
 	start := time.Now()

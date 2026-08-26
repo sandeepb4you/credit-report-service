@@ -221,3 +221,176 @@ func TestLoad_NoMasterCode_LoadsAnywhere(t *testing.T) {
 		t.Errorf("Load(prod) with no master code = %v, want nil", err)
 	}
 }
+
+// ---- digitap.log-request-curl profile gate ----
+//
+// Same shape as the master-code gate above, and for the same reason: the flag
+// writes the account's PAN, full name and mobile number plus our Digitap client
+// secret into the application log, so what matters is that a deployment refuses
+// to boot with it rather than that it loads.
+
+func writeCurlLogConfig(t *testing.T, enabled bool) {
+	t.Helper()
+	dir := t.TempDir()
+	value := "false"
+	if enabled {
+		value = "true"
+	}
+	content := `auth:
+  jwt-secret: test-secret
+digitap:
+  log-request-curl: ` + value + `
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	t.Cleanup(func() { os.Chdir(origDir) })
+}
+
+func TestLoad_CurlLogging_RejectedOutsideLocalProfile(t *testing.T) {
+	// "" is the case that matters most: a deployment runs config.yaml with no
+	// overlay, so an empty profile must not count as local.
+	for _, profile := range []string{"", "prod", "staging"} {
+		writeCurlLogConfig(t, true)
+		if _, err := Load(profile); err == nil {
+			t.Errorf("Load(%q) accepted digitap.log-request-curl outside a local profile", profile)
+		}
+	}
+}
+
+func TestLoad_CurlLogging_AllowedOnLocalProfiles(t *testing.T) {
+	for _, profile := range []string{"dev", "local"} {
+		writeCurlLogConfig(t, true)
+		cfg, err := Load(profile)
+		if err != nil {
+			t.Fatalf("Load(%q) = %v, want nil", profile, err)
+		}
+		if !cfg.Digitap.LogRequestCurl {
+			t.Errorf("Load(%q) LogRequestCurl = false, want true", profile)
+		}
+	}
+}
+
+func TestLoad_CurlLogging_OffLoadsAnywhere(t *testing.T) {
+	writeCurlLogConfig(t, false)
+	cfg, err := Load("prod")
+	if err != nil {
+		t.Errorf("Load(prod) with the flag off = %v, want nil", err)
+	}
+	if cfg != nil && cfg.Digitap.LogRequestCurl {
+		t.Error("LogRequestCurl defaulted to true; it must be opt-in")
+	}
+}
+
+// ---- demo.enabled profile gate ----
+//
+// The most consequential of the three local-only flags: demo mode auto-verifies
+// any PAN submitted to POST /api/kyc/pan with provider='demo' and no provider
+// call, so nothing checks that the PAN exists, belongs to the user, or matches
+// their mobile — while credit analytics still gates on the VERIFIED status it
+// hands out. A deployment must refuse to boot rather than run that quietly.
+
+func writeDemoConfig(t *testing.T, enabled bool) {
+	t.Helper()
+	dir := t.TempDir()
+	value := "false"
+	if enabled {
+		value = "true"
+	}
+	content := `auth:
+  jwt-secret: test-secret
+demo:
+  enabled: ` + value + `
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	t.Cleanup(func() { os.Chdir(origDir) })
+}
+
+func TestLoad_DemoMode_RejectedOutsideLocalProfile(t *testing.T) {
+	// "" is the case that matters: the deployed stack sets no APP_PROFILE, so
+	// this is the exact configuration a real deploy would run.
+	for _, profile := range []string{"", "prod", "staging", "uat"} {
+		writeDemoConfig(t, true)
+		if _, err := Load(profile); err == nil {
+			t.Errorf("Load(%q) accepted demo.enabled outside a local profile", profile)
+		}
+	}
+}
+
+func TestLoad_DemoMode_AllowedOnLocalProfiles(t *testing.T) {
+	for _, profile := range []string{"dev", "local"} {
+		writeDemoConfig(t, true)
+		cfg, err := Load(profile)
+		if err != nil {
+			t.Fatalf("Load(%q) = %v, want nil", profile, err)
+		}
+		if !cfg.Demo.Enabled {
+			t.Errorf("Load(%q) Demo.Enabled = false, want true", profile)
+		}
+	}
+}
+
+func TestLoad_DemoMode_OffLoadsAnywhere(t *testing.T) {
+	writeDemoConfig(t, false)
+	if _, err := Load("prod"); err != nil {
+		t.Errorf("Load(prod) with demo mode off = %v, want nil", err)
+	}
+}
+
+func TestLoad_DemoMode_DefaultsOff(t *testing.T) {
+	// Nothing in the file mentions demo at all. The compiled default must be
+	// the safe one, so an environment that forgets to set it is not exposed.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"),
+		[]byte("auth:\n  jwt-secret: test-secret\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	cfg, err := Load("prod")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Demo.Enabled {
+		t.Error("demo.enabled defaulted to true; auto-verifying every PAN must never be the default")
+	}
+}
+
+// TestLoad_DemoMode_EnvCannotSmuggleItIn covers the route that actually caused
+// this: the flag was true in deploy/.env.staging as DEMO_ENABLED, not in any
+// yaml. An env var must hit the same wall.
+func TestLoad_DemoMode_EnvCannotSmuggleItIn(t *testing.T) {
+	writeDemoConfig(t, false)
+	t.Setenv("DEMO_ENABLED", "true")
+	if _, err := Load(""); err == nil {
+		t.Error("DEMO_ENABLED=true was accepted under a non-local profile")
+	}
+}
+
+func TestLoad_CurlLogging_DefaultsOff(t *testing.T) {
+	// Nothing in the file mentions the key at all.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"),
+		[]byte("auth:\n  jwt-secret: test-secret\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	cfg, err := Load("prod")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Digitap.LogRequestCurl {
+		t.Error("digitap.log-request-curl defaulted to true; PII logging must never be the default")
+	}
+}

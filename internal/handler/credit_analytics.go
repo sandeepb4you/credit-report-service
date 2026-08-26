@@ -32,8 +32,10 @@ func NewCreditAnalyticsHandler(svc *service.CreditAnalyticsService) *CreditAnaly
 // @Param        request  body      service.CreditAnalyticsInput  false  "Credit-analytics request (device_ip optional; defaults to the caller's IP)"
 // @Success      201      {object}  service.ReportInsights
 // @Failure      400      {object}  apperr.ErrorBody  "Invalid request body / missing profile or PAN / upstream 400"
-// @Failure      401      {object}  apperr.ErrorBody  "Not authenticated / upstream 401"
+// @Failure      401      {object}  apperr.ErrorBody  "Not authenticated"
 // @Failure      422      {object}  apperr.ErrorBody  "Upstream tradeline limit exceeded"
+// @Failure      502      {object}  apperr.ErrorBody  "Digitap unreachable, or returned an unhandled error"
+// @Failure      503      {object}  apperr.ErrorBody  "Digitap rejected our client credentials (server misconfiguration)"
 // @Router       /credit-analytics/request [post]
 func (h *CreditAnalyticsHandler) Request(c *fiber.Ctx) error {
 	accountID, ok := middleware.AccountID(c)

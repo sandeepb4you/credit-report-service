@@ -401,12 +401,15 @@ type digitapPayload struct {
 // the upstream API, persists a row capturing the request and response, then
 // returns the stored row.
 //
-// Upstream HTTP statuses are mapped to typed app errors:
+// Upstream HTTP statuses are mapped to typed app errors by classifyUpstream,
+// which carries the reasoning for each:
 //   - 200: success (result_code 101/102/103 all returned as a persisted row)
-//   - 400: validation -> apperr.Validation
-//   - 401: auth        -> apperr.Unauthorized
-//   - 422: tradeline   -> apperr.PanFailure
-//   - 5xx / other:     -> apperr (surfaced as 400 by the handler)
+//   - 400: our forwarded input   -> apperr.Validation       (400)
+//   - 401: our client credential -> apperr.ServiceUnavailable (503)
+//   - 422: tradeline rejection   -> apperr.PanFailure       (422)
+//   - anything else              -> apperr.BadGateway       (502)
+// An unreachable provider is apperr.BadGateway too. Only 400 and 422 reach the
+// caller as 4xx, because only those two can be the caller's own doing.
 //
 // A row is persisted before any error is returned, so failed upstream calls are
 // still queryable in the DB.
@@ -440,7 +443,18 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 			"latency_ms", upstreamLatency,
 			"error", err,
 		)
-		return nil, apperr.NewValidation("credit-analytics provider unreachable: " + err.Error())
+		// We never reached Digitap — DNS, TLS, timeout, refused connection. A
+		// Validation error would surface as a 400 ("Please check your details
+		// and try again"), which blames the user for a network fault they have
+		// no part in. BadGateway is the honest answer, and matches how the
+		// sibling Digitap integration reports the same class of failure
+		// (bank_statement.go).
+		//
+		// The raw error stays in the log above and out of the response: a Go
+		// transport error can carry internal hostnames, IPs and ports, and it
+		// means nothing to the person reading it on a phone.
+		return nil, apperr.NewBadGateway(
+			"Credit report service is unreachable right now. Please try again in a few minutes.")
 	}
 
 	row := s.buildRow(accountID, payload, reqBody)
@@ -463,9 +477,9 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 		return nil, persistErr
 	}
 
-	// Map the upstream status to a typed error. The row is already persisted.
-	switch {
-	case httpStatus >= 200 && httpStatus < 300:
+	// The row is already persisted, so from here on the only question is what
+	// to return to the caller.
+	if httpStatus >= 200 && httpStatus < 300 {
 		slog.Info("credit-analytics request succeeded",
 			"account_id", accountID,
 			"report_id", row.ID,
@@ -484,37 +498,85 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 			}
 		}
 		return row, nil
-	case httpStatus == http.StatusBadRequest:
-		slog.Warn("credit-analytics upstream bad request",
-			"account_id", accountID,
-			"report_id", row.ID,
-			"upstream_status", httpStatus,
-			"message", env.Message,
-		)
-		return row, apperr.NewValidation(env.Message)
-	case httpStatus == http.StatusUnauthorized:
-		slog.Warn("credit-analytics upstream unauthorized",
-			"account_id", accountID,
-			"report_id", row.ID,
-			"upstream_status", httpStatus,
-		)
-		return row, apperr.NewUnauthorized(env.Message)
-	case httpStatus == http.StatusUnprocessableEntity:
-		slog.Warn("credit-analytics upstream tradeline rejection",
-			"account_id", accountID,
-			"report_id", row.ID,
-			"upstream_status", httpStatus,
-			"message", env.Message,
-		)
-		return row, apperr.NewPanFailure(env.Message)
+	}
+
+	// env is non-nil on every path where client.Request returns a nil error,
+	// but the row-building above guards it, so guard here too rather than let
+	// this be the one place a malformed client could panic.
+	upstreamMsg := ""
+	if env != nil {
+		upstreamMsg = env.Message
+	}
+	fail := classifyUpstream(httpStatus, upstreamMsg)
+	slog.Log(ctx, fail.level, fail.logMsg,
+		"account_id", accountID,
+		"report_id", row.ID,
+		"upstream_status", httpStatus,
+		"message", upstreamMsg,
+	)
+	return row, fail.err
+}
+
+// upstreamFailure is how one non-2xx Digitap status should be reported: the
+// typed error the caller returns, plus the severity and wording of the log line
+// that goes with it.
+type upstreamFailure struct {
+	err    error
+	level  slog.Level
+	logMsg string
+}
+
+// classifyUpstream maps a non-2xx Digitap HTTP status to the failure to report.
+//
+// Split out of Request so it can be tested without standing up an account, a
+// KYC record, a database and an HTTP stub — the reason this mapping went
+// unnoticed while it was wrong three separate ways. The rule it encodes: only a
+// status the caller could actually have caused may surface as 4xx. A vendor
+// fault or a credential of ours reaching the app as 4xx renders as the user's
+// own mistake, and in the 401 case as an expired session, sending them round a
+// sign-in loop that cannot fix a credential held on the server.
+func classifyUpstream(httpStatus int, upstreamMessage string) upstreamFailure {
+	switch httpStatus {
+	case http.StatusBadRequest:
+		// The one genuinely user-attributable case: Digitap validates the PAN,
+		// name and mobile we forwarded, all of which came from the user. Their
+		// message names the offending field, so it is worth passing through.
+		return upstreamFailure{
+			err:    apperr.NewValidation(upstreamMessage),
+			level:  slog.LevelWarn,
+			logMsg: "credit-analytics upstream bad request",
+		}
+	case http.StatusUnauthorized:
+		// Digitap rejected OUR client credentials; the caller's own session is
+		// perfectly valid. Reported as a service failure the same way the PAN
+		// path treats this exact cause (docs/pan-verification.md), and matching
+		// the sibling Digitap integration in bank_statement.go.
+		//
+		// Error, not Warn: nothing a user does clears this, so it needs an
+		// operator to rotate or re-provision the credential.
+		return upstreamFailure{
+			err:    apperr.NewServiceUnavailable("Credit report service is temporarily unavailable. Please try again later."),
+			level:  slog.LevelError,
+			logMsg: "credit-analytics upstream rejected our client credentials",
+		}
+	case http.StatusUnprocessableEntity:
+		// Tradeline rejection — the bureau declined this PAN, which is about
+		// the subject of the report, so 422 with the upstream wording stands.
+		return upstreamFailure{
+			err:    apperr.NewPanFailure(upstreamMessage),
+			level:  slog.LevelWarn,
+			logMsg: "credit-analytics upstream tradeline rejection",
+		}
 	default:
-		slog.Warn("credit-analytics upstream error",
-			"account_id", accountID,
-			"report_id", row.ID,
-			"upstream_status", httpStatus,
-			"message", env.Message,
-		)
-		return row, apperr.NewValidation(fmt.Sprintf("digitap upstream error (%d): %s", httpStatus, env.Message))
+		// Everything else — a vendor 500, a 429, a proxy 504. None of them are
+		// the caller's doing. The status and message stay in the log: "digitap
+		// upstream error (500)" names our vendor and a status code to someone
+		// who can act on neither.
+		return upstreamFailure{
+			err:    apperr.NewBadGateway("Credit report service returned an unexpected error. Please try again in a few minutes."),
+			level:  slog.LevelError,
+			logMsg: "credit-analytics upstream error",
+		}
 	}
 }
 

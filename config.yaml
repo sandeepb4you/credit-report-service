@@ -140,6 +140,17 @@ digitap:
   client-id: ""
   client-secret: ""
   timeout: 30s
+  # Log every Credit Analytics call as a runnable curl command, for reproducing
+  # an upstream failure by hand. DEVELOPER MACHINES ONLY: the command embeds the
+  # account's PAN, full name and mobile number along with the client secret from
+  # -u above, so switching it on turns the application log into a store of
+  # bureau-grade personal data and a credential leak.
+  #
+  # Like auth.otp.master-code, config.Load REFUSES TO START the service if this
+  # is true under any profile other than dev/local, so it cannot travel to a
+  # deployment in an image. Set it in the gitignored config.dev.yaml, or via
+  # DIGITAP_LOG_REQUEST_CURL, and nowhere else.
+  log-request-curl: false
   # Mobile to Prefill (spec v1.4) — the PAN check at signup. A separate Digitap
   # product from Credit Analytics above, but it runs on the SAME host and the
   # SAME credential pair: leaving these empty makes the PAN check fall back to
@@ -148,6 +159,16 @@ digitap:
   # after the fallback runs the offline stub, which confirms nothing about the
   # real person. Override via DIGITAP_PREFILL_CLIENT_ID / _SECRET only if
   # Digitap ever does issue a distinct pair.
+  #
+  # base-url is separate because the two products are not served by the same
+  # UAT hostname: svcdemo.digitap.work answers both, apidemo.digitap.work
+  # answers /credit_analytics/request and 404s /mobile_prefill/request.
+  #
+  # client-id: "stub" forces the offline stub even when digitap.client-id is
+  # set, the way sms.provider: stub does. That is the only way to run PAN
+  # verification offline while credit-analytics talks to a real upstream, which
+  # is what UAT needs: the UAT client id carries Credit Analytics but not the
+  # prefill name-lookup service.
   prefill:
     base-url: https://api.digitap.ai/
     client-id: ""
@@ -213,8 +234,18 @@ log:
 
 demo:
   # Demo/UAT convenience flag. When true, a PAN submitted via POST /api/kyc/pan
-  # is auto-verified immediately (status VERIFIED) instead of waiting for the
-  # admin verify step, so the credit-analytics flow can be demoed end-to-end
-  # without the external KYC provider. MUST stay false in production.
-  # Override via DEMO_ENABLED=true.
-  enabled: true
+  # is auto-verified immediately (status VERIFIED) with provider='demo' and no
+  # call to the verification provider, so the credit-analytics flow can be
+  # demoed end-to-end without it.
+  #
+  # FALSE HERE ON PURPOSE. This file ships in every image, so whatever it says
+  # is what an environment gets unless it overrides it — and the unsafe value
+  # must not be the one that travels. With this true, nothing checks that a PAN
+  # exists, belongs to the user, or matches their mobile, while credit analytics
+  # still treats the resulting VERIFIED status as proof of identity.
+  #
+  # config.Load also REFUSES TO START the service if this is true under any
+  # profile other than dev/local, the same way it refuses a non-local
+  # auth.otp.master-code. Set it in the gitignored config.dev.yaml, or via
+  # DEMO_ENABLED=true, and nowhere else.
+  enabled: false

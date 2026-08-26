@@ -80,20 +80,31 @@ func main() {
 
 	// Upstream clients.
 	digitapClient := digitap.New(digitap.Config{
-		BaseURL:      cfg.Digitap.BaseURL,
-		ClientID:     cfg.Digitap.ClientID,
-		ClientSecret: cfg.Digitap.ClientSecret,
-		Timeout:      cfg.Digitap.Timeout,
+		BaseURL:        cfg.Digitap.BaseURL,
+		ClientID:       cfg.Digitap.ClientID,
+		ClientSecret:   cfg.Digitap.ClientSecret,
+		Timeout:        cfg.Digitap.Timeout,
+		LogRequestCurl: cfg.Digitap.LogRequestCurl,
 	})
+	if cfg.Digitap.LogRequestCurl {
+		// config.Load has already refused to get here under a non-local
+		// profile, so this is a developer machine. Say it out loud anyway.
+		slog.Warn("digitap.log-request-curl is on; every credit-analytics call " +
+			"will be logged as a curl command containing the account's PAN, name " +
+			"and mobile number plus our client secret. Never enable this outside dev.")
+	}
 
 	// Mobile to Prefill — a separate Digitap product from Credit Analytics
 	// above, on its own host. Credentials fall back to the Credit Analytics
 	// pair, since one Digitap account commonly covers both; empty after that
 	// selects the offline stub and PAN verification stops proving anything.
-	prefillID := cfg.Digitap.Prefill.ClientID
-	prefillSecret := cfg.Digitap.Prefill.ClientSecret
-	if prefillID == "" {
-		prefillID, prefillSecret = cfg.Digitap.ClientID, cfg.Digitap.ClientSecret
+	// Precedence lives in config so it can be tested: sentinel, then an
+	// explicit prefill pair, then the Credit Analytics pair.
+	prefillID, prefillSecret, forcedStub := cfg.Digitap.ResolvePrefillCredentials()
+	if forcedStub {
+		slog.Warn("digitap.prefill.client-id is \"stub\"; PAN verification runs against the " +
+			"offline stub and confirms nothing about the real person. Enter " +
+			"JOHN DOE / ABCDE1234F on the PAN screen (docs/digitap-uat.md)")
 	}
 	prefillClient := digitap.NewPrefill(digitap.PrefillConfig{
 		BaseURL:      cfg.Digitap.Prefill.BaseURL,
