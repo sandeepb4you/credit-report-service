@@ -108,6 +108,10 @@ func (s *AuthService) VerifyEmailLink(
 	}
 
 	now := time.Now().UTC()
+	// Non-zero once the branch below decides to move an identity off another
+	// account. UpdateIdentity cannot do that — it does not write account_id — so
+	// the write below has to take the dedicated path.
+	var reassignFrom int64
 	ident, err := s.accounts.FindIdentity(ctx, models.ProviderPassword, email)
 	switch {
 	case errors.Is(err, repository.ErrNotFound):
@@ -123,7 +127,33 @@ func (s *AuthService) VerifyEmailLink(
 	case err != nil:
 		return nil, err
 	case ident.AccountID != accountID:
-		return nil, apperr.NewConflict("This email is already registered to another account")
+		claimable, cErr := s.identityIsUnproven(ctx, ident)
+		if cErr != nil {
+			return nil, cErr
+		}
+		if !claimable {
+			return nil, apperr.NewConflict("This email is already registered to another account")
+		}
+		// The code just proved this mailbox, and the row holding the address
+		// never proved anything. Move it rather than deleting and re-inserting:
+		// the unique (provider, provider_subject) key means a second row for the
+		// same address cannot exist, so a transfer is the only shape that works.
+		//
+		// The password hash MUST be dropped. It was chosen by whoever ran the
+		// abandoned signup, who never demonstrated they own the address — keeping
+		// it would let them sign straight into this account. Nil is also what a
+		// fresh link produces: login keeps rejecting the address while
+		// password/forgot can set one, which is how a phone-first user gives
+		// themselves a password.
+		slog.Info("email link: reassigning an unverified signup identity",
+			"account_id", accountID, "from_account_id", ident.AccountID,
+			"destination", hashEmail(email))
+		reassignFrom = ident.AccountID
+		ident.AccountID = accountID
+		ident.Email = &email
+		ident.PasswordHash = nil
+		ident.Verified = true
+		ident.VerifiedAt = &now
 	default:
 		// An abandoned unverified signup on this address, by this same account.
 		// Verifying it here is legitimate: the code just proved the mailbox.
@@ -145,15 +175,26 @@ func (s *AuthService) VerifyEmailLink(
 	if err := s.accounts.UpdateChallenge(ctx, tx, ch); err != nil {
 		return nil, err
 	}
-	if ident.ID == 0 {
+	switch {
+	case ident.ID == 0:
 		if err := s.accounts.CreateIdentity(ctx, tx, ident); err != nil {
 			if errors.Is(err, repository.ErrConflict) {
 				return nil, apperr.NewConflict("This email is already registered to another account")
 			}
 			return nil, err
 		}
-	} else if err := s.accounts.UpdateIdentity(ctx, tx, ident); err != nil {
-		return nil, err
+	case reassignFrom != 0:
+		// Moving the row, not editing it in place. UpdateIdentity would leave
+		// account_id untouched and quietly finish: the address would stay on the
+		// abandoned account while primary_email was set on this one, leaving two
+		// accounts disagreeing about who owns it.
+		if err := s.accounts.ReassignIdentity(ctx, tx, ident.ID, accountID, now); err != nil {
+			return nil, err
+		}
+	default:
+		if err := s.accounts.UpdateIdentity(ctx, tx, ident); err != nil {
+			return nil, err
+		}
 	}
 	if err := s.accounts.UpdateAccount(ctx, tx, acc); err != nil {
 		if errors.Is(err, repository.ErrConflict) {
@@ -191,6 +232,17 @@ func (s *AuthService) emailIsFree(ctx context.Context, email string, accountID i
 	ident, err := s.accounts.FindIdentityByEmail(ctx, email)
 	switch {
 	case err == nil && ident.AccountID != accountID:
+		claimable, cErr := s.identityIsUnproven(ctx, ident)
+		if cErr != nil {
+			return cErr
+		}
+		if claimable {
+			// An abandoned signup, not an owner. Let the flow continue: the
+			// caller still has to prove the mailbox with the emailed code.
+			slog.Info("email link: address held only by an unverified signup, allowing the attempt",
+				"account_id", accountID, "destination", hashEmail(email))
+			return nil
+		}
 		slog.Warn("email link rejected: identity belongs to another account",
 			"account_id", accountID, "destination", hashEmail(email))
 		return apperr.NewConflict("This email is already registered to another account")
@@ -198,4 +250,34 @@ func (s *AuthService) emailIsFree(ctx context.Context, email string, accountID i
 		return err
 	}
 	return nil
+}
+
+// identityIsUnproven reports whether ident is a claim nobody ever substantiated:
+// an unverified row whose account has no primary email either.
+//
+// Signup writes the auth_identities row BEFORE the code is checked (see
+// AuthService.Signup), so anyone can type an address they do not own and, until
+// this, permanently prevent its real owner from linking it to their own account.
+// Registering with an email, never verifying it, then signing up by phone was
+// enough to lock yourself out of your own address.
+//
+// Signup already takes this view — an existing unverified identity there is
+// updated and re-verified rather than refused. This makes the link flow agree.
+//
+// Requiring primary_email to be nil as well as verified=false is what keeps it
+// narrow: primary_email is only ever set by a completed verification, so its
+// absence means the address has never been proven for that account by anyone.
+func (s *AuthService) identityIsUnproven(ctx context.Context, ident *models.AuthIdentity) (bool, error) {
+	if ident.Verified {
+		return false, nil
+	}
+	owner, err := s.accounts.FindByID(ctx, ident.AccountID)
+	if errors.Is(err, repository.ErrNotFound) {
+		// The identity outlived its account. Nothing owns the address.
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return owner.PrimaryEmail == nil, nil
 }

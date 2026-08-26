@@ -225,6 +225,33 @@ func (r *AccountRepo) CreateIdentity(ctx context.Context, tx pgx.Tx, id *models.
 	return nil
 }
 
+// ReassignIdentity moves an auth identity to another account, marks it verified,
+// and drops its password hash.
+//
+// Deliberately separate from UpdateIdentity, which does NOT write account_id:
+// moving an identity between accounts is a credential transfer, and it should be
+// impossible to do by accident from a general-purpose update. Every field it
+// touches is part of that one operation.
+//
+// The password hash is cleared, never carried over. The only caller is the email
+// link flow claiming an address held by an abandoned unverified signup, and that
+// hash was chosen by whoever ran the signup without ever proving they own the
+// mailbox — keeping it would hand them a working credential on someone else's
+// account. Nil matches what a fresh link produces: login refuses the address
+// until password/forgot sets one.
+func (r *AccountRepo) ReassignIdentity(
+	ctx context.Context, tx pgx.Tx, identityID, toAccountID int64, verifiedAt time.Time,
+) error {
+	_, err := tx.Exec(ctx,
+		`UPDATE auth_identities SET
+		     account_id = $2, password_hash = NULL,
+		     verified = true, verified_at = $3, updated_at = now()
+		 WHERE id = $1`,
+		identityID, toAccountID, verifiedAt,
+	)
+	return classifyPgErr(err)
+}
+
 func (r *AccountRepo) UpdateIdentity(ctx context.Context, tx pgx.Tx, id *models.AuthIdentity) error {
 	_, err := tx.Exec(ctx,
 		`UPDATE auth_identities SET
