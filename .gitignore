@@ -33,3 +33,9 @@ config.*.local.yaml
 
 # Build cache
 *.prof
+
+# Local scratch command for the report-PDF relay: UAT report_type 3 pulls come
+# back with no result_pdf, so there is nothing to download locally. This stages
+# an encrypted object under the key the worker would use, which is enough to
+# exercise the delivery endpoints and the app screen. Not part of the service.
+/cmd/stagepdf/
