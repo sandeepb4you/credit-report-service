@@ -175,18 +175,26 @@ digitap:
     client-secret: ""
     timeout: 30s
 
-utho:
-  # Utho Cloud object storage — destination for the credit-report PDF relay.
-  # Credit analytics sends report_type 3; Digitap returns a ~1-hour result_pdf
-  # URL, which we download and re-upload here, storing the permanent URL on the
-  # analytics row. Empty api-token -> stub client (fake URL, no upload); set all
-  # three in any environment that should persist real PDFs.
-  # Override via env: UTHO_API_TOKEN, UTHO_DC_SLUG, UTHO_BUCKET.
-  api-token: ""
-  dc-slug: ""
+s3:
+  # Object storage for the credit-report PDF relay. Credit analytics sends
+  # report_type 3; Digitap answers with a result_pdf link that lives about an
+  # hour, which a worker downloads, encrypts with the holder's PAN + date of
+  # birth, and uploads here — the s3:// URI is stored on the analytics row and
+  # reads are presigned per request, because the bucket is private.
+  #
+  # NO CREDENTIALS HERE, and none in the environment either: the service runs on
+  # EC2 with an instance role, so the AWS default credential chain supplies them.
+  # A dev machine picks up whatever the local AWS profile has.
+  #
+  # Empty bucket -> stub store: nothing is uploaded and the delivery endpoints
+  # answer "not available" rather than the service failing at boot. Set
+  # S3_BUCKET in any environment that should keep real PDFs.
+  # Override via env: S3_BUCKET, S3_REGION, S3_PRESIGN_TTL.
   bucket: ""
-  base-url: ""              # leave empty for the default https://api.utho.com/v2
-  timeout: 60s
+  region: ap-south-1
+  # Short on purpose: the link goes straight to a browser that follows it at
+  # once, so a longer window only widens the period in which a leaked URL works.
+  presign-ttl: 10m
 
 statement:
   # Bank-statement analysis. Override via env:

@@ -188,6 +188,10 @@ func New(
 	ca.Get("/reports/:id<int>", analytics.GetReport)
 	ca.Get("/reports/:id<int>/raw", analytics.GetReportRaw)
 	ca.Get("/latest-insights", analytics.GetLatestInsights)
+	// Report PDF delivery. The link is presigned and short-lived; the email
+	// carries the file itself. Both are scoped to the caller's own reports.
+	ca.Get("/reports/:id<int>/pdf", analytics.GetReportPDFLink)
+	ca.Post("/reports/:id<int>/email", analytics.EmailReportPDF)
 	// What-if simulator: any signed-in user (S29). Reads the caller's own
 	// report, so RequireAuth is sufficient.
 	ca.Get("/score-simulator", scoreBuilder.Simulate)

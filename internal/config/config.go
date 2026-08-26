@@ -28,21 +28,28 @@ type Config struct {
 	Log          LogConfig          `mapstructure:"log"`
 	Cashfree     CashfreeConfig     `mapstructure:"cashfree"`
 	Statement    StatementConfig    `mapstructure:"statement"`
-	Utho         UthoConfig         `mapstructure:"utho"`
+	S3           S3Config           `mapstructure:"s3"`
 	Demo         DemoConfig         `mapstructure:"demo"`
 }
 
-// UthoConfig holds credentials and target bucket for the Utho Cloud object-
-// storage upload API. Used by the credit-analytics PDF relay to persist the
-// generated report PDF. When APIToken is empty the client runs in stub mode
-// (no I/O), so dev/CI works without credentials — same convention as the other
-// external-capability clients.
-type UthoConfig struct {
-	APIToken string        `mapstructure:"api-token"` // empty -> stub
-	DCSlug   string        `mapstructure:"dc-slug"`   // Utho datacenter slug
-	Bucket   string        `mapstructure:"bucket"`    // target bucket name
-	BaseURL  string        `mapstructure:"base-url"`  // optional override (testing)
-	Timeout  time.Duration `mapstructure:"timeout"`
+// S3Config configures the credit-report PDF store.
+//
+// No credentials: the service runs on EC2 with an instance role, so the AWS
+// default credential chain supplies them and there is no long-lived key in the
+// environment to leak or rotate. A developer machine picks up whatever the local
+// AWS profile has, and an empty bucket selects the stub — the same
+// unconfigured-upstream convention the Digitap, Cashfree and MSG91 clients use.
+//
+// Utho was the previous destination and is gone. Its API is S3-compatible, so
+// moving back would mean an endpoint override here, not a second client.
+type S3Config struct {
+	// Bucket holds the encrypted report PDFs. Empty -> stub (no uploads).
+	Bucket string `mapstructure:"bucket"`
+	Region string `mapstructure:"region"`
+	// PresignTTL bounds a download link's life. Short by default: the link goes
+	// straight to a browser that follows it at once, so a longer window only
+	// widens the period in which a leaked URL still works.
+	PresignTTL time.Duration `mapstructure:"presign-ttl"`
 }
 
 // StatementConfig holds settings for bank-statement PDF analysis. Parser
@@ -562,15 +569,6 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "text")
 
-	// Utho Cloud object storage (credit-report PDF relay). Empty api-token ->
-	// stub client, so dev/CI runs the relay with a fake URL. Set bucket + dc-slug
-	// in any environment that should store real PDFs.
-	v.SetDefault("utho.api-token", "")
-	v.SetDefault("utho.dc-slug", "")
-	v.SetDefault("utho.bucket", "")
-	v.SetDefault("utho.base-url", "")
-	v.SetDefault("utho.timeout", "60s")
-
 	v.SetDefault("cashfree.mode", "sandbox")
 	v.SetDefault("cashfree.api-version", "2025-01-01")
 	v.SetDefault("cashfree.timeout", "15s")
@@ -578,6 +576,10 @@ func setDefaults(v *viper.Viper) {
 	// Bank-statement analysis. Parser defaults to "pdf" (the real text-layer
 	// reader); set "stub" for offline/CI runs that don't have a PDF. The worker
 	// pool is small by default — analysis is CPU-bound, not latency-sensitive.
+	// Report PDF store. Empty bucket -> stub, so a dev machine needs no AWS.
+	v.SetDefault("s3.bucket", "")
+	v.SetDefault("s3.region", "ap-south-1")
+	v.SetDefault("s3.presign-ttl", "10m")
 	v.SetDefault("statement.parser", "pdf")
 	v.SetDefault("statement.max-file-size", "10MB")
 	v.SetDefault("statement.worker-concurrency", 4)
@@ -630,10 +632,10 @@ func allKeys() []string {
 		"digitap.prefill.base-url", "digitap.prefill.client-id",
 		"digitap.prefill.client-secret", "digitap.prefill.timeout",
 		"log.level", "log.format",
-		"utho.api-token", "utho.dc-slug", "utho.bucket", "utho.base-url", "utho.timeout",
 		"cashfree.mode", "cashfree.base-url", "cashfree.client-id",
 		"cashfree.client-secret", "cashfree.api-version",
 		"cashfree.return-url", "cashfree.notify-url", "cashfree.timeout",
+		"s3.bucket", "s3.region", "s3.presign-ttl",
 		"statement.parser", "statement.max-file-size",
 		"statement.worker-concurrency", "statement.worker-buffer",
 		"statement.process-timeout",

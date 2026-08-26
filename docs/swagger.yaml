@@ -230,10 +230,13 @@ definitions:
         type: integer
       resultPdfUrl:
         description: |-
-          ResultPDFURL is the permanent Utho object URL of the generated PDF report.
-          Digitap returns a 1-hour URL (result_pdf); we download and re-upload to
-          Utho asynchronously and store the permanent URL here. Nil until the upload
-          completes (or if it fails — best-effort). Mirrors the creditScore lift-out.
+          ResultPDFURL is the s3:// URI of the stored PDF report, not a URL anyone
+          can follow: the bucket is private, so reads are presigned at request time.
+          Digitap returns a link that lives about an hour (result_pdf); we download
+          it, encrypt it with the holder's PAN + date of birth and upload it
+          asynchronously. Nil until that completes, if it failed (best-effort), or
+          if no password could be built — an unprotectable report is not stored.
+          Mirrors the creditScore lift-out.
         type: string
     type: object
   credit-report-service_internal_models.DeviceMeta:
@@ -730,6 +733,12 @@ definitions:
       monthlyEmi:
         type: number
       onTimePaymentPercent:
+        description: |-
+          OnTimePaymentPercent is nil when no month of payment history was reported
+          on any tradeline — which is different from 0%, and used to be indistinguishable
+          from it. A thin or brand-new file showed "0% on time", read as "never paid
+          anything on time", and graded the payment factor F/Critical off no data at all.
+          The clients already model this as nullable and render "—".
         type: number
       outdated:
         description: |-
@@ -1008,6 +1017,30 @@ definitions:
       totalInterestSaving:
         type: number
     type: object
+  internal_handler.ReportEmailResponse:
+    properties:
+      message:
+        example: Your report is on its way
+        type: string
+    type: object
+  internal_handler.ReportPDFLinkResponse:
+    properties:
+      expiresInSeconds:
+        description: ExpiresInSeconds is how long the URL stays valid.
+        example: 600
+        type: integer
+      passwordHint:
+        description: |-
+          PasswordHint states how to open the file. Sent with the link because the
+          PDF is encrypted and a download nobody can open is not a download.
+        type: string
+      url:
+        description: |-
+          URL is presigned and expires. Not stored anywhere client-side: ask again
+          rather than keeping it, or a stale link becomes a confusing failure.
+        example: https://myscorr-credit-reports.s3.ap-south-1.amazonaws.com/...
+        type: string
+    type: object
   internal_handler.createCouponReq:
     properties:
       code:
@@ -1043,6 +1076,21 @@ definitions:
         type: string
       productCode:
         example: CREDIT_ANALYSIS
+        type: string
+    type: object
+  internal_handler.emailLinkSendReq:
+    properties:
+      email:
+        example: user@example.com
+        type: string
+    type: object
+  internal_handler.emailLinkVerifyReq:
+    properties:
+      email:
+        example: user@example.com
+        type: string
+      otp:
+        example: "1234"
         type: string
     type: object
   internal_handler.forgotPasswordReq:
@@ -1113,6 +1161,21 @@ definitions:
         type: string
     type: object
   internal_handler.phoneOtpVerifyReq:
+    properties:
+      otp:
+        example: "1234"
+        type: string
+      phone:
+        example: "+919876543210"
+        type: string
+    type: object
+  internal_handler.phoneRegisterSendReq:
+    properties:
+      phone:
+        example: "+919876543210"
+        type: string
+    type: object
+  internal_handler.phoneRegisterVerifyReq:
     properties:
       otp:
         example: "1234"
@@ -1894,6 +1957,89 @@ paths:
       summary: Update loan-switch settings (admin)
       tags:
       - loan-providers
+  /auth/email/send:
+    post:
+      consumes:
+      - application/json
+      description: 'Mails a one-time code to the address the signed-in account wants
+        to link. Optional, unlike the mobile number: a phone signup is complete without
+        one. Refuses an address already registered to another account, and refuses
+        to change an address this account has already linked. Same cooldown / send
+        limits as every other OTP.'
+      parameters:
+      - description: Email address
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.emailLinkSendReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{\"message\": \"Verification code sent\"}'
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "409":
+          description: Already registered / already linked / resend cooldown
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Send an OTP to link an email address
+      tags:
+      - auth
+  /auth/email/verify:
+    post:
+      consumes:
+      - application/json
+      description: Checks the code sent by POST /auth/email/send and attaches the
+        address to the signed-in account as a verified identity. Nothing is written
+        until the code passes. Returns the updated profile, in the same shape as GET
+        /profile. No new session is issued. The linked identity carries no password,
+        so email+password login stays unavailable until one is set through the forgot-password
+        flow.
+      parameters:
+      - description: Email + OTP
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.emailLinkVerifyReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.Profile'
+        "400":
+          description: Validation failed / wrong / expired / locked OTP
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "409":
+          description: Already registered to another account
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Verify and link an email address
+      tags:
+      - auth
   /auth/google:
     post:
       consumes:
@@ -2246,6 +2392,87 @@ paths:
           schema:
             $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
       summary: Verify a password-reset code
+      tags:
+      - auth
+  /auth/phone/send:
+    post:
+      consumes:
+      - application/json
+      description: 'Sends a one-time code to the mobile number the signed-in account
+        wants to register. Mandatory for email signups: PAN verification checks the
+        PAN against the account''s mobile number, so an account without one cannot
+        complete KYC. Refuses a number already registered to another account. Same
+        cooldown / send limits as every other OTP.'
+      parameters:
+      - description: Mobile number
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.phoneRegisterSendReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{\"message\": \"Verification code sent\"}'
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "409":
+          description: Number already registered / resend cooldown / send limit reached
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Send an OTP to register a mobile number
+      tags:
+      - auth
+  /auth/phone/verify:
+    post:
+      consumes:
+      - application/json
+      description: Checks the code sent by POST /auth/phone/send and attaches the
+        number to the signed-in account as a verified phone identity. Returns the
+        updated profile, in the same shape as GET /profile. No new session is issued
+        — the access token is unaffected, so the client keeps the one it has.
+      parameters:
+      - description: Phone + OTP
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.phoneRegisterVerifyReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.Profile'
+        "400":
+          description: Validation failed / wrong / expired / locked OTP
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "409":
+          description: Number already registered to another account
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Verify and register a mobile number
       tags:
       - auth
   /auth/refresh:
@@ -2963,6 +3190,99 @@ paths:
       summary: Fetch a credit-analytics report by id
       tags:
       - credit-analytics
+  /credit-analytics/reports/{id}/email:
+    post:
+      description: Sends the caller's own report PDF, encrypted, to the email address
+        on their account. Returns 409 when the account has no email — a phone signup
+        that never linked one — so the client can offer to link an address rather
+        than reporting a dead end.
+      parameters:
+      - description: Report id
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handler.ReportEmailResponse'
+        "400":
+          description: id must be an integer
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: Report not found, or no PDF stored for it
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "409":
+          description: No email address on the account — link one first
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "502":
+          description: Could not send the email
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "503":
+          description: Report storage or email delivery is not configured
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Email a report's PDF to the account's address
+      tags:
+      - credit-analytics
+  /credit-analytics/reports/{id}/pdf:
+    get:
+      description: Returns a short-lived presigned URL for the caller's own report
+        PDF, plus the rule for the password that opens it. The PDF is encrypted with
+        the account holder's PAN and date of birth, so the link alone does not expose
+        the report. A 404 means the report has no PDF yet — the relay that fetches
+        it from the bureau is asynchronous and best-effort.
+      parameters:
+      - description: Report id
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handler.ReportPDFLinkResponse'
+        "400":
+          description: id must be an integer
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: Report not found, or no PDF stored for it
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "502":
+          description: Could not prepare the download
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "503":
+          description: Report storage is not configured
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Get a download link for a report's PDF
+      tags:
+      - credit-analytics
   /credit-analytics/reports/{id}/raw:
     get:
       description: Returns the full report row for one of the caller's own reports,
@@ -3030,11 +3350,19 @@ paths:
           schema:
             $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
         "401":
-          description: Not authenticated / upstream 401
+          description: Not authenticated
           schema:
             $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
         "422":
           description: Upstream tradeline limit exceeded
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "502":
+          description: Digitap unreachable, or returned an unhandled error
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "503":
+          description: Digitap rejected our client credentials (server misconfiguration)
           schema:
             $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
       security:

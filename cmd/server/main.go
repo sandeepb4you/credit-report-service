@@ -20,11 +20,11 @@ import (
 	"credit-report-service/internal/handler"
 	"credit-report-service/internal/payments"
 	"credit-report-service/internal/repository"
+	"credit-report-service/internal/s3store"
 	"credit-report-service/internal/server"
 	"credit-report-service/internal/service"
 	"credit-report-service/internal/sms"
 	"credit-report-service/internal/statement"
-	"credit-report-service/internal/utho"
 )
 
 // @title          Credit Report Service API
@@ -187,21 +187,32 @@ func main() {
 	// the FD-card hero names a real product with an apply CTA.
 	analyticsSvc.SetScoreBuilder(scoreBuilderSvc)
 
-	// Credit-report PDF relay: report_type 3 returns a short-lived Digitap URL,
-	// which we download and re-upload to Utho object storage, storing the
-	// permanent URL on the analytics row. Stub when the Utho token is empty, so
-	// dev/CI runs the relay with a fake URL. Best-effort: a real failure just
-	// leaves result_pdf_url null; the report/score are unaffected.
-	uthoClient := utho.New(utho.Config{
-		APIToken: cfg.Utho.APIToken,
-		DCSlug:   cfg.Utho.DCSlug,
-		Bucket:   cfg.Utho.Bucket,
-		BaseURL:  cfg.Utho.BaseURL,
-		Timeout:  cfg.Utho.Timeout,
+	// Credit-report PDF relay: report_type 3 returns a Digitap URL good for about
+	// an hour, so we take our own copy — download it, encrypt it with the
+	// holder's PAN + date of birth, and put it in S3. Credentials come from the
+	// instance's IAM role via the default chain; an empty bucket selects the stub
+	// so a dev machine needs no AWS at all. Best-effort: a failure leaves
+	// result_pdf_url null and the report/score are unaffected.
+	pdfStore, err := s3store.New(rootCtx, s3store.Config{
+		Bucket:     cfg.S3.Bucket,
+		Region:     cfg.S3.Region,
+		PresignTTL: cfg.S3.PresignTTL,
 	})
-	pdfUploader := service.NewReportUploader(uthoClient, analyticsRepo, cfg.Utho.Bucket, 16)
+	if err != nil {
+		slog.Error("s3 client init failed", "error", err)
+		os.Exit(1)
+	}
+	if pdfStore.IsStub() {
+		slog.Warn("s3.bucket is empty; credit-report PDFs will not be stored " +
+			"and the download/email endpoints will report them unavailable")
+	}
+	pdfUploader := service.NewReportUploader(pdfStore, analyticsRepo, accountRepo, 16)
 	analyticsSvc.SetPDFUploader(pdfUploader)
 	pdfUploader.Start(rootCtx)
+	// The read side of the same store, plus the mailer, for the download and
+	// email-delivery endpoints.
+	analyticsSvc.SetReportPDFStore(pdfStore)
+	analyticsSvc.SetReportMailer(mailSvc)
 
 	// Bank-statement analysis: text-layer PDF parser + async worker pool.
 	// Parser follows the same empty-credentials-⇒-stub convention as the other
@@ -279,7 +290,7 @@ func main() {
 		"statement_parser", cfg.Statement.Parser,
 		"statement_provider", cfg.Statement.Provider,
 		"bankdata_stub", bankDataClient.IsStub(),
-		"utho_stub", uthoClient.IsStub(),
+		"pdf_store_stub", pdfStore.IsStub(),
 		"google_login_enabled", cfg.Auth.Google.ClientID != "",
 		// Demo mode auto-verifies submitted PANs; must be false in production.
 		"demo_mode", cfg.Demo.Enabled,

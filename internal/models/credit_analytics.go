@@ -23,10 +23,13 @@ type CreditAnalyticsRequest struct {
 	// CreditScore is the bureau score (SCORE.BureauScore) lifted out of the
 	// response at write time. Nil when the pull failed or returned no record.
 	CreditScore *int64 `json:"creditScore" db:"credit_score"`
-	// ResultPDFURL is the permanent Utho object URL of the generated PDF report.
-	// Digitap returns a 1-hour URL (result_pdf); we download and re-upload to
-	// Utho asynchronously and store the permanent URL here. Nil until the upload
-	// completes (or if it fails — best-effort). Mirrors the creditScore lift-out.
+	// ResultPDFURL is the s3:// URI of the stored PDF report, not a URL anyone
+	// can follow: the bucket is private, so reads are presigned at request time.
+	// Digitap returns a link that lives about an hour (result_pdf); we download
+	// it, encrypt it with the holder's PAN + date of birth and upload it
+	// asynchronously. Nil until that completes, if it failed (best-effort), or
+	// if no password could be built — an unprotectable report is not stored.
+	// Mirrors the creditScore lift-out.
 	ResultPDFURL *string   `json:"resultPdfUrl,omitempty" db:"result_pdf_url"`
 	CreatedAt    time.Time `json:"createdAt"   db:"created_at"`
 }

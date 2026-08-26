@@ -35,6 +35,17 @@ type PrefillVerdict struct {
 	// ProviderName is the name the provider holds, stored for support and for
 	// the admin console. Empty on a gap.
 	ProviderName string
+	// ProviderDOB is the date of birth the provider holds, parsed from its
+	// DD-MM-YYYY string. Nil when absent or unparseable.
+	//
+	// Kept for one concrete purpose: the credit-report PDF is encrypted with the
+	// account's PAN and date of birth, and a phone signup never enters a DOB —
+	// PAN verification fills the name and goes straight to the dashboard, so
+	// without this the report could not be password-protected for exactly the
+	// users most likely to buy one. Storing it is purposeful rather than
+	// collected-because-available, which is the line DPDP purpose-limitation
+	// draws and the reason the rest of the prefill payload stays undecoded.
+	ProviderDOB *time.Time
 	// ProviderRef is Digitap's request_id — the handle their support needs to
 	// trace a specific lookup. Not PII.
 	ProviderRef string
@@ -147,6 +158,7 @@ func (v *PrefillVerifier) Verify(ctx context.Context, accountID int64, mobile, p
 
 	providerPAN := strings.ToUpper(strings.TrimSpace(out.Result.BestPAN()))
 	verdict.ProviderName = strings.TrimSpace(out.Result.Name)
+	verdict.ProviderDOB = parsePrefillDOB(out.Result.DOB)
 
 	if providerPAN == "" {
 		verdict.ProviderGap = true
@@ -294,4 +306,31 @@ func sortedJoin(words []string) string {
 		}
 	}
 	return strings.Join(c, " ")
+}
+
+// parsePrefillDOB parses the provider's date of birth, which arrives as
+// "DD-MM-YYYY" (a real response carries "24-09-1991").
+//
+// Returns nil rather than an error for anything it cannot read: a DOB is a
+// convenience here, not a verification input, and a malformed one must never
+// fail a PAN check that the provider already answered. The ISO spelling is
+// accepted too — the provider's own sample sheet writes the same field both
+// ways, so tolerating both costs nothing.
+func parsePrefillDOB(raw string) *time.Time {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return nil
+	}
+	for _, layout := range []string{"02-01-2006", "2006-01-02", "02/01/2006"} {
+		if t, err := time.Parse(layout, v); err == nil {
+			// A date outside living memory is a parse that happened to succeed
+			// on garbage, not a date of birth.
+			if y := t.Year(); y < 1900 || y > time.Now().UTC().Year() {
+				return nil
+			}
+			utc := t.UTC()
+			return &utc
+		}
+	}
+	return nil
 }

@@ -958,6 +958,123 @@ const docTemplate = `{
                 }
             }
         },
+        "/auth/email/send": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Mails a one-time code to the address the signed-in account wants to link. Optional, unlike the mobile number: a phone signup is complete without one. Refuses an address already registered to another account, and refuses to change an address this account has already linked. Same cooldown / send limits as every other OTP.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Send an OTP to link an email address",
+                "parameters": [
+                    {
+                        "description": "Email address",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.emailLinkSendReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{\\\"message\\\": \\\"Verification code sent\\\"}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Already registered / already linked / resend cooldown",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/email/verify": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Checks the code sent by POST /auth/email/send and attaches the address to the signed-in account as a verified identity. Nothing is written until the code passes. Returns the updated profile, in the same shape as GET /profile. No new session is issued. The linked identity carries no password, so email+password login stays unavailable until one is set through the forgot-password flow.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Verify and link an email address",
+                "parameters": [
+                    {
+                        "description": "Email + OTP",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.emailLinkVerifyReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.Profile"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed / wrong / expired / locked OTP",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Already registered to another account",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/google": {
             "post": {
                 "description": "Verifies a Google ID token (issued by the Android/iOS Google Sign-In SDK) and returns a session JWT. On first login, creates a verified account; on subsequent logins, reuses the existing account. If the Google email matches an existing account, the Google identity is linked onto it. Requires the Web OAuth client ID to be configured (AUTH_GOOGLE_CLIENT_ID); otherwise returns 503.",
@@ -1449,6 +1566,123 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "No account found for this email",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/phone/send": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sends a one-time code to the mobile number the signed-in account wants to register. Mandatory for email signups: PAN verification checks the PAN against the account's mobile number, so an account without one cannot complete KYC. Refuses a number already registered to another account. Same cooldown / send limits as every other OTP.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Send an OTP to register a mobile number",
+                "parameters": [
+                    {
+                        "description": "Mobile number",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.phoneRegisterSendReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{\\\"message\\\": \\\"Verification code sent\\\"}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Number already registered / resend cooldown / send limit reached",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/phone/verify": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Checks the code sent by POST /auth/phone/send and attaches the number to the signed-in account as a verified phone identity. Returns the updated profile, in the same shape as GET /profile. No new session is issued — the access token is unaffected, so the client keeps the one it has.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Verify and register a mobile number",
+                "parameters": [
+                    {
+                        "description": "Phone + OTP",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.phoneRegisterVerifyReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.Profile"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed / wrong / expired / locked OTP",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Number already registered to another account",
                         "schema": {
                             "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
@@ -2481,6 +2715,140 @@ const docTemplate = `{
                 }
             }
         },
+        "/credit-analytics/reports/{id}/email": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sends the caller's own report PDF, encrypted, to the email address on their account. Returns 409 when the account has no email — a phone signup that never linked one — so the client can offer to link an address rather than reporting a dead end.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "credit-analytics"
+                ],
+                "summary": "Email a report's PDF to the account's address",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Report id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.ReportEmailResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "id must be an integer",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Report not found, or no PDF stored for it",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "No email address on the account — link one first",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "502": {
+                        "description": "Could not send the email",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "503": {
+                        "description": "Report storage or email delivery is not configured",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/credit-analytics/reports/{id}/pdf": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns a short-lived presigned URL for the caller's own report PDF, plus the rule for the password that opens it. The PDF is encrypted with the account holder's PAN and date of birth, so the link alone does not expose the report. A 404 means the report has no PDF yet — the relay that fetches it from the bureau is asynchronous and best-effort.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "credit-analytics"
+                ],
+                "summary": "Get a download link for a report's PDF",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Report id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.ReportPDFLinkResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "id must be an integer",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Report not found, or no PDF stored for it",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "502": {
+                        "description": "Could not prepare the download",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "503": {
+                        "description": "Report storage is not configured",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/credit-analytics/reports/{id}/raw": {
             "get": {
                 "security": [
@@ -2575,13 +2943,25 @@ const docTemplate = `{
                         }
                     },
                     "401": {
-                        "description": "Not authenticated / upstream 401",
+                        "description": "Not authenticated",
                         "schema": {
                             "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
                     },
                     "422": {
                         "description": "Upstream tradeline limit exceeded",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "502": {
+                        "description": "Digitap unreachable, or returned an unhandled error",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "503": {
+                        "description": "Digitap rejected our client credentials (server misconfiguration)",
                         "schema": {
                             "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
@@ -3449,7 +3829,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "resultPdfUrl": {
-                    "description": "ResultPDFURL is the permanent Utho object URL of the generated PDF report.\nDigitap returns a 1-hour URL (result_pdf); we download and re-upload to\nUtho asynchronously and store the permanent URL here. Nil until the upload\ncompletes (or if it fails — best-effort). Mirrors the creditScore lift-out.",
+                    "description": "ResultPDFURL is the s3:// URI of the stored PDF report, not a URL anyone\ncan follow: the bucket is private, so reads are presigned at request time.\nDigitap returns a link that lives about an hour (result_pdf); we download\nit, encrypt it with the holder's PAN + date of birth and upload it\nasynchronously. Nil until that completes, if it failed (best-effort), or\nif no password could be built — an unprotectable report is not stored.\nMirrors the creditScore lift-out.",
                     "type": "string"
                 }
             }
@@ -4132,6 +4512,7 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "onTimePaymentPercent": {
+                    "description": "OnTimePaymentPercent is nil when no month of payment history was reported\non any tradeline — which is different from 0%, and used to be indistinguishable\nfrom it. A thin or brand-new file showed \"0% on time\", read as \"never paid\nanything on time\", and graded the payment factor F/Critical off no data at all.\nThe clients already model this as nullable and render \"—\".",
                     "type": "number"
                 },
                 "outdated": {
@@ -4521,6 +4902,34 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_handler.ReportEmailResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "Your report is on its way"
+                }
+            }
+        },
+        "internal_handler.ReportPDFLinkResponse": {
+            "type": "object",
+            "properties": {
+                "expiresInSeconds": {
+                    "description": "ExpiresInSeconds is how long the URL stays valid.",
+                    "type": "integer",
+                    "example": 600
+                },
+                "passwordHint": {
+                    "description": "PasswordHint states how to open the file. Sent with the link because the\nPDF is encrypted and a download nobody can open is not a download.",
+                    "type": "string"
+                },
+                "url": {
+                    "description": "URL is presigned and expires. Not stored anywhere client-side: ask again\nrather than keeping it, or a stale link becomes a confusing failure.",
+                    "type": "string",
+                    "example": "https://myscorr-credit-reports.s3.ap-south-1.amazonaws.com/..."
+                }
+            }
+        },
         "internal_handler.createCouponReq": {
             "type": "object",
             "properties": {
@@ -4565,6 +4974,28 @@ const docTemplate = `{
                 "productCode": {
                     "type": "string",
                     "example": "CREDIT_ANALYSIS"
+                }
+            }
+        },
+        "internal_handler.emailLinkSendReq": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "example": "user@example.com"
+                }
+            }
+        },
+        "internal_handler.emailLinkVerifyReq": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "example": "user@example.com"
+                },
+                "otp": {
+                    "type": "string",
+                    "example": "1234"
                 }
             }
         },
@@ -4663,6 +5094,28 @@ const docTemplate = `{
             }
         },
         "internal_handler.phoneOtpVerifyReq": {
+            "type": "object",
+            "properties": {
+                "otp": {
+                    "type": "string",
+                    "example": "1234"
+                },
+                "phone": {
+                    "type": "string",
+                    "example": "+919876543210"
+                }
+            }
+        },
+        "internal_handler.phoneRegisterSendReq": {
+            "type": "object",
+            "properties": {
+                "phone": {
+                    "type": "string",
+                    "example": "+919876543210"
+                }
+            }
+        },
+        "internal_handler.phoneRegisterVerifyReq": {
             "type": "object",
             "properties": {
                 "otp": {

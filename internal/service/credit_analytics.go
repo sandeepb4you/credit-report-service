@@ -60,10 +60,27 @@ type CreditAnalyticsService struct {
 	// Injected after construction via SetScoreBuilder.
 	scoreBuilder *ScoreBuilderService
 	// pdfUploader is optional: when set, a successful report_type 3 pull
-	// enqueues the Digitap result_pdf for async download + Utho upload. When
-	// unset, result_pdf (if any) is ignored. Injected via SetPDFUploader.
+	// enqueues the Digitap result_pdf for async download, encryption and upload
+	// to S3. When unset, result_pdf (if any) is ignored. Via SetPDFUploader.
 	pdfUploader *ReportUploader
+	// pdfStore is the read side of that storage, for the download and email
+	// endpoints. Optional: unset or stubbed, both report the PDF unavailable
+	// rather than failing at boot. Via SetReportPDFStore.
+	pdfStore reportPDFStore
+	// mailer sends the report as an attachment. Optional for the same reason.
+	// Via SetReportMailer.
+	mailer ReportMailer
 }
+
+// ReportMailer is the one mail capability this service needs. Narrow on purpose:
+// the analytics service has no business sending OTPs, and a wide interface here
+// would let it.
+type ReportMailer interface {
+	SendCreditReport(toEmail, filename string, pdf []byte) error
+}
+
+// SetReportMailer wires report delivery by email.
+func (s *CreditAnalyticsService) SetReportMailer(m ReportMailer) { s.mailer = m }
 
 func NewCreditAnalyticsService(
 	client *digitap.Client,

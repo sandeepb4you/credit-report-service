@@ -137,8 +137,8 @@ func (r *AccountRepo) UpdateAccount(ctx context.Context, tx pgx.Tx, a *models.Ac
 	return classifyPgErr(err)
 }
 
-// FillNamesIfEmpty writes first/last name only where the account has none, and
-// recomputes profile_completed from the result.
+// FillProfileIfEmpty writes first/last name and date of birth only where the
+// account has none, and recomputes profile_completed from the result.
 //
 // Used after PAN verification: the provider has just told us the name on record
 // for this person, which is the same fact the onboarding profile form asks for.
@@ -147,19 +147,24 @@ func (r *AccountRepo) UpdateAccount(ctx context.Context, tx pgx.Tx, a *models.Ac
 //
 // Existing values are never overwritten — a name the user entered themselves
 // outranks one inferred from a third party.
-func (r *AccountRepo) FillNamesIfEmpty(ctx context.Context, accountID int64, first, last string) error {
+// dob is nil when the provider gave none; the existing value then stands.
+func (r *AccountRepo) FillProfileIfEmpty(
+	ctx context.Context, accountID int64, first, last string, dob *time.Time,
+) error {
 	_, err := r.pool.Exec(ctx,
 		`UPDATE accounts a SET
 		        first_name        = f.first,
 		        last_name         = f.last,
+		        date_of_birth     = f.dob,
 		        profile_completed = (f.first IS NOT NULL AND f.first <> ''
 		                             AND f.last IS NOT NULL AND f.last <> ''),
 		        updated_at        = now()
 		   FROM (SELECT COALESCE(NULLIF(first_name, ''), NULLIF($2, '')) AS first,
-		                COALESCE(NULLIF(last_name,  ''), NULLIF($3, '')) AS last
+		                COALESCE(NULLIF(last_name,  ''), NULLIF($3, '')) AS last,
+		                COALESCE(date_of_birth, $4)                      AS dob
 		           FROM accounts WHERE id = $1) f
 		  WHERE a.id = $1`,
-		accountID, first, last,
+		accountID, first, last, dob,
 	)
 	return classifyPgErr(err)
 }

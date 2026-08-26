@@ -154,9 +154,14 @@ func (s *KycService) SubmitPAN(ctx context.Context, accountID int64, pan, fullNa
 		// what lets a phone signup land on the dashboard instead of stopping to
 		// retype a name we already hold. Best-effort: a failure here must not
 		// undo a verification that succeeded.
+		// The DOB travels with the name for the same reason, plus one of its own:
+		// it is half the credit-report PDF password, and a phone signup never
+		// types one in.
 		first, last := splitName(name)
-		if nerr := s.accounts.FillNamesIfEmpty(ctx, accountID, first, last); nerr != nil {
-			slog.Warn("could not fill profile name after pan verification",
+		if nerr := s.accounts.FillProfileIfEmpty(
+			ctx, accountID, first, last, verdict.ProviderDOB,
+		); nerr != nil {
+			slog.Warn("could not fill profile name/dob after pan verification",
 				"account_id", accountID, "error", nerr)
 		}
 		return verified, nil
