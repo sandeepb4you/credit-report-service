@@ -39,7 +39,7 @@ import (
 )
 
 // pdfUploadDownloadTimeout bounds both the Digitap PDF download and (via the
-// utho client's own timeout) the upload, so a stalled host can't pin the
+// AWS client's own timeout) the upload, so a stalled host can't pin the
 // worker. The Digitap URL is valid for an hour; we run immediately, so this
 // only guards against a hung connection.
 const pdfUploadDownloadTimeout = 2 * time.Minute
@@ -66,11 +66,10 @@ type pdfIdentityReader interface {
 	FindKYCByAccount(ctx context.Context, accountID int64) (*models.KYCRecord, error)
 }
 
-// pdfObjectStore is the storage seam. Utho is gone — its own API is
-// S3-compatible, so moving back would be an endpoint override on the S3 client
-// rather than a second implementation.
+// pdfObjectStore is the storage seam — narrow on purpose, so a test can prove
+// what the relay uploads without an AWS client anywhere near it.
 type pdfObjectStore interface {
-	Upload(ctx context.Context, bucket, key, filename string, body []byte) (string, error)
+	Upload(ctx context.Context, key, filename string, body []byte) (string, error)
 	IsStub() bool
 }
 
@@ -179,7 +178,7 @@ func (u *ReportUploader) process(ctx context.Context, job pdfJob) {
 	key := fmt.Sprintf("credit-reports/%d/%d.pdf", job.accountID, job.reportID)
 	filename := fmt.Sprintf("myscorr-credit-report-%d.pdf", job.reportID)
 
-	uri, err := u.store.Upload(ctx, "", key, filename, encrypted)
+	uri, err := u.store.Upload(ctx, key, filename, encrypted)
 	if err != nil {
 		slog.Warn("credit-report pdf upload failed",
 			"report_id", job.reportID, "key", key, "error", err)

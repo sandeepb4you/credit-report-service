@@ -36,8 +36,9 @@ func (r *CreditAnalyticsRepo) Create(ctx context.Context, req *models.CreditAnal
 	)
 }
 
-// SetResultPDFURL writes the permanent Utho PDF URL onto a row once the async
-// download+upload completes. Idempotent: re-writing the same URL is a no-op.
+// SetResultPDFURL writes the stored object's s3:// URI onto a row once the
+// async download+upload completes. Idempotent: re-writing the same value is a
+// no-op.
 // Used by the best-effort ReportUploader; a failure here just leaves the column
 // null (the raw response_body still has Digitap's source URL).
 func (r *CreditAnalyticsRepo) SetResultPDFURL(ctx context.Context, id int64, url string) error {

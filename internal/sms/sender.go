@@ -21,7 +21,7 @@ type Sender interface {
 	// message; the caller decides whether that fails the whole request.
 	//
 	// ctx carries the request deadline, matching the other outbound HTTP
-	// clients (payments, utho, digitap) rather than the SMTP-era Mailer.
+	// clients (payments, s3store, digitap) rather than the SMTP-era Mailer.
 	SendOTP(ctx context.Context, phone, otp string) error
 	// IsStub reports whether this sender only writes to the log. Surfaced in
 	// the boot snapshot so an operator can see at a glance that no real SMS

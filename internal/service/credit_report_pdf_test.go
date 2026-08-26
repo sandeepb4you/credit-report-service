@@ -45,7 +45,7 @@ type fakeObjectStore struct {
 	failWith error
 }
 
-func (f *fakeObjectStore) Upload(_ context.Context, _, key, _ string, body []byte) (string, error) {
+func (f *fakeObjectStore) Upload(_ context.Context, key, _ string, body []byte) (string, error) {
 	if f.failWith != nil {
 		return "", f.failWith
 	}

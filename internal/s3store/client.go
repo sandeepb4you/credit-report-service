@@ -1,10 +1,11 @@
 // Package s3store stores credit-report PDFs in Amazon S3 and hands out
 // short-lived links to them.
 //
-// It replaces the Utho relay destination (internal/utho, kept as an
-// alternative) now that the service runs on AWS: the EC2 instance carries an
-// IAM role, so there is no long-lived access key in the environment for an
-// attacker to find or for anyone to rotate.
+// It replaces Utho as the relay destination now that the service runs on AWS:
+// the EC2 instance carries an IAM role, so there is no long-lived access key in
+// the environment for an attacker to find or for anyone to rotate. Utho's own
+// API is S3-compatible, so going back would mean an endpoint override here
+// rather than a second client.
 //
 // The bucket is private — public access is blocked at the bucket, and its policy
 // denies any non-TLS request — so an object URL is of no use on its own. Reads
@@ -80,11 +81,10 @@ func (c *Client) Bucket() string { return c.cfg.Bucket }
 // The URI, not an https URL: the bucket is private, so an https link would only
 // look usable. Callers persist this and presign it at read time.
 //
-// Signature mirrors utho.Client.Upload so the relay can hold either behind one
-// interface; bucket is accepted and ignored in favour of the configured one,
-// because a relay that could be pointed at an arbitrary bucket by its caller is
-// a way to write credit reports somewhere unaudited.
-func (c *Client) Upload(ctx context.Context, _, key, filename string, body []byte) (string, error) {
+// There is deliberately no bucket parameter: the configured bucket is the only
+// destination, because a relay a caller could aim at an arbitrary bucket is a
+// way to write credit reports somewhere unaudited.
+func (c *Client) Upload(ctx context.Context, key, filename string, body []byte) (string, error) {
 	if c.stubOnly {
 		return "", fmt.Errorf("s3store: no bucket configured")
 	}

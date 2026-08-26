@@ -31,8 +31,9 @@ const (
 	deviceTypeWeb  = "web"
 	nameLookupOff  = 0 // name_lookup: 0 = use the supplied first/last name
 	// reportTypeFlag 3 asks Digitap to include result_pdf: a ~1-hour URL for the
-	// generated PDF report. We download it and re-upload to Utho asynchronously
-	// (ReportUploader), storing the permanent URL on the row. 0 returns JSON only.
+	// generated PDF report. We download it, encrypt it and upload it to S3
+	// asynchronously (ReportUploader), storing the object URI on the row.
+	// 0 returns JSON only.
 	reportTypeFlag = 3
 	otpDigits      = 6
 
@@ -105,8 +106,9 @@ func (s *CreditAnalyticsService) SetScoreBuilder(sb *ScoreBuilderService) {
 }
 
 // SetPDFUploader wires the async PDF relay. Optional; when set, a successful
-// report_type 3 pull enqueues the Digitap result_pdf for download + Utho
-// upload. When unset, result_pdf is ignored (the JSON report is still stored).
+// report_type 3 pull enqueues the Digitap result_pdf for download, encryption
+// and upload to S3. When unset, result_pdf is ignored (the JSON report is
+// still stored).
 func (s *CreditAnalyticsService) SetPDFUploader(u *ReportUploader) {
 	s.pdfUploader = u
 }
@@ -544,7 +546,7 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 			"latency_ms", upstreamLatency,
 		)
 		// report_type 3 carries result_pdf: a ~1-hour URL for the generated PDF.
-		// Hand it to the async relay (download → Utho → write-back) if wired.
+		// Hand it to the relay (download → encrypt → S3 → write-back) if wired.
 		// Best-effort: a missing uploader, missing field, or full queue just
 		// means result_pdf_url stays null; the report/score are unaffected.
 		if s.pdfUploader != nil && len(env.Result) > 0 {

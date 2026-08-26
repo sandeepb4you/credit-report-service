@@ -256,7 +256,7 @@ type MailConfig struct {
 // Provider selects the sender outright: "stub" never contacts a provider, and
 // is how a local run avoids texting real people while a real auth key sits in
 // config.dev.yaml. Any other value falls back to the empty-credentials-⇒-stub
-// convention shared with mail, Cashfree, Digitap and Utho — an empty auth key
+// convention shared with mail, Cashfree, Digitap and S3 — an empty auth key
 // also yields the stub.
 type SMSConfig struct {
 	Provider string      `mapstructure:"provider"` // msg91 | stub
