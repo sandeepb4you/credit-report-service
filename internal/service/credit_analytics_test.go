@@ -12,6 +12,21 @@ import (
 
 // ---- CreditAnalyticsInput.validate ----
 
+// f64 makes a *float64 for the now-nullable OnTimePaymentPercent. Nil means "no
+// month of payment history was reported", which is not the same as 0%.
+func f64(v float64) *float64 { return &v }
+
+// wantOnTime asserts a non-nil percentage equals want.
+func wantOnTime(t *testing.T, got *float64, want float64) {
+	t.Helper()
+	if got == nil {
+		t.Fatalf("onTimePaymentPercent = nil, want %.1f", want)
+	}
+	if *got != want {
+		t.Errorf("onTimePaymentPercent = %.1f, want %.1f", *got, want)
+	}
+}
+
 func TestValidate_CreditAnalyticsInput_Valid(t *testing.T) {
 	in := &CreditAnalyticsInput{DeviceIP: "1.2.3.4"}
 	if d := in.validate(); len(d) > 0 {
@@ -204,9 +219,7 @@ func TestParseReportInsights_FullData(t *testing.T) {
 
 	// On-time: Account 1 has 35 '0' + Account 2 has 36 '0' = 71 on-time out of 72 total
 	// 71/72 * 100 = 98.61... rounded to 98.6
-	if insights.OnTimePaymentPercent != 98.6 {
-		t.Errorf("onTimePaymentPercent = %.1f, want 98.6", insights.OnTimePaymentPercent)
-	}
+	wantOnTime(t, insights.OnTimePaymentPercent, 98.6)
 
 	// Card utilization: only revolving (R) accounts. Account 1: 30000/100000 = 30.0%
 	if insights.CardUtilizationPercent != 30.0 {
@@ -243,9 +256,11 @@ func TestParseReportInsights_AllUnknownPayments(t *testing.T) {
 		t.Fatalf("parseReportInsights: %v", err)
 	}
 
-	// All '?' -> no reported months -> 0%
-	if insights.OnTimePaymentPercent != 0 {
-		t.Errorf("onTimePaymentPercent = %.1f, want 0.0", insights.OnTimePaymentPercent)
+	// All '?' -> no reported months -> NIL, not 0%. Zero would read as "never paid
+	// on time" and used to grade the payment factor F/Critical off no data at all.
+	if insights.OnTimePaymentPercent != nil {
+		t.Errorf("onTimePaymentPercent = %v, want nil for a file with no reported months",
+			*insights.OnTimePaymentPercent)
 	}
 	// No balance on revolving -> 0%
 	if insights.CardUtilizationPercent != 0 {
@@ -280,9 +295,7 @@ func TestParseReportInsights_NoRevolvingAccounts(t *testing.T) {
 		t.Fatalf("parseReportInsights: %v", err)
 	}
 
-	if insights.OnTimePaymentPercent != 100.0 {
-		t.Errorf("onTimePaymentPercent = %.1f, want 100.0", insights.OnTimePaymentPercent)
-	}
+	wantOnTime(t, insights.OnTimePaymentPercent, 100.0)
 	// No revolving accounts -> 0%
 	if insights.CardUtilizationPercent != 0 {
 		t.Errorf("cardUtilizationPercent = %.1f, want 0.0", insights.CardUtilizationPercent)
@@ -326,7 +339,7 @@ func TestParseReportInsights_AccountCountsAndOutstanding(t *testing.T) {
 							"Portfolio_Type": "I",
 							"Credit_Limit_Amount": "0",
 							"Current_Balance": "0",
-							"Account_Status": "00"
+							"Account_Status": "13"
 						}
 					]
 				},
@@ -449,7 +462,9 @@ func TestParseReportInsights_DecimalInterestRate(t *testing.T) {
 }
 
 func TestParseReportInsights_ClosedAccountsExcluded(t *testing.T) {
-	// Closed account (status "00") should not contribute to outstanding/EMI/interest.
+	// Closed account (status "13" — CLOSED in the spec's account-status master)
+	// should not contribute to outstanding/EMI/interest. This fixture used to say
+	// "00", which the master defines as "No Suit Filed": an ordinary OPEN account.
 	raw := json.RawMessage(`{
 		"result_json": {
 			"INProfileResponse": {
@@ -458,7 +473,7 @@ func TestParseReportInsights_ClosedAccountsExcluded(t *testing.T) {
 						"Payment_History_Profile": "000000000000000000000000000000000000",
 						"Portfolio_Type": "I",
 						"Current_Balance": "500000",
-						"Account_Status": "00",
+						"Account_Status": "13",
 						"Scheduled_Monthly_Payment_Amount": "20000",
 						"Rate_of_Interest": "15"
 					}]
@@ -538,17 +553,47 @@ func TestParseReportInsights_NullFieldsHandled(t *testing.T) {
 	}
 }
 
+// Expectations come from the ACTIVE/CLOSED block of the account-status master
+// (spec V2.7 section 1.9). Only 12-17 close an account; "DEFAULTVALUE ACTIVE"
+// covers everything the table does not list.
+//
+// The old cases had "00" and "97" as inactive, which is what let closed accounts
+// ("13", the most common status in real reports) count toward live balances while
+// healthy ones ("00" = No Suit Filed) were hidden from the active total.
 func TestIsActiveStatus(t *testing.T) {
 	tests := []struct {
 		input string
 		want  bool
 	}{
-		{"01", true},
+		// Explicitly ACTIVE in the master.
 		{"11", true},
+		{"21", true},
+		{"71", true},
+		{"84", true},
+		// "No Suit Filed" — an ordinary open account, not a closure.
+		{"00", true},
+		{"0", true},
+		// Derogatory but still an open liability; counted as derogatory elsewhere.
+		{"97", true},
 		{"64", true},
+		// Unlisted values fall to DEFAULTVALUE ACTIVE.
+		{"01", true},
+		{"130", true},
+		// Explicitly CLOSED.
+		{"12", false},
+		{"13", false},
+		{"14", false},
+		{"15", false},
+		{"16", false},
+		{"17", false},
+		// Zero-padding must not change the verdict.
+		{"013", false},
+		// Descriptions that say closed outright, though the table gives them no tag.
+		{"132", false},
+		{"133", false},
+		{"138", false},
+		// Absent data is not evidence of an open account.
 		{"", false},
-		{"00", false},
-		{"97", false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.input, func(t *testing.T) {
@@ -569,7 +614,7 @@ func TestParseReportInsights_LoanAccounts(t *testing.T) {
 					"CAIS_Account_DETAILS": [
 						{
 							"Account_Number": "XXXXXXXXXXXX4328",
-							"Account_Type": "07",
+							"Account_Type": "02",
 							"Subscriber_Name": "HDFC Bank Ltd",
 							"Portfolio_Type": "I",
 							"Current_Balance": "250000",
@@ -586,7 +631,7 @@ func TestParseReportInsights_LoanAccounts(t *testing.T) {
 							"Current_Balance": "0",
 							"Highest_Credit_or_Original_Loan_Amount": "300000",
 							"Repayment_Tenure": "60",
-							"Account_Status": "00",
+							"Account_Status": "13",
 							"Payment_History_Profile": "000000000000000000000000000000000000"
 						}
 					]
@@ -605,8 +650,11 @@ func TestParseReportInsights_LoanAccounts(t *testing.T) {
 	}
 
 	la := insights.LoanAccounts[0]
-	if la.LoanType != "Home Loan" {
-		t.Errorf("loanType = %q, want %q", la.LoanType, "Home Loan")
+	// 02 is HOUSING LOAN in the spec's account-type master. The fixture used to
+	// say 07 and expect "Home Loan", which only worked because the map was wrong
+	// — 07 is Gold Loan.
+	if la.LoanType != "Housing Loan" {
+		t.Errorf("loanType = %q, want %q", la.LoanType, "Housing Loan")
 	}
 	if la.Company != "HDFC Bank Ltd" {
 		t.Errorf("company = %q, want %q", la.Company, "HDFC Bank Ltd")
@@ -721,16 +769,40 @@ func TestParseReportInsights_LoanAccountClampedPercentage(t *testing.T) {
 
 // ---- loanTypeFor ----
 
+// Every expectation here is transcribed from the "Account type master" table in
+// section 1.9 of the Digitap spec V2.7. The codes chosen are the ones that
+// actually occur in stored reports, plus the two boundary cases.
+//
+// These cases previously asserted a different table entirely (07 as Home Loan,
+// 06 as Personal Loan, 27 as Gold Loan — none of which the spec says), which is
+// why the mismapping survived: the tests agreed with the code instead of with
+// the document.
 func TestLoanTypeFor(t *testing.T) {
 	tests := []struct {
 		input string
 		want  string
 	}{
-		{"07", "Home Loan"},
 		{"01", "Auto Loan"},
-		{"06", "Personal Loan"},
+		{"02", "Housing Loan"},
+		{"03", "Property Loan"},
+		{"04", "Loan Against Shares/Securities"},
+		{"05", "Personal Loan"}, // the reported bug: this read "Two Wheeler Loan"
+		{"06", "Consumer Loan"},
+		{"07", "Gold Loan"},
+		{"09", "Loan to Professional"},
 		{"10", "Credit Card"},
-		{"27", "Gold Loan"},
+		{"13", "Two-Wheeler Loan"},
+		{"32", "Used Car Loan"},
+		{"36", "Kisan Credit Card"},
+		{"37", "Loan on Credit Card"},
+		{"69", "Short Term Personal Loan"},
+		// The wire zero-pads; the spec table does not. Both must resolve.
+		{"5", "Personal Loan"},
+		{" 05 ", "Personal Loan"},
+		{"0", "Other"},
+		{"00", "Other"},
+		// 27 is absent from the master table — it must not resolve to anything.
+		{"27", "Other"},
 		{"99", "Other"},
 		{"", "Other"},
 	}
@@ -746,7 +818,8 @@ func TestLoanTypeFor(t *testing.T) {
 // ---- parsePaymentHistory ----
 
 func TestParsePaymentHistory(t *testing.T) {
-	// "010?2" = 5 months: paid, delayed(1), paid, not_reported, delayed(31)
+	// "010?2" = 5 months: paid, delayed(30), paid, not_reported, delayed(60).
+	// Days are the LOWER BOUND of each DPD bucket: '1' is 30-59, '2' is 60-89.
 	history := parsePaymentHistory("010?2")
 	if len(history) != 5 {
 		t.Fatalf("len = %d, want 5", len(history))
@@ -762,8 +835,8 @@ func TestParsePaymentHistory(t *testing.T) {
 	if history[1].Status != "delayed" {
 		t.Errorf("[1].Status = %q, want %q", history[1].Status, "delayed")
 	}
-	if history[1].DaysLate != 1 {
-		t.Errorf("[1].DaysLate = %d, want 1", history[1].DaysLate)
+	if history[1].DaysLate != 30 {
+		t.Errorf("[1].DaysLate = %d, want 30", history[1].DaysLate)
 	}
 
 	if history[2].Status != "paid" {
@@ -777,8 +850,8 @@ func TestParsePaymentHistory(t *testing.T) {
 	if history[4].Status != "delayed" {
 		t.Errorf("[4].Status = %q, want %q", history[4].Status, "delayed")
 	}
-	if history[4].DaysLate != 31 {
-		t.Errorf("[4].DaysLate = %d, want 31", history[4].DaysLate)
+	if history[4].DaysLate != 60 {
+		t.Errorf("[4].DaysLate = %d, want 60", history[4].DaysLate)
 	}
 }
 
@@ -790,12 +863,15 @@ func TestParsePaymentHistory_Empty(t *testing.T) {
 }
 
 func TestParsePaymentHistory_DaysPastDueBuckets(t *testing.T) {
-	// Each rating code should map to its DPD bucket lower bound.
+	// Each rating code maps to its DPD bucket's lower bound. Spec V2.7 section
+	// 1.9: '0' is 0-29, '1' is 30-59, '2' is 60-89, and so on in 30-day steps to
+	// '6' = 180 or more. The old expectations (1, 31, 61 ...) were a bucket short
+	// at every level, so a 60-day delinquency was reported as 31 days late.
 	history := parsePaymentHistory("0123456")
 	if len(history) != 7 {
 		t.Fatalf("len = %d, want 7", len(history))
 	}
-	wantDays := []int{0, 1, 31, 61, 91, 121, 151}
+	wantDays := []int{0, 30, 60, 90, 120, 150, 180}
 	wantStatus := []string{"paid", "delayed", "delayed", "delayed", "delayed", "delayed", "delayed"}
 	for i, w := range wantDays {
 		if history[i].DaysLate != w {
@@ -803,6 +879,45 @@ func TestParsePaymentHistory_DaysPastDueBuckets(t *testing.T) {
 		}
 		if history[i].Status != wantStatus[i] {
 			t.Errorf("[%d].Status = %q, want %q", i, history[i].Status, wantStatus[i])
+		}
+	}
+}
+
+// The payment history carries asset classifications as well as DPD digits.
+// 'S' (Standard) means the account is performing and DOES occur in real reports
+// — whole histories of it. It used to fall through to "not reported", which
+// zeroed the on-time percentage for accounts that had never missed a payment.
+func TestParsePaymentHistory_AssetClassifications(t *testing.T) {
+	history := parsePaymentHistory("SBDM")
+	if len(history) != 4 {
+		t.Fatalf("len = %d, want 4", len(history))
+	}
+	if history[0].Status != "paid" {
+		t.Errorf("'S' (Standard) = %q, want paid — the account is performing", history[0].Status)
+	}
+	if history[0].DaysLate != 0 {
+		t.Errorf("'S' DaysLate = %d, want 0", history[0].DaysLate)
+	}
+	for i, code := range []string{"B", "D", "M"} {
+		if history[i+1].Status != "delayed" {
+			t.Errorf("%q = %q, want delayed — it is an adverse classification",
+				code, history[i+1].Status)
+		}
+	}
+}
+
+// 'N' and '?' both mean "value not available" per the spec.
+func TestParsePaymentHistory_NotAvailableCodes(t *testing.T) {
+	history := parsePaymentHistory("?N")
+	if len(history) != 2 {
+		t.Fatalf("len = %d, want 2", len(history))
+	}
+	for i, code := range []string{"?", "N"} {
+		if history[i].Status != "not_reported" {
+			t.Errorf("%q = %q, want not_reported", code, history[i].Status)
+		}
+		if history[i].DaysLate != 0 {
+			t.Errorf("%q DaysLate = %d, want 0", code, history[i].DaysLate)
 		}
 	}
 }
@@ -838,7 +953,7 @@ func TestGradePaymentHistory(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			grade, summary, _ := gradePaymentHistory(tc.onTime, tc.missed)
+			grade, summary, _ := gradePaymentHistory(f64(tc.onTime), tc.missed)
 			if grade != tc.wantGrade {
 				t.Errorf("grade = %q, want %q (summary: %s)", grade, tc.wantGrade, summary)
 			}
@@ -974,7 +1089,7 @@ func TestOverallGrade(t *testing.T) {
 
 func TestBuildReportCard_AllFactors(t *testing.T) {
 	card := buildReportCard(reportCardInputs{
-		OnTimePercent:    100,
+		OnTimePercent:    f64(100),
 		MissedPayments:   0,
 		CardUtilization:  20.0,
 		OldestOpenDate:   time.Now().AddDate(-11, 0, 0),
@@ -1335,6 +1450,325 @@ func TestUnwrapResultObject_DegenerateInputs(t *testing.T) {
 	}
 }
 
+// The accounts screen asks "what do I still owe, and on what?", so the list is
+// ordered active-first and then by outstanding balance, biggest first — on the
+// server, so every client renders the same order.
+//
+// The two cases that pin the rule are ACTIVE_ZERO and CLOSED_BIG: active outranks
+// balance unconditionally, so a fully-repaid open loan sits above a closed one
+// still carrying a settled balance.
+func TestParseReportInsights_LoanAccountsSortedByOutstanding(t *testing.T) {
+	raw := json.RawMessage(`{
+		"result_json": { "INProfileResponse": {
+			"CAIS_Account": { "CAIS_Account_DETAILS": [
+				{ "Account_Number": "SMALL", "Account_Type": "05", "Portfolio_Type": "I",
+				  "Account_Status": "11", "Current_Balance": "50000",
+				  "Payment_History_Profile": "000" },
+				{ "Account_Number": "CLOSED_A", "Account_Type": "05", "Portfolio_Type": "I",
+				  "Account_Status": "13", "Current_Balance": "0",
+				  "Payment_History_Profile": "000" },
+				{ "Account_Number": "CLOSED_BIG", "Account_Type": "02", "Portfolio_Type": "M",
+				  "Account_Status": "13", "Current_Balance": "900000",
+				  "Payment_History_Profile": "000" },
+				{ "Account_Number": "BIGGEST", "Account_Type": "02", "Portfolio_Type": "M",
+				  "Account_Status": "11", "Current_Balance": "8200000",
+				  "Payment_History_Profile": "000" },
+				{ "Account_Number": "ACTIVE_ZERO", "Account_Type": "05", "Portfolio_Type": "I",
+				  "Account_Status": "11", "Current_Balance": "0",
+				  "Payment_History_Profile": "000" },
+				{ "Account_Number": "CLOSED_B", "Account_Type": "05", "Portfolio_Type": "I",
+				  "Account_Status": "13", "Current_Balance": "0",
+				  "Payment_History_Profile": "000" },
+				{ "Account_Number": "MIDDLE", "Account_Type": "01", "Portfolio_Type": "I",
+				  "Account_Status": "11", "Current_Balance": "150000",
+				  "Payment_History_Profile": "000" }
+			] },
+			"SCORE": { "BureauScore": "772" }
+		} }
+	}`)
+
+	got, err := parseReportInsights(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	order := make([]string, 0, len(got.LoanAccounts))
+	for _, la := range got.LoanAccounts {
+		order = append(order, la.AccountNumber)
+	}
+
+	want := []string{
+		// Active, descending by balance — including the zero-balance one, which
+		// still outranks every closed account.
+		"BIGGEST", "MIDDLE", "SMALL", "ACTIVE_ZERO",
+		// Closed, descending by balance. CLOSED_BIG is larger than any active
+		// balance except BIGGEST and still sorts below all of them.
+		"CLOSED_BIG", "CLOSED_A", "CLOSED_B",
+	}
+	if len(order) != len(want) {
+		t.Fatalf("got %d accounts %v, want %d", len(order), order, len(want))
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("order = %v, want %v", order, want)
+		}
+	}
+
+	// The properties the screen relies on, asserted independently of the exact
+	// fixture: no closed account precedes an active one, and within each group
+	// balances never rise.
+	seenClosed := false
+	for i, la := range got.LoanAccounts {
+		if !la.Active {
+			seenClosed = true
+		} else if seenClosed {
+			t.Errorf("active account %q at index %d follows a closed one", la.AccountNumber, i)
+		}
+		if i > 0 {
+			prev := got.LoanAccounts[i-1]
+			if prev.Active == la.Active && prev.CurrentBalance < la.CurrentBalance {
+				t.Errorf("balance rose within a group at index %d: %v then %v",
+					i, prev.CurrentBalance, la.CurrentBalance)
+			}
+		}
+	}
+}
+
+// CAIS_Account_History is the better record and must win over the positional
+// Payment_History_Profile string. The fixture reproduces the real shape that
+// exposed this: a loan opened January 2026, whose profile string reports SIX
+// months while the history array carries SEVEN (Jan-Jul 2026).
+// A file with no reported payment month must report NO percentage, and must not
+// be graded on the absence.
+//
+// Sending 0 for "unknown" was not a cosmetic problem: gradePaymentHistory(0, 0)
+// fell through to "F — Critical. Immediate action required.", so a brand-new
+// borrower was told their payment history was critical on the strength of no
+// data at all, and the F dragged the overall grade down with it.
+func TestParseReportInsights_NoReportedMonthsHasNoOnTimePercent(t *testing.T) {
+	raw := json.RawMessage(`{
+		"result_json": { "INProfileResponse": {
+			"CAIS_Account": { "CAIS_Account_DETAILS": [{
+				"Account_Number": "NEW", "Account_Type": "05", "Portfolio_Type": "I",
+				"Account_Status": "11", "Current_Balance": "50000",
+				"Credit_Limit_Amount": "0", "Open_Date": "20260801",
+				"Payment_History_Profile": "????????????????????????????????????"
+			}] },
+			"SCORE": { "BureauScore": "720" }
+		} }
+	}`)
+
+	got, err := parseReportInsights(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	if got.OnTimePaymentPercent != nil {
+		t.Errorf("onTimePaymentPercent = %v, want nil — no month was reported",
+			*got.OnTimePaymentPercent)
+	}
+
+	// The payment-history factor is omitted rather than graded. An ungraded
+	// placeholder would be worse: overallGrade scores an unrecognised grade as
+	// zero, exactly as it scores an F.
+	if got.ReportCard == nil {
+		t.Fatal("report card missing")
+	}
+	for _, f := range got.ReportCard.Factors {
+		if f.Name == "Payment history" {
+			t.Errorf("payment-history factor present with grade %q; it should be omitted "+
+				"when there is nothing to grade", f.Grade)
+		}
+	}
+	// The other factors still grade, so the card is not empty.
+	if len(got.ReportCard.Factors) == 0 {
+		t.Error("no factors at all; only payment history should have been omitted")
+	}
+	if got.ReportCard.OverallGrade == "F" {
+		t.Error("overall grade F derived from a file with no payment data")
+	}
+}
+
+// The grader itself: nil in, empty grade out.
+func TestGradePaymentHistory_UnknownIsNotAFailure(t *testing.T) {
+	grade, summary, detail := gradePaymentHistory(nil, 0)
+	if grade != "" {
+		t.Errorf("grade = %q, want empty for unknown", grade)
+	}
+	if summary == "" || detail == "" {
+		t.Error("unknown still needs to explain itself to the user")
+	}
+	// And a genuine 0% with missed payments is still an F — the distinction the
+	// whole change exists to preserve.
+	if g, _, _ := gradePaymentHistory(f64(0), 12); g != "F" {
+		t.Errorf("grade for a real 0%% = %q, want F", g)
+	}
+}
+
+func TestPaymentHistory_PrefersAccountHistoryOverProfileString(t *testing.T) {
+	raw := json.RawMessage(`{
+		"result_json": { "INProfileResponse": {
+			"CAIS_Account": { "CAIS_Account_DETAILS": [{
+				"Account_Number": "HDFCPL", "Account_Type": "05", "Portfolio_Type": "I",
+				"Account_Status": "11", "Current_Balance": "250000",
+				"Subscriber_Name": "HDFC Bank Ltd", "Open_Date": "20260111",
+				"Payment_History_Profile": "000000??????????????????????????????",
+				"CAIS_Account_History": [
+					{ "Year": "2026", "Month": "07", "Days_Past_Due": "000", "Asset_Classification": "?" },
+					{ "Year": "2026", "Month": "06", "Days_Past_Due": "000", "Asset_Classification": "?" },
+					{ "Year": "2026", "Month": "05", "Days_Past_Due": "045", "Asset_Classification": "?" },
+					{ "Year": "2026", "Month": "04", "Days_Past_Due": "000", "Asset_Classification": "?" },
+					{ "Year": "2026", "Month": "03", "Days_Past_Due": "000", "Asset_Classification": "?" },
+					{ "Year": "2026", "Month": "02", "Days_Past_Due": "000", "Asset_Classification": "?" },
+					{ "Year": "2026", "Month": "01", "Days_Past_Due": "000", "Asset_Classification": "?" }
+				]
+			}] },
+			"SCORE": { "BureauScore": "772" }
+		} }
+	}`)
+
+	got, err := parseReportInsights(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(got.LoanAccounts) != 1 {
+		t.Fatalf("want 1 tradeline, got %d", len(got.LoanAccounts))
+	}
+	h := got.LoanAccounts[0].PaymentHistory
+
+	// Seven months, not the six the profile string reports.
+	if len(h) != 7 {
+		t.Fatalf("history length = %d, want 7 (the array's count, not the string's 6)", len(h))
+	}
+	// Months come from the data, not from counting back from time.Now().
+	if h[0].Month != "2026-07" {
+		t.Errorf("newest month = %q, want 2026-07 from the payload", h[0].Month)
+	}
+	if h[6].Month != "2026-01" {
+		t.Errorf("oldest month = %q, want 2026-01", h[6].Month)
+	}
+	// Exact days past due, not a bucket floor.
+	if h[2].Status != "delayed" || h[2].DaysLate != 45 {
+		t.Errorf("May 2026 = %s/%d, want delayed/45 (the exact Days_Past_Due)",
+			h[2].Status, h[2].DaysLate)
+	}
+	if h[0].Status != "paid" || h[0].DaysLate != 0 {
+		t.Errorf("July 2026 = %s/%d, want paid/0", h[0].Status, h[0].DaysLate)
+	}
+	// One delinquent month out of seven reported.
+	wantOnTime(t, got.OnTimePaymentPercent, 85.7)
+}
+
+// No history array — the positional string is still the fallback, and some real
+// responses carry nothing else.
+func TestPaymentHistory_FallsBackToProfileString(t *testing.T) {
+	raw := json.RawMessage(`{
+		"result_json": { "INProfileResponse": {
+			"CAIS_Account": { "CAIS_Account_DETAILS": [{
+				"Account_Number": "OLD", "Account_Type": "05", "Portfolio_Type": "I",
+				"Account_Status": "11", "Current_Balance": "1000",
+				"Payment_History_Profile": "010"
+			}] },
+			"SCORE": { "BureauScore": "700" }
+		} }
+	}`)
+
+	got, err := parseReportInsights(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	h := got.LoanAccounts[0].PaymentHistory
+	if len(h) != 3 {
+		t.Fatalf("history length = %d, want 3 from the profile string", len(h))
+	}
+	if h[1].Status != "delayed" || h[1].DaysLate != 30 {
+		t.Errorf("middle month = %s/%d, want delayed/30", h[1].Status, h[1].DaysLate)
+	}
+}
+
+// A single month collapses to a bare object rather than an array, the same
+// XML->JSON quirk CAIS_Account_DETAILS has.
+func TestPaymentHistory_SingleMonthObject(t *testing.T) {
+	raw := json.RawMessage(`{
+		"result_json": { "INProfileResponse": {
+			"CAIS_Account": { "CAIS_Account_DETAILS": [{
+				"Account_Number": "NEW", "Account_Type": "05", "Portfolio_Type": "I",
+				"Account_Status": "11", "Current_Balance": "5000",
+				"Payment_History_Profile": "0",
+				"CAIS_Account_History": { "Year": "2026", "Month": "08", "Days_Past_Due": "000" }
+			}] },
+			"SCORE": { "BureauScore": "700" }
+		} }
+	}`)
+
+	got, err := parseReportInsights(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	h := got.LoanAccounts[0].PaymentHistory
+	if len(h) != 1 || h[0].Month != "2026-08" {
+		t.Fatalf("history = %+v, want one entry for 2026-08", h)
+	}
+}
+
+// An unusable Days_Past_Due must not read as "zero days late" — that would score
+// a delinquent month as paid on time. Fall back to the classification letter.
+func TestPaymentHistory_UnparseableDaysPastDue(t *testing.T) {
+	for _, tc := range []struct {
+		dpd, cls, wantStatus string
+	}{
+		{"", "STD", "paid"},     // Standard: performing
+		{"?", "S", "paid"},      // same, single-letter spelling
+		{"XXX", "B", "delayed"}, // Substandard
+		{"", "", "not_reported"},
+	} {
+		raw := json.RawMessage(`{
+			"result_json": { "INProfileResponse": {
+				"CAIS_Account": { "CAIS_Account_DETAILS": [{
+					"Account_Type": "05", "Portfolio_Type": "I", "Account_Status": "11",
+					"Current_Balance": "1000", "Payment_History_Profile": "0",
+					"CAIS_Account_History": [
+						{ "Year": "2026", "Month": "08", "Days_Past_Due": "` + tc.dpd + `",
+						  "Asset_Classification": "` + tc.cls + `" }
+					]
+				}] }
+			} }
+		}`)
+		got, err := parseReportInsights(raw)
+		if err != nil {
+			t.Fatalf("dpd=%q cls=%q: parse: %v", tc.dpd, tc.cls, err)
+		}
+		h := got.LoanAccounts[0].PaymentHistory
+		if len(h) != 1 || h[0].Status != tc.wantStatus {
+			t.Errorf("dpd=%q cls=%q -> %+v, want status %q", tc.dpd, tc.cls, h, tc.wantStatus)
+		}
+	}
+}
+
+// A row that cannot be dated is dropped rather than labelled year zero.
+func TestPaymentHistory_UndateableRowDropped(t *testing.T) {
+	raw := json.RawMessage(`{
+		"result_json": { "INProfileResponse": {
+			"CAIS_Account": { "CAIS_Account_DETAILS": [{
+				"Account_Type": "05", "Portfolio_Type": "I", "Account_Status": "11",
+				"Current_Balance": "1000", "Payment_History_Profile": "00",
+				"CAIS_Account_History": [
+					{ "Year": "2026", "Month": "08", "Days_Past_Due": "000" },
+					{ "Year": "", "Month": "13", "Days_Past_Due": "000" }
+				]
+			}] }
+		} }
+	}`)
+	got, err := parseReportInsights(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	h := got.LoanAccounts[0].PaymentHistory
+	if len(h) != 1 || h[0].Month != "2026-08" {
+		t.Fatalf("history = %+v, want only the dateable row", h)
+	}
+}
+
 func TestParseReportInsights_SingleAccountObject(t *testing.T) {
 	// The Digitap/Experian quirk: one tradeline -> CAIS_Account_DETAILS is a
 	// single OBJECT, not an array. It must parse to one loan account.
@@ -1398,7 +1832,7 @@ func sbStrategyKeys(sb *ScoreBuilder) map[string]bool {
 func TestBuildScoreBuilder_RebuildJourney(t *testing.T) {
 	sc := int64(605)
 	ins := &ReportInsights{
-		CreditScore: &sc, OnTimePaymentPercent: 80, CardUtilizationPercent: 68.3,
+		CreditScore: &sc, OnTimePaymentPercent: f64(80), CardUtilizationPercent: 68.3,
 		EnquiryCount180Days: 5, DerogatoryAccounts: 0,
 		ReportCard: &ReportCard{Factors: []CardFactor{
 			{Name: "Payment history", Grade: "C", Summary: "10 missed", MissedCount: 10},
@@ -1444,7 +1878,7 @@ func TestBuildScoreBuilder_RebuildJourney(t *testing.T) {
 func TestBuildScoreBuilder_RebuildJourneyWithOfferings(t *testing.T) {
 	sc := int64(610)
 	ins := &ReportInsights{
-		CreditScore: &sc, OnTimePaymentPercent: 80, CardUtilizationPercent: 64,
+		CreditScore: &sc, OnTimePaymentPercent: f64(80), CardUtilizationPercent: 64,
 		EnquiryCount180Days: 4, DerogatoryAccounts: 0,
 		ReportCard: &ReportCard{Factors: []CardFactor{
 			{Name: "Payment history", Grade: "C", Summary: "2 missed", MissedCount: 2},
@@ -1494,7 +1928,7 @@ func TestBuildScoreBuilder_RebuildJourneyWithOfferings(t *testing.T) {
 func TestBuildScoreBuilder_ProtectJourney(t *testing.T) {
 	sc := int64(815)
 	ins := &ReportInsights{
-		CreditScore: &sc, OnTimePaymentPercent: 100, CardUtilizationPercent: 15,
+		CreditScore: &sc, OnTimePaymentPercent: f64(100), CardUtilizationPercent: 15,
 		EnquiryCount180Days: 0, DerogatoryAccounts: 0,
 		ReportCard: &ReportCard{Factors: []CardFactor{
 			{Name: "Payment history", Grade: "A+"}, {Name: "Credit utilisation", Grade: "A"},

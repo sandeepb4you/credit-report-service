@@ -12,7 +12,7 @@ import (
 func sbInsights(score int64) *ReportInsights {
 	s := score
 	return &ReportInsights{
-		CreditScore: &s, OnTimePaymentPercent: 80, CardUtilizationPercent: 64,
+		CreditScore: &s, OnTimePaymentPercent: f64(80), CardUtilizationPercent: 64,
 		EnquiryCount180Days: 4, DerogatoryAccounts: 0,
 		ReportCard: &ReportCard{Factors: []CardFactor{
 			{Name: "Payment history", Grade: "C", Summary: "2 missed", MissedCount: 2},

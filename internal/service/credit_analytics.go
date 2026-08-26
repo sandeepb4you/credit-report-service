@@ -12,6 +12,7 @@ import (
 	"math/big"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -126,11 +127,16 @@ const reportFreshWindow = 30 * 24 * time.Hour
 // report: the bureau credit score, on-time payment percentage, card
 // utilization percentage, and enquiry count for the past 180 days.
 type ReportInsights struct {
-	ReportID               int64   `json:"reportId"`
-	CreditScore            *int64  `json:"creditScore"`
-	OnTimePaymentPercent   float64 `json:"onTimePaymentPercent"`
-	CardUtilizationPercent float64 `json:"cardUtilizationPercent"`
-	EnquiryCount180Days    int64   `json:"enquiryCount180Days"`
+	ReportID    int64  `json:"reportId"`
+	CreditScore *int64 `json:"creditScore"`
+	// OnTimePaymentPercent is nil when no month of payment history was reported
+	// on any tradeline — which is different from 0%, and used to be indistinguishable
+	// from it. A thin or brand-new file showed "0% on time", read as "never paid
+	// anything on time", and graded the payment factor F/Critical off no data at all.
+	// The clients already model this as nullable and render "—".
+	OnTimePaymentPercent   *float64 `json:"onTimePaymentPercent"`
+	CardUtilizationPercent float64  `json:"cardUtilizationPercent"`
+	EnquiryCount180Days    int64    `json:"enquiryCount180Days"`
 	// Outdated is true once the report is older than reportFreshWindow. Clients
 	// must drive "time to refresh" off this flag rather than re-deriving it from
 	// CreatedAt: the window is a product decision, and two implementations of it
@@ -287,79 +293,110 @@ type PaymentMonth struct {
 	DaysLate int    `json:"daysLate"` // 0 if paid on time
 }
 
-// accountTypeMap translates Experian Account_Type codes to human-readable
-// loan type names. Based on the Digitap V2.7 spec.
+// accountTypeMap translates Experian Account_Type codes to human-readable loan
+// type names, transcribed from the "Account type master" table in section 1.9
+// of the Digitap Credit Analytics spec V2.7.
+//
+// Keys are unpadded decimal, matching how the spec writes them; lookups go
+// through loanTypeFor, which normalizes because the wire format is zero-padded
+// ("05", "10").
+//
+// This table was previously wrong for almost every code that occurs in practice
+// — 05 (the most common non-card type) read as "Two Wheeler Loan" when it is
+// PERSONAL LOAN, and the label feeds models.LoanCategoryFor, so personal loans
+// were also dropped from the balance-transfer optimizer for want of the word
+// "personal". Check any edit against the spec table, not against intuition
+// about what a number ought to mean.
 var accountTypeMap = map[string]string{
-	"01": "Auto Loan",
-	"02": "Auto Loan",
-	"03": "Auto Loan",
-	"04": "Two Wheeler Loan",
-	"05": "Two Wheeler Loan",
-	"06": "Personal Loan",
-	"07": "Home Loan",
-	"08": "Property Loan",
-	"09": "Credit Card",
+	"0":  "Other",
+	"1":  "Auto Loan",
+	"2":  "Housing Loan",
+	"3":  "Property Loan",
+	"4":  "Loan Against Shares/Securities",
+	"5":  "Personal Loan",
+	"6":  "Consumer Loan",
+	"7":  "Gold Loan",
+	"8":  "Education Loan",
+	"9":  "Loan to Professional",
 	"10": "Credit Card",
-	"11": "Consumer Loan",
-	"12": "Education Loan",
-	"13": "Overdraft",
-	"14": "Business Loan",
-	"15": "Business Loan",
-	"25": "Commercial Vehicle Loan",
-	"26": "Tractor Loan",
-	"27": "Gold Loan",
-	"28": "Loan Against Shares",
-	"29": "Loan Against FD",
-	"30": "Corporate Credit Card",
-	"31": "Leasing",
-	"32": "Consumer Durable",
-	"33": "Consumer Durable",
-	"34": "Used Car Loan",
-	"35": "Loan Against Debentures",
-	"36": "Loan Against Mutual Funds",
-	"37": "Construction Equipment Loan",
-	"38": "Used Two Wheeler Loan",
-	"39": "Used Three Wheeler Loan",
-	"40": "Loan Against jewellery",
-	"41": "Commercial Real Estate Loan",
-	"42": "Heavy Commercial Vehicle Loan",
-	"43": "Medium Commercial Vehicle Loan",
-	"44": "Light Commercial Vehicle Loan",
-	"45": "Loan Against Car",
-	"46": "Kisan Card",
-	"47": "Doctor Loan",
-	"48": "Engineer Loan",
-	"49": "CA Loan",
-	"50": "Loan Against Property",
-	"51": "Personal Computer Loan",
-	"52": "Mobile Phone Loan",
-	"53": "Scooter Loan",
-	"54": "Truck Loan",
-	"55": "Housing Loan",
-	"56": "Staff Loan",
-	"57": "Staff Loan",
-	"58": "Bank Loan",
-	"59": "Loan Against Savings Certificates",
-	"60": "Secured Credit Card",
-	"61": "Transaction Loan",
-	"62": "Agricultural Loan",
-	"63": "Group Agricultural Loan",
-	"64": "Agri Allied Activities Loan",
-	"65": "Mortgage Loan",
-	"66": "Microfinance Loan",
-	"67": "Pradhan Mantri Awas Yojana",
-	"68": "Small Business Loan",
-	"69": "Working Capital Loan",
-	"70": "Term Loan",
+	"11": "Leasing",
+	"12": "Overdraft",
+	"13": "Two-Wheeler Loan",
+	"14": "Non-Funded Credit Facility",
+	"15": "Loan Against Bank Deposits",
+	"16": "Fleet Card",
+	"17": "Commercial Vehicle Loan",
+	"18": "Telco — Wireless",
+	"19": "Telco — Broadband",
+	"20": "Telco — Landline",
+	"23": "GECL Secured",
+	"24": "GECL Unsecured",
+	"31": "Secured Credit Card",
+	"32": "Used Car Loan",
+	"33": "Construction Equipment Loan",
+	"34": "Tractor Loan",
+	"35": "Corporate Credit Card",
+	"36": "Kisan Credit Card",
+	"37": "Loan on Credit Card",
+	"38": "Pradhan Mantri Jan Dhan Yojana — Overdraft",
+	"39": "Mudra Loan — Shishu / Kishor / Tarun",
+	"40": "Microfinance — Business Loan",
+	"41": "Microfinance — Personal Loan",
+	"42": "Microfinance — Housing Loan",
+	"43": "Microfinance — Others",
+	"44": "Pradhan Mantri Awas Yojana — CLSS",
+	"45": "P2P Personal Loan",
+	"46": "P2P Auto Loan",
+	"47": "P2P Education Loan",
+	"50": "Business Loan — Secured",
+	"51": "Business Loan — General",
+	"52": "Business Loan — Priority Sector — Small Business",
+	"53": "Business Loan — Priority Sector — Agriculture",
+	"54": "Business Loan — Priority Sector — Others",
+	"55": "Business Non-Funded Credit Facility — General",
+	"56": "Business Non-Funded Credit Facility — Priority Sector — Small Business",
+	"57": "Business Non-Funded Credit Facility — Priority Sector — Agriculture",
+	"58": "Business Non-Funded Credit Facility — Priority Sector — Others",
+	"59": "Business Loan Against Bank Deposits",
+	"60": "Staff Loan",
+	"61": "Business Loan — Unsecured",
+	"69": "Short Term Personal Loan",
+	"70": "Priority Sector Gold Loan",
+	"71": "Temporary Overdraft",
 }
 
 // loanTypeFor returns the human-readable loan type for an Experian
 // Account_Type code, falling back to "Other" if unknown.
+//
+// The code arrives zero-padded on the wire ("05") while the spec's master table
+// writes it plain ("5"), so normalize before looking up. Both spellings, and a
+// stray surrounding space, resolve to the same entry — an unrecognized code
+// silently becoming "Other" is precisely how a mismapping hides.
 func loanTypeFor(accountType string) string {
-	if name, ok := accountTypeMap[accountType]; ok {
+	if name, ok := accountTypeMap[normalizeCode(accountType)]; ok {
 		return name
 	}
 	return "Other"
+}
+
+// normalizeCode canonicalizes a numeric bureau code to unpadded decimal:
+// " 05 " -> "5", "10" -> "10", "00" -> "0". A non-numeric or empty code is
+// returned trimmed, so it simply misses the map rather than matching by luck.
+func normalizeCode(code string) string {
+	s := strings.TrimSpace(code)
+	if s == "" {
+		return s
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return s
+		}
+	}
+	trimmed := strings.TrimLeft(s, "0")
+	if trimmed == "" {
+		return "0" // the code was all zeros
+	}
+	return trimmed
 }
 
 // Pagination bounds for ListReports.
@@ -408,6 +445,7 @@ type digitapPayload struct {
 //   - 401: our client credential -> apperr.ServiceUnavailable (503)
 //   - 422: tradeline rejection   -> apperr.PanFailure       (422)
 //   - anything else              -> apperr.BadGateway       (502)
+//
 // An unreachable provider is apperr.BadGateway too. Only 400 and 422 reach the
 // caller as 4xx, because only those two can be the caller's own doing.
 //
@@ -576,6 +614,56 @@ func classifyUpstream(httpStatus int, upstreamMessage string) upstreamFailure {
 			err:    apperr.NewBadGateway("Credit report service returned an unexpected error. Please try again in a few minutes."),
 			level:  slog.LevelError,
 			logMsg: "credit-analytics upstream error",
+		}
+	}
+}
+
+// normalizeEmptySlices replaces every nil slice in the insights payload with an
+// empty one, so it marshals as [] rather than null.
+//
+// This is the same defect as commit "return [] not null from empty list
+// endpoints": a nil slice marshals to JSON null, which a client expecting an
+// array rejects. That pass fixed the repository list destinations; these slices
+// are computed here and were missed, so the bug survived in the one payload
+// where it does the most damage.
+//
+// It is not a cosmetic difference. A strict client DTO rejects the WHOLE
+// response over one null: an account with no improvable factors produced
+// "drivers": null, and a 111 KB report with a perfectly good score became
+// undecodable — the app showed its "couldn't load your score" state and, before
+// that state existed, the paywall.
+//
+// Called at the very end of enrich, which is the last step of every read path
+// (Request, GetReport, latest-insights) — one place to keep correct rather than
+// seven. It must stay last: ScoreBuilder and Recommendations are assigned in
+// enrich itself.
+func normalizeEmptySlices(ins *ReportInsights) {
+	if ins == nil {
+		return
+	}
+	if ins.LoanAccounts == nil {
+		ins.LoanAccounts = []LoanAccount{}
+	}
+	for i := range ins.LoanAccounts {
+		if ins.LoanAccounts[i].PaymentHistory == nil {
+			ins.LoanAccounts[i].PaymentHistory = []PaymentMonth{}
+		}
+	}
+	if ins.Recommendations == nil {
+		ins.Recommendations = []Recommendation{}
+	}
+	if ins.ReportCard != nil && ins.ReportCard.Factors == nil {
+		ins.ReportCard.Factors = []CardFactor{}
+	}
+	if sb := ins.ScoreBuilder; sb != nil {
+		if sb.Positives == nil {
+			sb.Positives = []string{}
+		}
+		if sb.Drivers == nil {
+			sb.Drivers = []ScoreDriver{}
+		}
+		if sb.Strategies == nil {
+			sb.Strategies = []BuilderStrategy{}
 		}
 	}
 }
@@ -804,6 +892,11 @@ func (s *CreditAnalyticsService) enrich(ctx context.Context, insights *ReportIns
 	}
 	insights.Recommendations = buildRecommendations(insights)
 	insights.ScoreBuilder = buildScoreBuilder(insights, offerings)
+
+	// Last step on every read path, and deliberately last: ScoreBuilder is
+	// attached just above, so a guard placed any earlier cannot see its slices —
+	// which is exactly how "drivers": null survived a first attempt at this fix.
+	normalizeEmptySlices(insights)
 }
 
 // buildRecommendations flattens the two improvement levers into one prioritized
@@ -988,11 +1081,15 @@ func buildScoreBuilder(ins *ReportInsights, offerings []models.BankOffering) *Sc
 	if ins.DerogatoryAccounts == 0 {
 		sb.Positives = append(sb.Positives, "No defaults, write-offs, or settlements on your file.")
 	}
-	switch {
-	case ins.OnTimePaymentPercent >= 95:
-		sb.Positives = append(sb.Positives, "Strong repayment record — nearly all payments on time.")
-	case ins.OnTimePaymentPercent >= 80:
-		sb.Positives = append(sb.Positives, "Most payments are on time — a solid base to build on.")
+	// No claim either way when the figure is unknown: "most payments are on time"
+	// is not something to tell someone whose lenders have reported no payments.
+	if pct := ins.OnTimePaymentPercent; pct != nil {
+		switch {
+		case *pct >= 95:
+			sb.Positives = append(sb.Positives, "Strong repayment record — nearly all payments on time.")
+		case *pct >= 80:
+			sb.Positives = append(sb.Positives, "Most payments are on time — a solid base to build on.")
+		}
 	}
 	if ins.EnquiryCount180Days == 0 {
 		sb.Positives = append(sb.Positives, "No recent enquiries — lenders see no credit hunger.")
@@ -1286,20 +1383,26 @@ func unwrapResultObject(raw json.RawMessage) json.RawMessage {
 
 // caisAccountDetail is one tradeline from CAIS_Account_DETAILS.
 type caisAccountDetail struct {
-	PaymentHistoryProfile         string `json:"Payment_History_Profile"`
-	PortfolioType                 string `json:"Portfolio_Type"`
-	CreditLimitAmount             string `json:"Credit_Limit_Amount"`
-	CurrentBalance                string `json:"Current_Balance"`
-	AccountStatus                 string `json:"Account_Status"`
-	ScheduledMonthlyPaymentAmount string `json:"Scheduled_Monthly_Payment_Amount"`
-	RateOfInterest                string `json:"Rate_of_Interest"`
-	AccountType                   string `json:"Account_Type"`
-	AccountNumber                 string `json:"Account_Number"`
-	SubscriberName                string `json:"Subscriber_Name"`
-	OpenDate                      string `json:"Open_Date"`
-	HighestCredit                 string `json:"Highest_Credit_or_Original_Loan_Amount"`
-	RepaymentTenure               string `json:"Repayment_Tenure"`
-	WrittenOffSettledStatus       string `json:"Written_off_Settled_Status"`
+	PaymentHistoryProfile string `json:"Payment_History_Profile"`
+	// CAISAccountHistory is the per-month record, and the better source: it
+	// carries an explicit year and month plus the exact days past due, where
+	// Payment_History_Profile is a positional string that has to be dated by
+	// counting backwards and only encodes a DPD bucket. It also runs one month
+	// longer in practice — see paymentHistoryFor.
+	CAISAccountHistory            caisAccountHistoryList `json:"CAIS_Account_History"`
+	PortfolioType                 string                 `json:"Portfolio_Type"`
+	CreditLimitAmount             string                 `json:"Credit_Limit_Amount"`
+	CurrentBalance                string                 `json:"Current_Balance"`
+	AccountStatus                 string                 `json:"Account_Status"`
+	ScheduledMonthlyPaymentAmount string                 `json:"Scheduled_Monthly_Payment_Amount"`
+	RateOfInterest                string                 `json:"Rate_of_Interest"`
+	AccountType                   string                 `json:"Account_Type"`
+	AccountNumber                 string                 `json:"Account_Number"`
+	SubscriberName                string                 `json:"Subscriber_Name"`
+	OpenDate                      string                 `json:"Open_Date"`
+	HighestCredit                 string                 `json:"Highest_Credit_or_Original_Loan_Amount"`
+	RepaymentTenure               string                 `json:"Repayment_Tenure"`
+	WrittenOffSettledStatus       string                 `json:"Written_off_Settled_Status"`
 }
 
 // caisAccountDetailList tolerates a real Digitap/Experian quirk: CAIS_Account_DETAILS
@@ -1307,6 +1410,45 @@ type caisAccountDetail struct {
 // conversion collapses it to a single JSON object when there is exactly one.
 // UnmarshalJSON accepts either shape and always yields a slice, so a one-loan
 // report is no longer silently dropped (or, worse, an unmarshal error).
+// caisAccountHistoryEntry is one month of CAIS_Account_History.
+//
+// Every field arrives as a zero-padded STRING ("2026", "08", "000"), not a
+// number. Days_Past_Due is the authority here: Asset_Classification is not
+// consistent between sources — real reports send "?" where the captured
+// fixtures send "STD" — so it is only consulted when the DPD is unusable.
+type caisAccountHistoryEntry struct {
+	Year                string `json:"Year"`
+	Month               string `json:"Month"`
+	DaysPastDue         string `json:"Days_Past_Due"`
+	AssetClassification string `json:"Asset_Classification"`
+}
+
+// caisAccountHistoryList tolerates the same XML->JSON collapse as
+// caisAccountDetailList: an array of months becomes a bare object when there is
+// exactly one.
+type caisAccountHistoryList []caisAccountHistoryEntry
+
+func (l *caisAccountHistoryList) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil
+	}
+	if trimmed[0] == '[' {
+		var arr []caisAccountHistoryEntry
+		if err := json.Unmarshal(trimmed, &arr); err != nil {
+			return err
+		}
+		*l = arr
+		return nil
+	}
+	var one caisAccountHistoryEntry
+	if err := json.Unmarshal(trimmed, &one); err != nil {
+		return err
+	}
+	*l = caisAccountHistoryList{one}
+	return nil
+}
+
 type caisAccountDetailList []caisAccountDetail
 
 func (l *caisAccountDetailList) UnmarshalJSON(data []byte) error {
@@ -1390,27 +1532,6 @@ func parseReportInsights(raw json.RawMessage) (*ReportInsights, error) {
 	}
 	profile := wrapper.ResultJSON.INProfileResponse
 
-	// ---- On-time payment percentage ----
-	// Across all accounts, count months where payment was on-time ('0') vs
-	// total reported months (anything except '?').
-	var onTime, totalMonths int
-	for _, acct := range profile.CAISAccount.CAISAccountDetails {
-		for _, ch := range acct.PaymentHistoryProfile {
-			if ch == '?' {
-				continue
-			}
-			totalMonths++
-			if ch == '0' {
-				onTime++
-			}
-		}
-	}
-	if totalMonths > 0 {
-		insights.OnTimePaymentPercent = float64(onTime) / float64(totalMonths) * 100
-		// Round to 1 decimal place.
-		insights.OnTimePaymentPercent = float64(int(insights.OnTimePaymentPercent*10+0.5)) / 10
-	}
-
 	// ---- Card utilization, account counts, outstanding, EMI, interest ----
 	// Computed in a single pass over all accounts.
 	var totalLimit, totalBalance int64
@@ -1466,11 +1587,24 @@ func parseReportInsights(raw json.RawMessage) (*ReportInsights, error) {
 	loanAccounts := make([]LoanAccount, 0, len(profile.CAISAccount.CAISAccountDetails))
 	var oldestOpenDate time.Time
 	var missedPayments int64
+	// On-time months against months the lender actually reported. Accumulated in
+	// this loop, from the SAME per-account history the client renders, so the
+	// headline percentage and the strip on screen cannot disagree.
+	//
+	// There used to be three separate hand-rolled readings of the payment field —
+	// one here for the list, one for this percentage, one for missedPayments — and
+	// they disagreed on every asset-classification character: an all-"S"
+	// (Standard, performing) history scored 0% on time AND counted every month as
+	// a missed payment.
+	var onTime, totalMonths int
 	productTypes := map[string]bool{}
 
 	for _, acct := range profile.CAISAccount.CAISAccountDetails {
 		originalLoan := atofSafe(acct.HighestCredit)
 		balance := atofSafe(acct.CurrentBalance)
+		// Computed once and reused for the list, the on-time percentage and the
+		// missed-payment count below.
+		history := paymentHistoryFor(acct)
 
 		// Percentage paid = (original - current) / original * 100.
 		var pctPaid float64
@@ -1497,7 +1631,7 @@ func parseReportInsights(raw json.RawMessage) (*ReportInsights, error) {
 			RemainingTenureMonths: remainingTenureMonths(acct.OpenDate, totalTenure),
 			CurrentBalance:        roundTo2(balance),
 			OriginalLoanAmount:    roundTo2(originalLoan),
-			PaymentHistory:        parsePaymentHistory(acct.PaymentHistoryProfile),
+			PaymentHistory:        history,
 		})
 
 		// Track oldest account open date for credit age.
@@ -1507,9 +1641,15 @@ func parseReportInsights(raw json.RawMessage) (*ReportInsights, error) {
 			}
 		}
 
-		// Count missed/delayed payments across all accounts.
-		for _, ch := range acct.PaymentHistoryProfile {
-			if ch != '?' && ch != ' ' && ch != '0' {
+		// Missed payments and on-time share, both off the history above.
+		for _, m := range history {
+			if m.Status == payStatusNotReported {
+				continue
+			}
+			totalMonths++
+			if m.Status == payStatusPaid {
+				onTime++
+			} else {
 				missedPayments++
 			}
 		}
@@ -1527,6 +1667,35 @@ func parseReportInsights(raw json.RawMessage) (*ReportInsights, error) {
 			insights.DerogatoryAccounts++
 		}
 	}
+	// Active accounts first, then biggest outstanding balance — the order the
+	// accounts screen wants, and the order that answers what a user opening it is
+	// actually asking ("what do I still owe, and on what?").
+	//
+	// Active outranks balance unconditionally, so a fully-repaid-but-open loan
+	// still sits above a closed one carrying a settled balance. Closed tradelines
+	// are history: they belong below everything live no matter how large they were.
+	//
+	// Sorted here rather than in each client so every surface that renders this
+	// list agrees — the accounts screen, the score reveal's money snapshot, and the
+	// loan-switch opportunities derived from it — and so the two clients cannot
+	// drift apart.
+	//
+	// SliceStable, so the bureau's own ordering survives among ties: zero-balance
+	// tradelines have no meaningful second key to rank them by.
+	sort.SliceStable(loanAccounts, func(i, j int) bool {
+		if loanAccounts[i].Active != loanAccounts[j].Active {
+			return loanAccounts[i].Active
+		}
+		return loanAccounts[i].CurrentBalance > loanAccounts[j].CurrentBalance
+	})
+	// Left nil when nothing was reported: no months means no percentage, and any
+	// number here would be invented.
+	if totalMonths > 0 {
+		pct := float64(onTime) / float64(totalMonths) * 100
+		pct = float64(int(pct*10+0.5)) / 10 // 1 decimal place
+		insights.OnTimePaymentPercent = &pct
+	}
+
 	insights.LoanAccounts = loanAccounts
 
 	// ---- Report card ----
@@ -1546,20 +1715,107 @@ func parseReportInsights(raw json.RawMessage) (*ReportInsights, error) {
 	return insights, nil
 }
 
+// paymentHistoryFor returns one tradeline's month-by-month history, preferring
+// CAIS_Account_History over Payment_History_Profile.
+//
+// Both describe the same thing, but the positional string is the poorer record
+// and was the only one being read:
+//
+//   - It runs a month short. Across every tradeline checked on a real 51-account
+//     report, the array carried exactly one more month than the string reported
+//     (7 vs 6, 32 vs 31, 25 vs 24, ...). A loan opened in January showed five
+//     months of history in August.
+//   - Its months can only be dated by counting backwards from "now", which is
+//     the time the request is SERVED, not the date the bureau compiled the
+//     report. A report pulled weeks ago therefore had every month mislabelled,
+//     drifting further the longer ago it was pulled. The array states the year
+//     and month outright.
+//   - It encodes a DPD bucket, not a number of days. The array gives the exact
+//     figure.
+//
+// The string remains the fallback: some responses (and two stored fixtures)
+// carry no history array at all.
+func paymentHistoryFor(acct caisAccountDetail) []PaymentMonth {
+	if len(acct.CAISAccountHistory) > 0 {
+		if history := paymentHistoryFromEntries(acct.CAISAccountHistory); len(history) > 0 {
+			return history
+		}
+	}
+	return parsePaymentHistory(acct.PaymentHistoryProfile)
+}
+
+// paymentHistoryFromEntries converts CAIS_Account_History into the per-month
+// view, newest first (the order the bureau already sends).
+//
+// Presence in the array means the month was reported, so there is no
+// "not reported" case to synthesize — unreported months are simply absent.
+func paymentHistoryFromEntries(entries []caisAccountHistoryEntry) []PaymentMonth {
+	out := make([]PaymentMonth, 0, len(entries))
+	for _, e := range entries {
+		label := monthLabelFrom(e.Year, e.Month)
+		if label == "" {
+			continue // undateable row: nothing useful to show against it
+		}
+		pm := PaymentMonth{Month: label}
+		if dpd, ok := parseDaysPastDue(e.DaysPastDue); ok {
+			pm.DaysLate = dpd
+			if dpd > 0 {
+				pm.Status = payStatusDelayed
+			} else {
+				pm.Status = payStatusPaid
+			}
+		} else if ac := strings.TrimSpace(e.AssetClassification); ac != "" {
+			// No usable DPD — fall back to the classification's leading
+			// character, which is what the profile string would have carried
+			// ("STD" and "S" both mean Standard).
+			pm.Status, pm.DaysLate = classifyPaymentChar(ac[0])
+		} else {
+			pm.Status = payStatusNotReported
+		}
+		out = append(out, pm)
+	}
+	return out
+}
+
+// monthLabelFrom formats a "YYYY-MM" label from the bureau's string year and
+// month. Empty when either is missing or out of range, so a malformed row is
+// dropped rather than dated to year zero.
+func monthLabelFrom(year, month string) string {
+	y, err := strconv.Atoi(strings.TrimSpace(year))
+	if err != nil || y < 1900 || y > 2999 {
+		return ""
+	}
+	m, err := strconv.Atoi(strings.TrimSpace(month))
+	if err != nil || m < 1 || m > 12 {
+		return ""
+	}
+	return fmt.Sprintf("%04d-%02d", y, m)
+}
+
+// parseDaysPastDue parses the zero-padded Days_Past_Due string ("000", "045").
+// Reports false for an empty or non-numeric value — including the "?" and "XXX"
+// placeholders — so the caller can fall back rather than reading them as zero
+// days late, which would count a delinquent month as paid on time.
+func parseDaysPastDue(raw string) (int, bool) {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
+}
+
 // parsePaymentHistory decodes the 36-character Payment_History_Profile string
 // into per-month entries. The bureau convention: position 0 = most recent
 // month, each position going back one month.
 //
-// Payment rating codes:
-//
-//	'0' = current / paid on time
-//	'1' = 1-30 days past due
-//	'2' = 31-60 days past due
-//	'3' = 61-90 days past due
-//	'4' = 91-120 days past due
-//	'5' = 121-150 days past due
-//	'6' = 151+ days past due
-//	'?' = not reported (before account opened)
+// Character semantics live in [classifyPaymentChar], transcribed from the
+// "Asset Classification Code" table in section 1.9 of the spec V2.7. In short:
+// '0'-'6' are 30-day DPD buckets ('0' = 0-29 ... '6' = 180 or more), 'S'/'B'/'D'/'M'
+// are asset classifications, and 'N'/'?' mean the month was not reported.
 //
 // Month labels are assigned relative to the report generation date (position
 // 0 = the report month). The most recent month is returned first.
@@ -1568,51 +1824,89 @@ func parsePaymentHistory(php string) []PaymentMonth {
 		return []PaymentMonth{}
 	}
 
-	// Rating -> (status, approx days late). Days late are the lower bound of
-	// the DPD bucket for that rating.
-	ratingMap := map[byte]struct {
-		status   string
-		daysLate int
-	}{
-		'0': {"paid", 0},
-		'1': {"delayed", 1},
-		'2': {"delayed", 31},
-		'3': {"delayed", 61},
-		'4': {"delayed", 91},
-		'5': {"delayed", 121},
-		'6': {"delayed", 151},
-	}
-
 	now := time.Now().UTC()
 	history := make([]PaymentMonth, 0, len(php))
 
 	for i := 0; i < len(php); i++ {
-		ch := php[i]
 		// Position 0 = current month; position i = i months ago.
-		monthDate := now.AddDate(0, -i, 0)
-		monthLabel := monthDate.Format("2006-01")
-
-		pm := PaymentMonth{Month: monthLabel}
-		if ch == '?' || ch == ' ' {
-			pm.Status = "not_reported"
-		} else if info, ok := ratingMap[ch]; ok {
-			pm.Status = info.status
-			pm.DaysLate = info.daysLate
-		} else {
-			// Unknown code — treat conservatively as not reported.
-			pm.Status = "not_reported"
-		}
-		history = append(history, pm)
+		monthLabel := now.AddDate(0, -i, 0).Format("2006-01")
+		status, daysLate := classifyPaymentChar(php[i])
+		history = append(history, PaymentMonth{
+			Month:    monthLabel,
+			Status:   status,
+			DaysLate: daysLate,
+		})
 	}
 
 	return history
+}
+
+// Values of [PaymentMonth.Status]. Named because the on-time percentage branches
+// on them too, and a typo in either place would silently skew the figure.
+const (
+	payStatusPaid        = "paid"
+	payStatusDelayed     = "delayed"
+	payStatusNotReported = "not_reported"
+)
+
+// paymentRatings maps one Payment_History_Profile character to a status and the
+// LOWER BOUND of its days-past-due bucket, per the "Asset Classification Code"
+// table in section 1.9 of the spec V2.7.
+//
+// The buckets are 30 days wide from '1' up ('1' = 30-59, '2' = 60-89, ...
+// '6' = 180 or more). An earlier 1/31/61/91/121/151 was a bucket short at every
+// level, so a 60-day delinquency was reported as 31 days late.
+var paymentRatings = map[byte]struct {
+	status   string
+	daysLate int
+}{
+	// '0' is 0-29 days: the bureau's own on-time bucket, not necessarily
+	// "paid on the due date".
+	'0': {payStatusPaid, 0},
+	'1': {payStatusDelayed, 30},
+	'2': {payStatusDelayed, 60},
+	'3': {payStatusDelayed, 90},
+	'4': {payStatusDelayed, 120},
+	'5': {payStatusDelayed, 150},
+	'6': {payStatusDelayed, 180},
+
+	// Asset classifications. 'S' (Standard) means the account is performing, and
+	// it appears in real reports — whole histories of it. It used to fall through
+	// to "not reported", which zeroed the on-time percentage for accounts that
+	// had in fact never missed a payment.
+	'S': {payStatusPaid, 0},
+	// Substandard / Doubtful / Special Mention are adverse but carry no DPD
+	// figure of their own. The bounds below are the RBI definitions of those
+	// classifications (NPA at 90+, SMA as pre-NPA stress), NOT numbers the bureau
+	// supplied — revisit if the UI ever presents the figure as exact.
+	'B': {payStatusDelayed, 90},
+	'D': {payStatusDelayed, 90},
+	'M': {payStatusDelayed, 30},
+}
+
+// classifyPaymentChar is the single source of truth for one
+// Payment_History_Profile character: the per-month history the client renders
+// and the headline on-time percentage both go through it, so they cannot
+// disagree about what a character means.
+func classifyPaymentChar(ch byte) (status string, daysLate int) {
+	// The spec pairs 'N' with '?' as "value not available"; both occur in real
+	// reports. An unrecognized character is treated the same way — conservatively
+	// unreported rather than counted as either on-time or late.
+	switch ch {
+	case '?', ' ', 'N', 'n':
+		return payStatusNotReported, 0
+	}
+	if info, ok := paymentRatings[ch]; ok {
+		return info.status, info.daysLate
+	}
+	return payStatusNotReported, 0
 }
 
 // ---- Report card grading ---------------------------------------------------
 
 // reportCardInputs is the computed data the grading functions consume.
 type reportCardInputs struct {
-	OnTimePercent    float64
+	OnTimePercent    *float64
 	MissedPayments   int64
 	CardUtilization  float64
 	OldestOpenDate   time.Time // zero value = no open date found
@@ -1631,11 +1925,17 @@ func buildReportCard(in reportCardInputs) *ReportCard {
 	card := &ReportCard{}
 
 	// 1. Payment history (35%)
-	phGrade, phSum, phDetail := gradePaymentHistory(in.OnTimePercent, in.MissedPayments)
-	card.Factors = append(card.Factors, CardFactor{
-		Name: "Payment history", Weight: 35, Grade: phGrade,
-		Summary: phSum, Detail: phDetail, MissedCount: in.MissedPayments,
-	})
+	//
+	// Omitted entirely when it cannot be graded. An ungraded factor row would be
+	// worse than absent: overallGrade scores an unrecognised grade as zero, so a
+	// placeholder would drag the overall down exactly as an F does, and the client
+	// would render a factor with a blank badge.
+	if phGrade, phSum, phDetail := gradePaymentHistory(in.OnTimePercent, in.MissedPayments); phGrade != "" {
+		card.Factors = append(card.Factors, CardFactor{
+			Name: "Payment history", Weight: 35, Grade: phGrade,
+			Summary: phSum, Detail: phDetail, MissedCount: in.MissedPayments,
+		})
+	}
 
 	// 2. Credit utilisation (30%)
 	cuGrade, cuSum, cuDetail := gradeUtilization(in.CardUtilization)
@@ -1670,17 +1970,26 @@ func buildReportCard(in reportCardInputs) *ReportCard {
 }
 
 // gradePaymentHistory grades based on on-time percentage and missed count.
-func gradePaymentHistory(onTimePct float64, missed int64) (grade, summary, detail string) {
+// A nil onTimePct means no month was reported. It returns an EMPTY grade, which
+// buildReportCard turns into an omitted factor rather than a bad one: grading a
+// file with no payment data produced "F — Critical. Immediate action required.",
+// which is a serious thing to tell someone on the strength of nothing.
+func gradePaymentHistory(onTimePct *float64, missed int64) (grade, summary, detail string) {
+	if onTimePct == nil {
+		return "", "No payment history reported yet by your lenders.",
+			"This fills in as your lenders report their first months."
+	}
+	pct := *onTimePct
 	switch {
-	case onTimePct >= 99 && missed == 0:
+	case pct >= 99 && missed == 0:
 		return "A+", "No missed payments. Excellent track record.", "Keep the streak alive."
-	case onTimePct >= 95:
+	case pct >= 95:
 		return "A", fmt.Sprintf("%d missed/delayed payment(s). Strong history.", missed), "Set auto-pay to eliminate lapses."
-	case onTimePct >= 85:
+	case pct >= 85:
 		return "B", fmt.Sprintf("%d missed/delayed payment(s). Room to improve.", missed), "Prioritize on-time payments for 6 months."
-	case onTimePct >= 70:
+	case pct >= 70:
 		return "C", fmt.Sprintf("%d missed/delayed payment(s). Needs attention.", missed), "No more missed payments for 12 months."
-	case onTimePct >= 50:
+	case pct >= 50:
 		return "D", fmt.Sprintf("%d missed/delayed payment(s). High risk signal.", missed), "Restructure debts; seek counseling."
 	default:
 		return "F", fmt.Sprintf("%d missed/delayed payment(s). Critical.", missed), "Immediate action required."
@@ -1870,13 +2179,48 @@ func roundTo2(v float64) float64 {
 // An empty/missing/null status (unmarshalled to "") is treated as unknown and
 // therefore NOT active, so a null upstream status can't inflate the active
 // count or outstanding balance.
+// closedAccountStatuses are the Account_Status values the spec's account-status
+// master (section 1.9) maps to CLOSED. Everything else is ACTIVE, including
+// values absent from the table — the master says so explicitly with its
+// "DEFAULTVALUE ACTIVE" row.
+//
+// The three in the second group carry no ACTIVE/CLOSED tag of their own; they
+// are listed among the later 130-138 status descriptions, and each description
+// says closed outright. They are treated as closed on the strength of that,
+// because the alternative is counting a written-off, closed account toward the
+// user's live balances.
+var closedAccountStatuses = map[string]bool{
+	"12": true, "13": true, "14": true, "15": true, "16": true, "17": true,
+
+	"132": true, // Post Write Off Closed
+	"133": true, // Restructured & Closed
+	"138": true, // Entity ceased while account was closed
+}
+
+// isActiveStatus reports whether a CAIS Account_Status means the tradeline is
+// still open.
+//
+// Only the CLOSED codes above close an account. The previous rule — everything
+// except "", "00" and "97" is active — was wrong in both directions against the
+// master table, and expensively so:
+//
+//   - "13" is CLOSED and is the most common status in real reports, so every
+//     closed account was counted in the active total and its balance added to
+//     the user's outstanding debt.
+//   - "00" is "No Suit Filed", the ordinary state of a healthy live account, and
+//     was being hidden from the active count.
+//   - "97" is "Suit Filed (Wilful Default) and Written-off": derogatory, which
+//     is counted separately, but not closed — the liability is still open.
 func isActiveStatus(status string) bool {
-	switch status {
-	case "", "00", "97":
+	code := normalizeCode(status)
+	// An absent status is not the master's "DEFAULTVALUE ACTIVE" case: that row
+	// covers a value the table does not list, not a field the bureau never sent.
+	// Digitap leaves it null on some revolving cards, and treating no evidence as
+	// an open account would add its balance to the user's live debt.
+	if code == "" {
 		return false
-	default:
-		return true
 	}
+	return !closedAccountStatuses[code]
 }
 
 // atoiSafe64 parses a numeric prefix of s as int64. Non-numeric or empty

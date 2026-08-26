@@ -67,9 +67,7 @@ func TestFixture_BlendedJourney_690(t *testing.T) {
 	if ins.CardUtilizationPercent < 30 || ins.CardUtilizationPercent > 50 {
 		t.Errorf("utilisation = %.1f, want in 30–50%% band (blended)", ins.CardUtilizationPercent)
 	}
-	if ins.OnTimePaymentPercent != 100 {
-		t.Errorf("onTime = %.1f, want 100 (clean blended file)", ins.OnTimePaymentPercent)
-	}
+	wantOnTime(t, ins.OnTimePaymentPercent, 100)
 	if ins.EnquiryCount180Days != 2 {
 		t.Errorf("enquiries180 = %d, want 2", ins.EnquiryCount180Days)
 	}
@@ -89,10 +87,17 @@ func TestFixture_Derogatory_540(t *testing.T) {
 	if ins.DerogatoryAccounts != 2 {
 		t.Errorf("derogatory = %d, want 2 (written-off card + settled loan)", ins.DerogatoryAccounts)
 	}
-	// Status "97" (written-off) is inactive; settled loan is "00" closed.
-	// Only the active HDFC card remains.
-	if ins.ActiveAccountCount != 1 {
-		t.Errorf("active = %d, want 1", ins.ActiveAccountCount)
+	// All three count as active, and that is correct per the account-status
+	// master: the fixture's statuses are "11" (ACTIVE), "00" ("No Suit Filed" —
+	// an ordinary open account) and "97" ("Suit Filed (Wilful Default) and
+	// Written-off"). None appears in the master's CLOSED set (12-17), and a
+	// written-off balance is still an open liability.
+	//
+	// This assertion previously expected 1, on the old reading that "00" and "97"
+	// meant closed. Derogatory counting — the thing this fixture exists to guard —
+	// is unaffected and still finds both bad tradelines above.
+	if ins.ActiveAccountCount != 3 {
+		t.Errorf("active = %d, want 3", ins.ActiveAccountCount)
 	}
 	if ins.TotalAccountCount != 3 {
 		t.Errorf("accounts = %d, want 3", ins.TotalAccountCount)
