@@ -1,0 +1,12 @@
+# Line endings.
+#
+# Windows checks out with CRLF (core.autocrlf=true), and a shell script whose
+# shebang ends in \r fails in any POSIX shell except Git Bash, which quietly
+# tolerates it:
+#
+#   ./deploy/deploy.sh: /usr/bin/env^M: bad interpreter: No such file or directory
+#
+# Pinning the scripts to LF makes Git Bash, WSL and CI agree. It matters most
+# for deploy.sh: a deploy script that runs in one shell and dies in another is
+# the sort of difference nobody remembers until a release is in the air.
+*.sh text eol=lf
