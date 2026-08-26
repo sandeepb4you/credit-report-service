@@ -15,6 +15,134 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/admin/accounts/lookup": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Resolves an account from a mobile number or email address and reports what an account reset would remove from it — reports, orders (and how many were paid for), statements, coupon redemptions and live sessions. Intended to be shown before the reset is confirmed, because those counts are the warning.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Find an account by phone or email, with a reset preview",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Mobile number or email address",
+                        "name": "identifier",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.AccountLookupResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing or unparseable identifier",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing the 'account:reset' permission",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No account with that phone number or email address",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/accounts/{accountId}/reset": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Deletes everything the account did after signing up — PAN/KYC, credit reports (and their stored PDFs), orders and payment history, bank statements, prefill lookups, OTP challenges and referral credit — clears the profile name and date of birth, and revokes every session. The login survives: the same phone number or email signs straight back in and lands on PAN verification with the paywall restored, which is the point. Role is untouched, so an admin resetting their own account is still an admin afterwards. This is destructive and it is enabled in production; the body must name the account's own phone or email to confirm.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Reset an account back to signup",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Account to reset",
+                        "name": "accountId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Confirmation",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.AccountResetRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.AccountResetResult"
+                        }
+                    },
+                    "400": {
+                        "description": "accountId must be an integer / confirmation does not match",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing the 'account:reset' permission",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Account not found",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/admin/accounts/{accountId}/role": {
             "put": {
                 "security": [
@@ -3592,6 +3720,62 @@ const docTemplate = `{
                 }
             }
         },
+        "credit-report-service_internal_models.AccountResetCounts": {
+            "type": "object",
+            "properties": {
+                "activeSessions": {
+                    "type": "integer"
+                },
+                "bankStatements": {
+                    "type": "integer"
+                },
+                "couponRedemptions": {
+                    "type": "integer"
+                },
+                "hasDateOfBirth": {
+                    "type": "boolean"
+                },
+                "hasKycRecord": {
+                    "type": "boolean"
+                },
+                "hasProfileName": {
+                    "type": "boolean"
+                },
+                "hasReferralCredit": {
+                    "type": "boolean"
+                },
+                "orders": {
+                    "type": "integer"
+                },
+                "otpChallenges": {
+                    "type": "integer"
+                },
+                "paidOrders": {
+                    "type": "integer"
+                },
+                "prefillLookups": {
+                    "type": "integer"
+                },
+                "reports": {
+                    "type": "integer"
+                }
+            }
+        },
+        "credit-report-service_internal_models.AccountResetResult": {
+            "type": "object",
+            "properties": {
+                "accountId": {
+                    "type": "integer"
+                },
+                "removed": {
+                    "$ref": "#/definitions/credit-report-service_internal_models.AccountResetCounts"
+                },
+                "tokenEpoch": {
+                    "description": "TokenEpoch after the reset. Every access token minted before it is dead,\nwhich is how the target lands back on the login screen.",
+                    "type": "integer"
+                }
+            }
+        },
         "credit-report-service_internal_models.AgentMeta": {
             "type": "object",
             "properties": {
@@ -4899,6 +5083,27 @@ const docTemplate = `{
                 },
                 "totalInterestSaving": {
                     "type": "number"
+                }
+            }
+        },
+        "internal_handler.AccountLookupResponse": {
+            "type": "object",
+            "properties": {
+                "account": {
+                    "$ref": "#/definitions/credit-report-service_internal_models.Account"
+                },
+                "removes": {
+                    "$ref": "#/definitions/credit-report-service_internal_models.AccountResetCounts"
+                }
+            }
+        },
+        "internal_handler.AccountResetRequest": {
+            "type": "object",
+            "properties": {
+                "confirm": {
+                    "description": "Confirm must be the phone number or email address registered on the\naccount being reset. The admin has already been authorised; this is here\nso a mistyped account id cannot delete a stranger's paid reports.",
+                    "type": "string",
+                    "example": "+919876543210"
                 }
             }
         },

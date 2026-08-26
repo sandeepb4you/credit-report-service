@@ -146,6 +146,32 @@ func (c *Client) Download(ctx context.Context, keyOrURI string) ([]byte, error) 
 	return buf.Bytes(), nil
 }
 
+// Delete removes a stored object.
+//
+// Used when the report it belongs to is deleted: the file is encrypted, but an
+// encrypted report nobody can reach any more is still somebody's credit file
+// sitting in a bucket, and versioning is on, so a delete leaves a marker rather
+// than shredding history.
+//
+// S3 answers a delete of a key that is not there with success, and that is the
+// behaviour wanted here — a reset re-run after a partial failure should finish
+// quietly rather than report a problem that no longer exists.
+func (c *Client) Delete(ctx context.Context, keyOrURI string) error {
+	if c.stubOnly {
+		return fmt.Errorf("s3store: no bucket configured")
+	}
+	key, err := c.keyFrom(keyOrURI)
+	if err != nil {
+		return err
+	}
+	if _, err := c.api.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: &c.cfg.Bucket, Key: &key,
+	}); err != nil {
+		return fmt.Errorf("s3 delete %s: %w", key, err)
+	}
+	return nil
+}
+
 // keyFrom accepts a bare key or an s3://bucket/key URI and returns the key.
 //
 // A URI naming a different bucket is refused rather than silently read from the

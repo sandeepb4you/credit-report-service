@@ -44,6 +44,45 @@ definitions:
       updatedAt:
         type: string
     type: object
+  credit-report-service_internal_models.AccountResetCounts:
+    properties:
+      activeSessions:
+        type: integer
+      bankStatements:
+        type: integer
+      couponRedemptions:
+        type: integer
+      hasDateOfBirth:
+        type: boolean
+      hasKycRecord:
+        type: boolean
+      hasProfileName:
+        type: boolean
+      hasReferralCredit:
+        type: boolean
+      orders:
+        type: integer
+      otpChallenges:
+        type: integer
+      paidOrders:
+        type: integer
+      prefillLookups:
+        type: integer
+      reports:
+        type: integer
+    type: object
+  credit-report-service_internal_models.AccountResetResult:
+    properties:
+      accountId:
+        type: integer
+      removed:
+        $ref: '#/definitions/credit-report-service_internal_models.AccountResetCounts'
+      tokenEpoch:
+        description: |-
+          TokenEpoch after the reset. Every access token minted before it is dead,
+          which is how the target lands back on the login screen.
+        type: integer
+    type: object
   credit-report-service_internal_models.AgentMeta:
     properties:
       browser:
@@ -1017,6 +1056,23 @@ definitions:
       totalInterestSaving:
         type: number
     type: object
+  internal_handler.AccountLookupResponse:
+    properties:
+      account:
+        $ref: '#/definitions/credit-report-service_internal_models.Account'
+      removes:
+        $ref: '#/definitions/credit-report-service_internal_models.AccountResetCounts'
+    type: object
+  internal_handler.AccountResetRequest:
+    properties:
+      confirm:
+        description: |-
+          Confirm must be the phone number or email address registered on the
+          account being reset. The admin has already been authorised; this is here
+          so a mistyped account id cannot delete a stranger's paid reports.
+        example: "+919876543210"
+        type: string
+    type: object
   internal_handler.ReportEmailResponse:
     properties:
       message:
@@ -1330,6 +1386,59 @@ info:
   title: Credit Report Service API
   version: "1.0"
 paths:
+  /admin/accounts/{accountId}/reset:
+    post:
+      consumes:
+      - application/json
+      description: 'Deletes everything the account did after signing up — PAN/KYC,
+        credit reports (and their stored PDFs), orders and payment history, bank statements,
+        prefill lookups, OTP challenges and referral credit — clears the profile name
+        and date of birth, and revokes every session. The login survives: the same
+        phone number or email signs straight back in and lands on PAN verification
+        with the paywall restored, which is the point. Role is untouched, so an admin
+        resetting their own account is still an admin afterwards. This is destructive
+        and it is enabled in production; the body must name the account''s own phone
+        or email to confirm.'
+      parameters:
+      - description: Account to reset
+        in: path
+        name: accountId
+        required: true
+        type: integer
+      - description: Confirmation
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.AccountResetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.AccountResetResult'
+        "400":
+          description: accountId must be an integer / confirmation does not match
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Missing the 'account:reset' permission
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: Account not found
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Reset an account back to signup
+      tags:
+      - admin
   /admin/accounts/{accountId}/role:
     put:
       consumes:
@@ -1376,6 +1485,46 @@ paths:
       security:
       - BearerAuth: []
       summary: Set an account's role
+      tags:
+      - admin
+  /admin/accounts/lookup:
+    get:
+      description: Resolves an account from a mobile number or email address and reports
+        what an account reset would remove from it — reports, orders (and how many
+        were paid for), statements, coupon redemptions and live sessions. Intended
+        to be shown before the reset is confirmed, because those counts are the warning.
+      parameters:
+      - description: Mobile number or email address
+        in: query
+        name: identifier
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handler.AccountLookupResponse'
+        "400":
+          description: Missing or unparseable identifier
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Missing the 'account:reset' permission
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: No account with that phone number or email address
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Find an account by phone or email, with a reset preview
       tags:
       - admin
   /admin/bank-offerings:

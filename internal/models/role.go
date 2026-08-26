@@ -35,6 +35,7 @@ var roleRank = map[string]int{
 const (
 	PermKycVerify          = "kyc:verify"           // mark another account's PAN verified
 	PermAccountSetRole     = "account:set-role"     // grant/revoke roles
+	PermAccountReset       = "account:reset"        // wipe an account back to signup
 	PermCouponCreate       = "coupon:create"        // issue a coupon code
 	PermCouponManage       = "coupon:manage"        // list/revoke your own coupons
 	PermCouponAdmin        = "coupon:admin"         // see and revoke anyone's coupons
@@ -55,6 +56,7 @@ var rolePerms = map[string][]string{
 	RoleAdmin: {
 		PermKycVerify,
 		PermAccountSetRole,
+		PermAccountReset,
 		PermCouponAdmin,
 		PermLoanProviderManage,
 		PermBankOfferingManage,

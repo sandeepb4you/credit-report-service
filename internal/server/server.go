@@ -29,6 +29,7 @@ func New(
 	loans *handler.LoanSwitchHandler,
 	scoreBuilder *handler.ScoreBuilderHandler,
 	bankStmt *handler.BankStatementHandler,
+	adminAccounts *handler.AdminAccountHandler,
 	tokens *service.TokenService,
 	// epochs backs the stale-token check on the permission gates; see
 	// middleware.checkEpoch.
@@ -255,6 +256,18 @@ func New(
 	admin.Post("/kyc/pan/:accountId<int>/reject", kyc.RejectPAN)
 	admin.Put("/accounts/:accountId<int>/role",
 		middleware.RequirePermission(tokens, epochs, models.PermAccountSetRole), auth.SetAccountRole)
+
+	// Resetting an account back to signup destroys paid-for data, so it carries
+	// its own permission rather than riding on kyc:verify. Mounted in every
+	// environment on purpose: re-testing onboarding on the deployed app is the
+	// reason it exists. The lookup shares the permission because it is only
+	// useful as the step before the reset.
+	admin.Get("/accounts/lookup",
+		middleware.RequirePermission(tokens, epochs, models.PermAccountReset),
+		adminAccounts.LookupAccount)
+	admin.Post("/accounts/:accountId<int>/reset",
+		middleware.RequirePermission(tokens, epochs, models.PermAccountReset),
+		adminAccounts.ResetAccount)
 
 	return app
 }

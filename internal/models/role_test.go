@@ -44,6 +44,7 @@ func TestHasPermission_InheritsUpward(t *testing.T) {
 		{RoleAgent, PermCouponManage, true},
 		{RoleAgent, PermKycVerify, false},      // agents are not admins
 		{RoleAgent, PermAccountSetRole, false}, // an agent must not mint more agents
+		{RoleAgent, PermAccountReset, false},   // nor wipe somebody's paid reports
 		{RoleAgent, PermCouponAdmin, false},    // only their own coupons
 
 		{RoleAdmin, PermCouponCreate, true}, // inherited from agent
@@ -51,6 +52,9 @@ func TestHasPermission_InheritsUpward(t *testing.T) {
 		{RoleAdmin, PermCouponAdmin, true},
 		{RoleAdmin, PermKycVerify, true},
 		{RoleAdmin, PermAccountSetRole, true},
+		{RoleAdmin, PermAccountReset, true},
+
+		{RoleUser, PermAccountReset, false},
 	}
 	for _, tt := range tests {
 		if got := HasPermission(tt.role, tt.perm); got != tt.want {

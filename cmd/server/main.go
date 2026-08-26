@@ -269,6 +269,12 @@ func main() {
 	couponH := handler.NewCouponHandler(couponSvc)
 	loanH := handler.NewLoanSwitchHandler(loanSwitchSvc)
 	scoreBuilderH := handler.NewScoreBuilderHandler(scoreBuilderSvc)
+	// Walking an account back to signup, for re-testing onboarding. Given the
+	// same object store as the relay so a reset takes the stored report PDFs
+	// with it rather than leaving encrypted orphans behind.
+	accountResetSvc := service.NewAccountResetService(accountRepo)
+	accountResetSvc.SetPDFStore(pdfStore)
+	adminAccountH := handler.NewAdminAccountHandler(accountResetSvc)
 	// Statement handler gets the per-upload size cap and the optional webhook
 	// shared-secret so it can reject oversized PDFs and unauthenticated callbacks.
 	bankStmtH := handler.NewBankStatementHandler(
@@ -300,7 +306,7 @@ func main() {
 	)
 
 	app := server.New(cfg, healthH, authH, analyticsH, kycH, orderH, couponH, loanH, scoreBuilderH, bankStmtH,
-		tokenSvc, accountRepo)
+		adminAccountH, tokenSvc, accountRepo)
 
 	go func() {
 		addr := ":" + itoa(cfg.Server.Port)
