@@ -1,11 +1,12 @@
 package middleware
 
 import (
+	"log/slog"
 	"strings"
 	"time"
 
+	"credit-report-service/internal/apperr"
 	"github.com/gofiber/fiber/v2"
-	"log/slog"
 )
 
 // noisyPaths are skipped by the request logger to avoid log spam. These are
@@ -58,10 +59,21 @@ func RequestLogger() fiber.Handler {
 			path = c.Route().Path
 		}
 
+		// Fiber runs the error handler after this middleware unwinds, so on a
+		// failed request the response still carries the default 200. Ask apperr
+		// what the status WILL be instead of logging a success for a request that
+		// is about to fail — the same mapping the error handler uses.
+		status := c.Response().StatusCode()
+		if err != nil {
+			if mapped, _, _, _ := apperr.StatusFor(err); mapped != 0 {
+				status = mapped
+			}
+		}
+
 		attrs := []any{
 			"method", c.Method(),
 			"path", path,
-			"status", c.Response().StatusCode(),
+			"status", status,
 			"latency_ms", latencyMs,
 		}
 		// account_id is only present for routes behind RequireAuth/RequireRole;

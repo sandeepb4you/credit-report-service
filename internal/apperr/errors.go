@@ -97,7 +97,22 @@ var _ = errors.As
 
 // ErrorHandler is wired as app.Config.ErrorHandler. It returns the same JSON
 // envelope for every error.
-func ErrorHandler(c *fiber.Ctx, err error) error {
+// StatusFor reports the HTTP status, title, message and per-field details that
+// [ErrorHandler] will produce for err.
+//
+// The message comes from the typed error's own field rather than err.Error(),
+// so wrapping an apperr (fmt.Errorf("context: %w", ...)) cannot leak the
+// wrapping prefix into the response body.
+//
+// Exported so the request logger can name the status a failed request will
+// actually get. Fiber runs the error handler AFTER the middleware chain
+// unwinds, so a logger reading c.Response().StatusCode() sees the untouched
+// default 200 — every failing request was logged as a success, which is exactly
+// backwards for the requests you go to the log to find.
+//
+// One mapping shared by both, rather than a second copy in the middleware that
+// would drift the first time a status changed here.
+func StatusFor(err error) (status int, title, msg string, details map[string]string) {
 	var (
 		nf  *NotFound
 		v   *Validation
@@ -112,45 +127,54 @@ func ErrorHandler(c *fiber.Ctx, err error) error {
 	)
 
 	switch {
+	case err == nil:
+		return 0, "", "", nil
 	case errors.As(err, &nf):
-		return writeError(c, 404, "Not Found", nf.Msg, nil)
+		return 404, "Not Found", nf.Msg, nil
 	case errors.As(err, &v):
-		return writeError(c, 400, "Bad Request", v.Msg, v.Details)
+		return 400, "Bad Request", v.Msg, v.Details
 	case errors.As(err, &of):
-		return writeError(c, 400, "Bad Request", of.Msg, nil)
+		return 400, "Bad Request", of.Msg, nil
 	case errors.As(err, &cf):
-		return writeError(c, 409, "Conflict", cf.Msg, nil)
+		return 409, "Conflict", cf.Msg, nil
 	case errors.As(err, &ua):
-		return writeError(c, 401, "Unauthorized", ua.Msg, nil)
+		return 401, "Unauthorized", ua.Msg, nil
 	case errors.As(err, &fb):
-		return writeError(c, 403, "Forbidden", fb.Msg, nil)
+		return 403, "Forbidden", fb.Msg, nil
 	case errors.As(err, &pf):
-		return writeError(c, 422, "Unprocessable Entity", pf.Msg, nil)
+		return 422, "Unprocessable Entity", pf.Msg, nil
 	case errors.As(err, &ptl):
-		return writeError(c, 413, "Payload Too Large", ptl.Msg, nil)
+		return 413, "Payload Too Large", ptl.Msg, nil
 	case errors.As(err, &su):
-		return writeError(c, 503, "Service Unavailable", su.Msg, nil)
+		return 503, "Service Unavailable", su.Msg, nil
 	case errors.As(err, &bg):
-		return writeError(c, 502, "Bad Gateway", bg.Msg, nil)
+		return 502, "Bad Gateway", bg.Msg, nil
 	case isFiberBodyLimit(err):
-		// Fiber's body limit error isn't exported; detect by message.
-		return writeError(c, 413, "Payload Too Large",
-			"Uploaded image exceeds the maximum allowed size", nil)
+		// Fiber's body limit error isn't exported; detect by code.
+		return 413, "Payload Too Large", "Uploaded image exceeds the maximum allowed size", nil
 	}
 
 	// fiber.Error pass-through (covers 4xx the framework raises itself).
 	var fe *fiber.Error
 	if errors.As(err, &fe) {
-		return writeError(c, fe.Code, "Error", fe.Message, nil)
+		return fe.Code, "Error", fe.Message, nil
 	}
+	// Deliberately generic: nothing mapped this, so its text could be anything.
+	return 500, "Internal Server Error", "Unexpected error", nil
+}
 
-	// Fallback: log and return 500 without leaking internals.
-	slog.Error("unhandled error",
-		"method", c.Method(),
-		"path", c.Path(),
-		"error", err,
-	)
-	return writeError(c, 500, "Internal Server Error", "Unexpected error", nil)
+func ErrorHandler(c *fiber.Ctx, err error) error {
+	status, title, msg, details := StatusFor(err)
+	if status == 500 {
+		// Nothing mapped it, so this is a bug rather than a handled condition.
+		// StatusFor already substituted text that is safe to return.
+		slog.Error("unhandled error",
+			"method", c.Method(),
+			"path", c.Path(),
+			"error", err,
+		)
+	}
+	return writeError(c, status, title, msg, details)
 }
 
 func isFiberBodyLimit(err error) bool {

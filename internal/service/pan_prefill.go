@@ -91,6 +91,16 @@ func (v *PrefillVerifier) Verify(ctx context.Context, accountID int64, mobile, p
 			// get past by trying again.
 			slog.Warn("pan prefill: upstream source error", "account_id", accountID, "client_ref", ref)
 			return fail(PrefillVerdict{ProviderGap: true, Reason: "Could not reach the verification service"}), nil
+		case errors.Is(err, digitap.ErrPrefillIPNotAllowed):
+			// Logged apart from the credential cases because the fix is
+			// different and cheap to state: the provider allowlists caller IPs,
+			// so this is the deployment's own address missing from their list,
+			// not a bad key or an unpurchased product. Developed against an
+			// allowlisted laptop, it appears only once deployed.
+			slog.Error("pan prefill: provider is blocking this server's IP; "+
+				"send the deployment's public address to the Digitap RM for allowlisting",
+				"account_id", accountID, "error", err)
+			return fail(PrefillVerdict{}), err
 		case errors.Is(err, digitap.ErrPrefillAuth), errors.Is(err, digitap.ErrPrefillServiceDisabled):
 			// Misconfiguration on our side. Surface it loudly: silently
 			// degrading to "unverified" would hide a broken deployment behind

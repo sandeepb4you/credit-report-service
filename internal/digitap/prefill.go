@@ -43,9 +43,20 @@ var (
 	ErrPrefillAuth = errors.New("digitap prefill: client authentication failed")
 	// ErrPrefillServiceDisabled — the name-lookup service (or a requested
 	// option) is not provisioned on this client id: 401 "name look-up service
-	// is not enabled", or 403 for an option. Provisioning is per client id, so
-	// credentials that work elsewhere can still fail here.
+	// is not enabled", or a 403 naming the option. Provisioning is per client id,
+	// so credentials that work elsewhere can still fail here.
 	ErrPrefillServiceDisabled = errors.New("digitap prefill: service not enabled for this client id")
+	// ErrPrefillIPNotAllowed — 403 "Forbidden: IP not allowed". Digitap
+	// allowlists caller IPs, so this says nothing about the credentials or the
+	// contract: the same pair works from an allowlisted address and fails from
+	// anywhere else. It is what a deployment hits after being developed against
+	// a whitelisted office or laptop IP.
+	//
+	// Separate from ErrPrefillServiceDisabled because the two need opposite
+	// actions and the wrong label sends you to the wrong conversation: a
+	// provisioning gap is a question about entitlements, an IP block is "here is
+	// my server's address, please add it".
+	ErrPrefillIPNotAllowed = errors.New("digitap prefill: caller IP is not allowlisted by the provider")
 	// ErrPrefillSource — 503 upstream data-source failure. The doc is explicit:
 	// DO NOT retry this one.
 	ErrPrefillSource = errors.New("digitap prefill: source error")
@@ -223,6 +234,13 @@ func (c *PrefillClient) Lookup(ctx context.Context, clientRef, mobile string) (*
 		}
 		return nil, ErrPrefillAuth
 	case http.StatusForbidden:
+		// Digitap returns 403 both for an IP that is not allowlisted and for an
+		// un-provisioned option. Only the message distinguishes them, and they
+		// need opposite fixes, so branch on it rather than labelling every 403 a
+		// provisioning problem.
+		if strings.Contains(strings.ToLower(env.Message), "ip not allowed") {
+			return nil, fmt.Errorf("%w (upstream said: %s)", ErrPrefillIPNotAllowed, env.Message)
+		}
 		return nil, fmt.Errorf("%w: %s", ErrPrefillServiceDisabled, env.Message)
 	case http.StatusServiceUnavailable:
 		return nil, ErrPrefillSource

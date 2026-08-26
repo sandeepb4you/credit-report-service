@@ -3,6 +3,7 @@ package apperr
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -220,4 +221,60 @@ func decodeBody(resp *http.Response, out any) error {
 	defer resp.Body.Close()
 	dec := json.NewDecoder(resp.Body)
 	return dec.Decode(out)
+}
+
+// StatusFor exists so the request logger can name the status a failing request
+// will actually receive. Fiber runs the error handler after the middleware
+// unwinds, so a logger reading the response status sees the untouched 200 and
+// logged every failure as a success.
+func TestStatusFor_MatchesTheHandler(t *testing.T) {
+	cases := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantTitle  string
+		wantMsg    string
+	}{
+		{"NotFound", NewNotFound("no row"), 404, "Not Found", "no row"},
+		{"Validation", NewValidation("bad"), 400, "Bad Request", "bad"},
+		{"Conflict", NewConflict("dup"), 409, "Conflict", "dup"},
+		{"Unauthorized", NewUnauthorized("no auth"), 401, "Unauthorized", "no auth"},
+		{"PanFailure", NewPanFailure("bad pan"), 422, "Unprocessable Entity", "bad pan"},
+		{"ServiceUnavailable", NewServiceUnavailable("down"), 503, "Service Unavailable", "down"},
+		{"BadGateway", NewBadGateway("upstream"), 502, "Bad Gateway", "upstream"},
+		{"Unhandled", errors.New("boom"), 500, "Internal Server Error", "Unexpected error"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			status, title, msg, _ := StatusFor(tc.err)
+			if status != tc.wantStatus || title != tc.wantTitle {
+				t.Errorf("StatusFor = %d/%q, want %d/%q", status, title, tc.wantStatus, tc.wantTitle)
+			}
+			if msg != tc.wantMsg {
+				t.Errorf("msg = %q, want %q", msg, tc.wantMsg)
+			}
+		})
+	}
+}
+
+// A nil error has no status; the logger relies on this to leave the real
+// response status alone on a successful request.
+func TestStatusFor_NilIsZero(t *testing.T) {
+	if status, _, _, _ := StatusFor(nil); status != 0 {
+		t.Errorf("StatusFor(nil) = %d, want 0", status)
+	}
+}
+
+// The message must come from the typed error's own field, not err.Error(), or
+// wrapping an apperr leaks the wrapping prefix into the API response.
+func TestStatusFor_WrappedErrorDoesNotLeakItsPrefix(t *testing.T) {
+	wrapped := fmt.Errorf("verifying pan for account 42: %w", NewValidation("PAN format is invalid"))
+
+	status, _, msg, _ := StatusFor(wrapped)
+	if status != 400 {
+		t.Errorf("status = %d, want 400 — errors.As should still find the Validation", status)
+	}
+	if msg != "PAN format is invalid" {
+		t.Errorf("msg = %q, want just the typed message with no wrapping context", msg)
+	}
 }

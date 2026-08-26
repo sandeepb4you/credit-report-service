@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -203,4 +204,43 @@ func TestRequest_LogsCurlOnlyWhenEnabled(t *testing.T) {
 			}
 		}
 	})
+}
+
+// Digitap returns 403 for two unrelated conditions and only the message tells
+// them apart. Labelling both "service not enabled for this client id" sent the
+// reader to the wrong fix: an IP block is "add my server's address", a
+// provisioning gap is a question about the contract.
+func TestPrefill_ForbiddenDistinguishesIPBlockFromProvisioning(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    string
+		wantIP  bool
+		wantGap bool
+	}{
+		{"ip block", `{"message":"Forbidden: IP not allowed"}`, true, false},
+		{"ip block, other casing", `{"message":"FORBIDDEN: ip not allowed"}`, true, false},
+		{"unprovisioned option", `{"message":"option not enabled for client"}`, false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+
+			c := NewPrefill(PrefillConfig{BaseURL: srv.URL, ClientID: "id", ClientSecret: "sec"})
+			_, err := c.Lookup(context.Background(), "ref-1", "9876543210")
+			if err == nil {
+				t.Fatal("a 403 must be an error")
+			}
+			if got := errors.Is(err, ErrPrefillIPNotAllowed); got != tc.wantIP {
+				t.Errorf("ErrPrefillIPNotAllowed = %v, want %v (err: %v)", got, tc.wantIP, err)
+			}
+			if got := errors.Is(err, ErrPrefillServiceDisabled); got != tc.wantGap {
+				t.Errorf("ErrPrefillServiceDisabled = %v, want %v (err: %v)", got, tc.wantGap, err)
+			}
+		})
+	}
 }
