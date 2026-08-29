@@ -672,7 +672,7 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 			"report_id", row.ID,
 			"client_ref_num", payload.ClientRefNum,
 			"upstream_status", httpStatus,
-			"result_code", env.ResultCode,
+			"result_code", derefInt(env.ResultCode),
 			"latency_ms", upstreamLatency,
 		)
 		// The vendor delivered, so the purchase is now spent — and only now.
@@ -942,6 +942,25 @@ func (s *CreditAnalyticsService) persist(ctx context.Context, row *models.Credit
 	return nil
 }
 
+// derefInt makes a *int loggable.
+//
+// slog renders a pointer as its address, so "result_code", env.ResultCode put
+// something like 0x1a03f1de0838 on every successful pull where Digitap's 101
+// belonged — a field that looked populated, survived review, and told an
+// operator nothing. The result code is the difference between a record found
+// (101) and a provider gap (102/103), which is exactly what you go to that log
+// line to learn.
+//
+// Returns nil rather than a sentinel for a nil pointer: "result_code=<nil>" is
+// honest about the upstream having sent none, where 0 would be a code Digitap
+// can never return and reads as data.
+func derefInt(p *int) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
 // reusableReport returns the account's most recent successful report when it is
 // young enough to stand in for a fresh pull, or nil.
 //
@@ -974,6 +993,13 @@ func (s *CreditAnalyticsService) reusableReport(ctx context.Context, accountID i
 	age := time.Since(recent.CreatedAt)
 	if age >= s.reuseWindow {
 		return nil
+	}
+	// Count it. Best-effort: the caller is entitled to this report either way, so
+	// a bookkeeping failure is logged and swallowed rather than turned into an
+	// error. An undercount is the worst case, and it is visible here.
+	if err := s.repo.RecordReuse(ctx, recent.ID); err != nil {
+		slog.Warn("credit-analytics reuse not counted",
+			"account_id", accountID, "report_id", recent.ID, "error", err)
 	}
 	slog.Info("credit-analytics reused: recent report served in place of a purchase",
 		"account_id", accountID, "report_id", recent.ID,

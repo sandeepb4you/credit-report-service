@@ -20,7 +20,8 @@ func NewCreditAnalyticsRepo(pool *pgxpool.Pool) *CreditAnalyticsRepo {
 
 const creditAnalyticsCols = `id, account_id, client_ref_num, mobile_no,
     idempotency_key, request_id, result_code, http_status, message,
-    request_body, response_body, credit_score, result_pdf_url, created_at`
+    request_body, response_body, credit_score, result_pdf_url,
+    reuse_count, last_reused_at, created_at`
 
 // succeededPredicate narrows credit_analytics_requests to the rows that represent
 // a report the user actually received: a 2xx from Digitap carrying a body.
@@ -92,6 +93,24 @@ func (r *CreditAnalyticsRepo) FindByID(ctx context.Context, id int64) (*models.C
 		return nil, err
 	}
 	return &req, nil
+}
+
+// RecordReuse counts one serving of this stored report in place of a fresh
+// bureau pull.
+//
+// The reuse path otherwise writes nothing, which is what made reuse invisible
+// once its log line rotated away. One primary-key UPDATE against the Digitap
+// call it replaces is a rounding error, and it is what makes "how often does
+// reuse fire, and what does it save" answerable at all.
+//
+// Best-effort at the call site: losing the count must never fail a response the
+// caller is entitled to.
+func (r *CreditAnalyticsRepo) RecordReuse(ctx context.Context, id int64) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE credit_analytics_requests
+		 SET reuse_count = reuse_count + 1, last_reused_at = now()
+		 WHERE id = $1`, id)
+	return err
 }
 
 // FindByAccountAndKey returns the row a previous call stored under this

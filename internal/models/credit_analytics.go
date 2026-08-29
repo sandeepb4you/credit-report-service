@@ -17,6 +17,13 @@ type CreditAnalyticsRequest struct {
 	// IdempotencyKey is the caller's replay key, unique per account. Nil when
 	// the caller sent none, which every row predating the column also is.
 	IdempotencyKey *string `json:"-" db:"idempotency_key"`
+
+	// ReuseCount counts the times this stored report was served in place of a
+	// fresh bureau pull, and LastReusedAt when that last happened. Internal
+	// accounting — how often reuse fires and what it saves — so both stay out of
+	// the JSON; a client learns what it needs from the X-Report-Reused header.
+	ReuseCount   int        `json:"-" db:"reuse_count"`
+	LastReusedAt *time.Time `json:"-" db:"last_reused_at"`
 	RequestID    *string         `json:"requestId"    db:"request_id"`
 	ResultCode   *int            `json:"resultCode"   db:"result_code"`
 	HTTPStatus   *int            `json:"httpStatus"   db:"http_status"`
