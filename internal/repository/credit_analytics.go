@@ -21,7 +21,7 @@ func NewCreditAnalyticsRepo(pool *pgxpool.Pool) *CreditAnalyticsRepo {
 const creditAnalyticsCols = `id, account_id, client_ref_num, mobile_no,
     idempotency_key, request_id, result_code, http_status, message,
     request_body, response_body, credit_score, result_pdf_url,
-    reuse_count, last_reused_at, created_at`
+    reuse_count, last_reused_at, reused_from_report_id, data_fetched_at, created_at`
 
 // succeededPredicate narrows credit_analytics_requests to the rows that represent
 // a report the user actually received: a 2xx from Digitap carrying a body.
@@ -93,6 +93,53 @@ func (r *CreditAnalyticsRepo) FindByID(ctx context.Context, id int64) (*models.C
 		return nil, err
 	}
 	return &req, nil
+}
+
+// CreateReusedCopy writes a new report row carrying an existing pull's data,
+// for a refresh answered inside the reuse window.
+//
+// A copy rather than handing back the source row, because the caller bought a
+// check and their history has to show one: a purchase that leaves no trace where
+// the user looks for it reads as a lost payment.
+//
+// Three fields are deliberate:
+//
+//   - data_fetched_at is INHERITED, never now(). It is what the reuse window is
+//     measured against, so a copy cannot restart the clock. Copying now() here
+//     would mean a refresh every six days kept the data alive forever and the
+//     bureau was never called again.
+//   - reused_from_report_id points at the ORIGINAL pull, resolved through the
+//     source when the source is itself a copy, so lineage stays one level deep.
+//   - result_pdf_url is carried over: the stored PDF is the same document, and
+//     the copy should be downloadable rather than silently lacking one.
+//
+// client_ref_num and request_body come from the caller's own request — this row
+// records a request that was genuinely made, just answered from storage.
+func (r *CreditAnalyticsRepo) CreateReusedCopy(
+	ctx context.Context,
+	src *models.CreditAnalyticsRequest,
+	accountID int64,
+	clientRefNum string,
+	requestBody []byte,
+	idempotencyKey *string,
+) (*models.CreditAnalyticsRequest, error) {
+	origin := src.ID
+	if src.ReusedFromReportID != nil {
+		origin = *src.ReusedFromReportID
+	}
+	var out models.CreditAnalyticsRequest
+	err := pgxscan.Get(ctx, r.pool, &out,
+		`INSERT INTO credit_analytics_requests
+		     (account_id, client_ref_num, mobile_no, idempotency_key, request_id,
+		      result_code, http_status, message, request_body, response_body,
+		      credit_score, result_pdf_url, reused_from_report_id, data_fetched_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		 RETURNING `+creditAnalyticsCols,
+		accountID, clientRefNum, src.MobileNo, idempotencyKey, src.RequestID,
+		src.ResultCode, src.HTTPStatus, src.Message, requestBody, src.ResponseBody,
+		src.CreditScore, src.ResultPDFURL, origin, src.DataFetchedAt,
+	)
+	return &out, classifyPgErr(err)
 }
 
 // RecordReuse counts one serving of this stored report in place of a fresh

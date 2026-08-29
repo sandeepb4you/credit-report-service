@@ -24,6 +24,17 @@ type CreditAnalyticsRequest struct {
 	// the JSON; a client learns what it needs from the X-Report-Reused header.
 	ReuseCount   int        `json:"-" db:"reuse_count"`
 	LastReusedAt *time.Time `json:"-" db:"last_reused_at"`
+
+	// ReusedFromReportID names the live pull this row copied its data from, and is
+	// nil when this row IS a live pull.
+	ReusedFromReportID *int64 `json:"-" db:"reused_from_report_id"`
+
+	// DataFetchedAt is when the data here came off the bureau, as distinct from
+	// CreatedAt, which is when the row was written. They match on a live pull. A
+	// copy inherits it, which is what stops a copy restarting the reuse window —
+	// otherwise refreshing just inside it forever would keep minting rows that
+	// each looked fresh while the underlying pull aged without limit.
+	DataFetchedAt time.Time `json:"-" db:"data_fetched_at"`
 	RequestID    *string         `json:"requestId"    db:"request_id"`
 	ResultCode   *int            `json:"resultCode"   db:"result_code"`
 	HTTPStatus   *int            `json:"httpStatus"   db:"http_status"`

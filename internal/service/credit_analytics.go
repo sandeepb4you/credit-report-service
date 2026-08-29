@@ -566,6 +566,13 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 		return nil, false, err
 	}
 
+	// Marshalled here rather than just before the upstream call: both the live
+	// pull and a reused copy record it as the request that was made.
+	reqBody, err := json.Marshal(payload)
+	if err != nil {
+		return nil, false, fmt.Errorf("marshal credit-analytics request: %w", err)
+	}
+
 	// The paywall. Until this existed the endpoint was authenticated but free:
 	// the gate lived only in the app, so a token holder calling the API directly
 	// got bureau reports we pay for and never bought.
@@ -591,14 +598,40 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 	// window, so a report from within it IS the answer a live call would give —
 	// serve that and skip the vendor bill. The purchase is spent either way: what
 	// it buys is a current report, not a guaranteed API call.
+	//
+	// It is written as a NEW row carrying the old data, not handed back as the old
+	// row, so the check the user bought appears in their history like any other.
 	if recent := s.reusableReport(ctx, accountID); recent != nil {
-		s.spendEntitlement(ctx, accountID, recent.ID)
-		return recent, true, nil
-	}
-
-	reqBody, err := json.Marshal(payload)
-	if err != nil {
-		return nil, false, fmt.Errorf("marshal credit-analytics request: %w", err)
+		copyRow, cerr := s.repo.CreateReusedCopy(
+			ctx, recent, accountID, payload.ClientRefNum, reqBody, idempotencyPtr(key))
+		if cerr != nil {
+			// Falling through to the live pull is the safe failure: it costs one
+			// vendor call and the caller still gets the report they paid for,
+			// where returning the error would take their money for nothing.
+			slog.Error("credit-analytics reuse copy failed; falling through to a live pull",
+				"account_id", accountID, "source_report_id", recent.ID, "error", cerr)
+		} else {
+			// Count against the ORIGINAL pull, not the row we happened to copy
+			// from. The newest report is itself a copy once one refresh has
+			// happened, so counting the immediate source would scatter the tally
+			// along the chain and disagree with reused_from_report_id, which
+			// already resolves to the origin. CreateReusedCopy did that
+			// resolution; reuse the answer rather than repeating it.
+			countAgainst := recent.ID
+			if copyRow.ReusedFromReportID != nil {
+				countAgainst = *copyRow.ReusedFromReportID
+			}
+			if rerr := s.repo.RecordReuse(ctx, countAgainst); rerr != nil {
+				slog.Warn("credit-analytics reuse not counted",
+					"account_id", accountID, "report_id", countAgainst, "error", rerr)
+			}
+			slog.Info("credit-analytics reused: paid check served from a recent report",
+				"account_id", accountID, "report_id", copyRow.ID,
+				"source_report_id", recent.ID,
+				"data_age", time.Since(recent.DataFetchedAt).Round(time.Minute).String())
+			s.spendEntitlement(ctx, accountID, copyRow.ID)
+			return copyRow, true, nil
+		}
 	}
 
 	// Time the upstream call so latency is observable independently of the
@@ -1010,21 +1043,24 @@ func (s *CreditAnalyticsService) reusableReport(ctx context.Context, accountID i
 		}
 		return nil
 	}
-	age := time.Since(recent.CreatedAt)
-	if age >= s.reuseWindow {
+	// Measured against when the DATA was fetched, never when the row was written.
+	// A copy inherits data_fetched_at, so serving copies can never keep the window
+	// open — which is what would happen if this read CreatedAt and every refresh
+	// minted a row that looked brand new.
+	if time.Since(recent.DataFetchedAt) >= s.reuseWindow {
 		return nil
 	}
-	// Count it. Best-effort: the caller is entitled to this report either way, so
-	// a bookkeeping failure is logged and swallowed rather than turned into an
-	// error. An undercount is the worst case, and it is visible here.
-	if err := s.repo.RecordReuse(ctx, recent.ID); err != nil {
-		slog.Warn("credit-analytics reuse not counted",
-			"account_id", accountID, "report_id", recent.ID, "error", err)
-	}
-	slog.Info("credit-analytics reused: paid check served from a recent report",
-		"account_id", accountID, "report_id", recent.ID,
-		"age", age.Round(time.Minute).String(), "window", s.reuseWindow.String())
 	return recent
+}
+
+// idempotencyPtr renders the caller's key for storage: empty means they sent
+// none, which the column records as NULL rather than as an empty string that
+// would collide with the next keyless caller under the unique index.
+func idempotencyPtr(key string) *string {
+	if key == "" {
+		return nil
+	}
+	return &key
 }
 
 // ListReports returns one page of the caller's reports, newest first. Each
