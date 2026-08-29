@@ -123,8 +123,9 @@ type LogConfig struct {
 // CreditAnalyticsConfig holds policy for the paid bureau pull that is ours
 // rather than the provider's.
 type CreditAnalyticsConfig struct {
-	// ReuseWindow is how recent a successful report must be to be served, to an
-	// account holding NO unspent purchase, in place of a 402.
+	// ReuseWindow is how recent a successful report must be to satisfy a PAID
+	// check in place of calling Digitap. Checked after the paywall, never before,
+	// and a reused report spends the purchase — see reusableReport.
 	//
 	// Bureau files move on lender-reporting cycles of roughly a month — the same
 	// assumption behind the 30-day reportFreshWindow that decides whether a

@@ -128,25 +128,25 @@ registration:
     min-confidence: 0.8
 
 credit-analytics:
-  # For an account with NO unspent purchase, answer a pull with its most recent
-  # SUCCESSFUL report when that report is younger than this, instead of refusing
-  # with 402. Zero = never reuse.
+  # For a caller who HAS an unspent purchase, satisfy it with the account's most
+  # recent SUCCESSFUL report when that report is younger than this, instead of
+  # calling Digitap. Zero = always call.
   #
   # Bureau files move on lender-reporting cycles of roughly a month, so a report
   # a few days old is very nearly what a fresh call would return — at no cost and
-  # no latency. It makes repeated testing free: without it, every run of the score
-  # journey needs a comped order and spends a billed bureau call.
+  # no latency.
   #
-  # An account that HAS bought a check is never served a reused report. It paid
-  # for a live bureau call and gets one; reuse is about not billing the vendor
-  # for an answer we already hold, not about withholding what someone paid for.
+  # Reuse is checked AFTER the paywall, never before: without a purchase there is
+  # no refresh at all, stored or live. It is a saving on a check someone bought,
+  # not a way to obtain one for free.
   #
-  # Nothing is given away by serving it unpaid: GET /credit-analytics/latest-insights
-  # already returns that identical report to any authenticated account for free.
-  # What the paywall sells is a FRESH pull, and the reuse path performs none.
+  # A reused report DOES spend the purchase. The check buys a current report and a
+  # report inside this window is one, so the account is not left holding a credit
+  # it can do nothing with for a week. The app says which it got on the processing
+  # screen rather than leaving the user to wonder why their score did not move.
   #
-  # Set it to 0 when testing the Digitap integration itself, or an unentitled
-  # caller never reaches the provider and an upstream regression hides.
+  # Set it to 0 when testing the Digitap integration itself, or a paid caller
+  # inside the window never reaches the provider and an upstream regression hides.
   reuse-window: 168h   # 7 days
 
 digitap:

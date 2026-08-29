@@ -522,10 +522,9 @@ type digitapPayload struct {
 //     that, not sent to a paywall to buy a pull that would fail the moment they
 //     came back from paying for it.
 //  2. entitlement — checked before the vendor call, so an unpaid caller costs us
-//     nothing. A caller with nothing to spend is answered with a recent report
-//     when one is inside the reuse window (see reusableReport), and 402 only
-//     when there is nothing to hand back. A caller WITH a purchase always gets a
-//     live pull: that is what they bought.
+//     nothing and gets nothing: without a purchase there is no refresh at all,
+//     live or reused. Past it, a report inside the reuse window satisfies the
+//     purchase without a bureau call; otherwise the pull runs.
 //  3. the pull itself — and the entitlement is SPENT only once the vendor
 //     actually delivered. A pull that fails leaves the purchase unspent and
 //     retryable, because the user paid for a report and did not get one; making
@@ -581,18 +580,18 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 			"We couldn't confirm your purchase. Please try again in a moment.")
 	}
 	if !entitled {
-		// Nothing bought to spend — so rather than refuse outright, hand back a
-		// recent report if one is close enough to be the same answer. This gives
-		// nothing away: GET /credit-analytics/latest-insights already returns
-		// that identical report to any authenticated account for free. What the
-		// paywall sells is a FRESH pull, and this path performs none.
-		if recent := s.reusableReport(ctx, accountID); recent != nil {
-			return recent, true, nil
-		}
-		slog.Info("credit-analytics refused: no unspent purchase, no reusable report",
-			"account_id", accountID)
+		// No purchase, no refresh — not even a stored one. Reuse is a saving on
+		// a check the caller has bought, not a way to obtain one for free.
+		slog.Info("credit-analytics refused: no unspent purchase", "account_id", accountID)
 		return nil, false, apperr.NewPaymentRequired(
 			"Your score check needs to be purchased before we can fetch your report.")
+	}
+
+	// The caller has bought a check. If their most recent report is still recent
+	// enough to be the same answer, that check is satisfied without a bureau call.
+	if recent := s.reusableReport(ctx, accountID); recent != nil {
+		s.spendEntitlement(ctx, accountID, recent.ID)
+		return recent, true, nil
 	}
 
 	reqBody, err := json.Marshal(payload)
@@ -676,22 +675,7 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 			"latency_ms", upstreamLatency,
 		)
 		// The vendor delivered, so the purchase is now spent — and only now.
-		// Best-effort by design: the report exists and the user is entitled to
-		// see it, so a bookkeeping failure here must not turn a delivered report
-		// into an error. It leaves the entitlement unspent, which errs toward the
-		// user (they could run one more pull) and is loud in the log.
-		if spent, serr := s.orders.SpendEntitlement(
-			ctx, accountID, models.ProductCreditAnalysis, row.ID,
-		); serr != nil {
-			slog.Error("credit-analytics entitlement not spent: update failed",
-				"account_id", accountID, "report_id", row.ID, "error", serr)
-		} else if !spent {
-			// Nothing was claimable although the gate above passed. A concurrent
-			// pull took the last order between the two statements — rare, and
-			// worth a line, because the alternative reading is a hole in the gate.
-			slog.Warn("credit-analytics entitlement not spent: none left to claim",
-				"account_id", accountID, "report_id", row.ID)
-		}
+		s.spendEntitlement(ctx, accountID, row.ID)
 
 		// report_type 3 carries result_pdf: a ~1-hour URL for the generated PDF.
 		// Hand it to the relay (download → encrypt → S3 → write-back) if wired.
@@ -961,19 +945,47 @@ func derefInt(p *int) any {
 	return *p
 }
 
+// spendEntitlement claims the caller's oldest unspent purchase against the
+// report it bought.
+//
+// Best-effort by design: the report exists and the caller is entitled to see it,
+// so a bookkeeping failure must never turn a delivered report into an error. It
+// leaves the purchase unspent, which errs toward the user — they can run one
+// more check — and is loud in the log.
+//
+// Called from both paths that hand a report back to a paying caller: a live pull
+// once the vendor has delivered, and a reuse that satisfied the same purchase
+// without one. One definition, so the two can never drift into charging
+// differently for the same thing.
+func (s *CreditAnalyticsService) spendEntitlement(ctx context.Context, accountID, reportID int64) {
+	spent, err := s.orders.SpendEntitlement(ctx, accountID, models.ProductCreditAnalysis, reportID)
+	if err != nil {
+		slog.Error("credit-analytics entitlement not spent: update failed",
+			"account_id", accountID, "report_id", reportID, "error", err)
+		return
+	}
+	if !spent {
+		// Nothing was claimable although the gate passed. A concurrent request
+		// took the last order between the two statements — rare, and worth a
+		// line, because the alternative reading is a hole in the gate.
+		slog.Warn("credit-analytics entitlement not spent: none left to claim",
+			"account_id", accountID, "report_id", reportID)
+	}
+}
+
 // reusableReport returns the account's most recent successful report when it is
 // young enough to stand in for a fresh pull, or nil.
 //
-// Consulted ONLY when the account holds no unspent purchase. Someone who has
-// bought a check has bought a live bureau call and gets one — handing them a
-// report they already had would take their money for nothing, and would leave
-// the purchase unspent, so the app would go on offering them the same check and
-// returning the same stale report. Reuse exists to avoid billing the VENDOR for
-// an answer we already hold, not to avoid giving a paying user what they paid
-// for.
+// Consulted ONLY after the entitlement gate has passed. Reuse is a saving on a
+// check the caller has already bought, never a way to obtain one for free:
+// without a purchase there is no refresh at all, stored or live.
 //
-// A reused report never spends an entitlement — on this path there is none to
-// spend, by construction.
+// A reused report DOES spend the purchase. The check buys a current report, and
+// a report inside this window is one — so the purchase is satisfied and the
+// account is not left holding a credit it can do nothing with for a week. What
+// the user is spared is the wait; what we are spared is the vendor bill. The app
+// says which it got on the processing screen (ProcessingPhase.Reused) rather
+// than leaving them to wonder why their score did not move.
 //
 // Fails OPEN: a lookup error returns nil, so the caller carries on to the live
 // pull. Unlike the entitlement read, which guards money going out and must
