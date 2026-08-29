@@ -17,19 +17,20 @@ import (
 
 // Config is the top-level configuration tree.
 type Config struct {
-	Server       ServerConfig       `mapstructure:"server"`
-	DB           DBConfig           `mapstructure:"db"`
-	Mail         MailConfig         `mapstructure:"mail"`
-	SMS          SMSConfig          `mapstructure:"sms"`
-	Auth         AuthConfig         `mapstructure:"auth"`
-	Multipart    MultipartConfig    `mapstructure:"multipart"`
-	Registration RegistrationConfig `mapstructure:"registration"`
-	Digitap      DigitapConfig      `mapstructure:"digitap"`
-	Log          LogConfig          `mapstructure:"log"`
-	Cashfree     CashfreeConfig     `mapstructure:"cashfree"`
-	Statement    StatementConfig    `mapstructure:"statement"`
-	S3           S3Config           `mapstructure:"s3"`
-	Demo         DemoConfig         `mapstructure:"demo"`
+	Server          ServerConfig          `mapstructure:"server"`
+	DB              DBConfig              `mapstructure:"db"`
+	Mail            MailConfig            `mapstructure:"mail"`
+	SMS             SMSConfig             `mapstructure:"sms"`
+	Auth            AuthConfig            `mapstructure:"auth"`
+	Multipart       MultipartConfig       `mapstructure:"multipart"`
+	Registration    RegistrationConfig    `mapstructure:"registration"`
+	Digitap         DigitapConfig         `mapstructure:"digitap"`
+	CreditAnalytics CreditAnalyticsConfig `mapstructure:"credit-analytics"`
+	Log             LogConfig             `mapstructure:"log"`
+	Cashfree        CashfreeConfig        `mapstructure:"cashfree"`
+	Statement       StatementConfig       `mapstructure:"statement"`
+	S3              S3Config              `mapstructure:"s3"`
+	Demo            DemoConfig            `mapstructure:"demo"`
 }
 
 // S3Config configures the credit-report PDF store.
@@ -117,6 +118,24 @@ type CashfreeConfig struct {
 type LogConfig struct {
 	Level  string `mapstructure:"level"`
 	Format string `mapstructure:"format"`
+}
+
+// CreditAnalyticsConfig holds policy for the paid bureau pull that is ours
+// rather than the provider's.
+type CreditAnalyticsConfig struct {
+	// ReuseWindow is how recent a successful report must be to be served, to an
+	// account holding NO unspent purchase, in place of a 402.
+	//
+	// Bureau files move on lender-reporting cycles of roughly a month — the same
+	// assumption behind the 30-day reportFreshWindow that decides whether a
+	// report is shown as current — so a report a few days old is very nearly the
+	// answer a fresh call would give, at no cost and no latency.
+	//
+	// An account WITH a purchase always gets a live pull; see reusableReport for
+	// why. Zero disables reuse entirely. Set it to zero wherever you are testing
+	// the upstream integration itself, since otherwise an unentitled caller never
+	// reaches Digitap and an upstream regression would go unnoticed.
+	ReuseWindow time.Duration `mapstructure:"reuse-window"`
 }
 
 // DigitapConfig holds credentials and endpoint settings for the Digitap Credit
@@ -550,6 +569,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("registration.ocr.min-confidence", 0.8)
 
 	// Digitap Credit Analytics API. Empty client-id -> offline stub client.
+	// 7 days: long enough to make repeated testing free, short enough that a
+	// report handed to a user is never described as current when the bureau may
+	// have moved on. See CreditAnalyticsConfig.ReuseWindow.
+	v.SetDefault("credit-analytics.reuse-window", "168h")
 	v.SetDefault("digitap.base-url", "https://api.digitap.ai/")
 	v.SetDefault("digitap.client-id", "")
 	v.SetDefault("digitap.client-secret", "")
@@ -627,6 +650,7 @@ func allKeys() []string {
 		"registration.pan.name-match-distance",
 		"registration.pan.max-verification-attempts",
 		"registration.ocr.provider", "registration.ocr.min-confidence",
+		"credit-analytics.reuse-window",
 		"digitap.base-url", "digitap.client-id", "digitap.client-secret", "digitap.timeout",
 		"digitap.log-request-curl",
 		"digitap.prefill.base-url", "digitap.prefill.client-id",

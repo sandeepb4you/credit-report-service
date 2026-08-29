@@ -67,6 +67,16 @@ type Order struct {
 	PaidAt      *time.Time `json:"paidAt" db:"paid_at"`
 	FulfilledAt *time.Time `json:"-"      db:"fulfilled_at"`
 
+	// ConsumedAt marks the purchase as spent on a delivered report; nil means
+	// the account is still owed one. Distinct from FulfilledAt, which is
+	// stamped when payment GRANTED the entitlement — the gap between the two
+	// is where a paid-but-failed pull lives.
+	//
+	// Unexported to JSON: it is server-side accounting, and the app already
+	// learns what it needs from the 402 on the pull itself.
+	ConsumedAt       *time.Time `json:"-" db:"consumed_at"`
+	ConsumedReportID *int64     `json:"-" db:"consumed_report_id"`
+
 	CreatedAt time.Time `json:"createdAt" db:"created_at"`
 	UpdatedAt time.Time `json:"updatedAt" db:"updated_at"`
 }

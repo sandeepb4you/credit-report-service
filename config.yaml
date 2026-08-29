@@ -127,6 +127,28 @@ registration:
     provider: stub          # stub | google-vision
     min-confidence: 0.8
 
+credit-analytics:
+  # For an account with NO unspent purchase, answer a pull with its most recent
+  # SUCCESSFUL report when that report is younger than this, instead of refusing
+  # with 402. Zero = never reuse.
+  #
+  # Bureau files move on lender-reporting cycles of roughly a month, so a report
+  # a few days old is very nearly what a fresh call would return — at no cost and
+  # no latency. It makes repeated testing free: without it, every run of the score
+  # journey needs a comped order and spends a billed bureau call.
+  #
+  # An account that HAS bought a check is never served a reused report. It paid
+  # for a live bureau call and gets one; reuse is about not billing the vendor
+  # for an answer we already hold, not about withholding what someone paid for.
+  #
+  # Nothing is given away by serving it unpaid: GET /credit-analytics/latest-insights
+  # already returns that identical report to any authenticated account for free.
+  # What the paywall sells is a FRESH pull, and the reuse path performs none.
+  #
+  # Set it to 0 when testing the Digitap integration itself, or an unentitled
+  # caller never reaches the provider and an upstream regression hides.
+  reuse-window: 168h   # 7 days
+
 digitap:
   # Digitap Credit Analytics API (spec V2.7). Override credentials via env:
   #   DIGITAP_CLIENT_ID, DIGITAP_CLIENT_SECRET

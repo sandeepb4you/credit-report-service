@@ -380,9 +380,17 @@ func (s *OrderService) applyWebhook(ctx context.Context, env *webhookEnvelope) e
 	return nil
 }
 
-// fulfillOrder grants what was bought. Entitlement creation for the analysis
-// products is not built yet, so for now the paid transition stamps
-// fulfilled_at and this hook just logs; wire the real grant here.
+// fulfillOrder logs what was bought.
+//
+// There is deliberately no grant to make here: the PAID order IS the
+// entitlement. A paid order with consumed_at NULL is one unspent purchase, and
+// the credit-analytics pull claims it (OrderRepo.SpendEntitlement). Deriving it
+// from the order rather than writing a separate credit row means the two can
+// never disagree — and a refund or a reversal moves the entitlement with the
+// order instead of leaving a granted credit stranded behind it.
+//
+// MarkOrderPaid stamps fulfilled_at on the same transition, recording when the
+// entitlement was granted; consumed_at records when it was spent.
 func (s *OrderService) fulfillOrder(order *models.Order) {
 	log.Printf("[order] fulfilled %s: account %d purchased %s",
 		order.OrderUID, order.AccountID, order.ProductCode)

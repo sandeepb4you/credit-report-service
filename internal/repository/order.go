@@ -48,7 +48,8 @@ func (r *OrderRepo) FindProduct(ctx context.Context, code string) (*models.Produ
 const orderCols = `id, order_uid, account_id, product_code, amount, discount_amount,
     coupon_code, currency, status,
     cf_order_id, payment_session_id, cf_payment_id, payment_method, failure_reason,
-    order_expiry_time, paid_at, fulfilled_at, created_at, updated_at`
+    order_expiry_time, paid_at, fulfilled_at, consumed_at, consumed_report_id,
+    created_at, updated_at`
 
 // CreateOrder inserts the local row before the gateway is called, so the
 // order_uid exists to send as the gateway's order_id.
@@ -138,6 +139,65 @@ func (r *OrderRepo) MarkOrderPaid(ctx context.Context, uid string, cfPaymentID, 
 		 WHERE order_uid = $1 AND status <> $2`,
 		uid, models.OrderPaid, cfPaymentID, method, paidAt,
 	)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// ---- entitlements ---------------------------------------------------------
+
+// HasUnspentEntitlement reports whether the account holds a PAID order of
+// productCode that has not yet been spent on a delivered report.
+//
+// This is the read used to GATE an action, and it is deliberately separate from
+// SpendEntitlement, which claims one. Checking before doing the expensive,
+// billable work means a user with no entitlement is turned away without a vendor
+// call; claiming afterwards means a vendor failure cannot swallow their purchase.
+func (r *OrderRepo) HasUnspentEntitlement(ctx context.Context, accountID int64, productCode string) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS (
+		     SELECT 1 FROM orders
+		     WHERE account_id = $1
+		       AND product_code = $2
+		       AND status = $3
+		       AND consumed_at IS NULL
+		 )`, accountID, productCode, models.OrderPaid).Scan(&exists)
+	return exists, err
+}
+
+// SpendEntitlement claims the account's oldest unspent PAID order of productCode
+// against the report it paid for, and reports whether one was claimed.
+//
+// Oldest first so a user who bought two checks has both honoured in the order
+// they were bought, and so the row a refund would look at is the one whose money
+// is actually gone.
+//
+// FOR UPDATE SKIP LOCKED makes two concurrent claims take two different orders
+// rather than both taking one: the subquery locks the row it picks, and a
+// competing transaction skips past it to the next unspent order instead of
+// blocking and then double-spending the same one.
+//
+// A false return is not an error. It means the pull ran without an entitlement
+// to spend, which is what the gate is supposed to prevent — the caller logs it
+// rather than failing a report the user has already received.
+func (r *OrderRepo) SpendEntitlement(ctx context.Context, accountID int64, productCode string, reportID int64) (bool, error) {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE orders SET
+		     consumed_at = now(),
+		     consumed_report_id = $4,
+		     updated_at = now()
+		 WHERE id = (
+		     SELECT id FROM orders
+		     WHERE account_id = $1
+		       AND product_code = $2
+		       AND status = $3
+		       AND consumed_at IS NULL
+		     ORDER BY paid_at, id
+		     LIMIT 1
+		     FOR UPDATE SKIP LOCKED
+		 )`, accountID, productCode, models.OrderPaid, reportID)
 	if err != nil {
 		return false, err
 	}

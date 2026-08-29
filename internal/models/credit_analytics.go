@@ -14,6 +14,9 @@ type CreditAnalyticsRequest struct {
 	AccountID    *int64          `json:"accountId"    db:"account_id"`
 	ClientRefNum string          `json:"clientRefNum" db:"client_ref_num"`
 	MobileNo     string          `json:"mobileNo"     db:"mobile_no"`
+	// IdempotencyKey is the caller's replay key, unique per account. Nil when
+	// the caller sent none, which every row predating the column also is.
+	IdempotencyKey *string `json:"-" db:"idempotency_key"`
 	RequestID    *string         `json:"requestId"    db:"request_id"`
 	ResultCode   *int            `json:"resultCode"   db:"result_code"`
 	HTTPStatus   *int            `json:"httpStatus"   db:"http_status"`

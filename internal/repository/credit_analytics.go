@@ -19,21 +19,53 @@ func NewCreditAnalyticsRepo(pool *pgxpool.Pool) *CreditAnalyticsRepo {
 }
 
 const creditAnalyticsCols = `id, account_id, client_ref_num, mobile_no,
-    request_id, result_code, http_status, message,
+    idempotency_key, request_id, result_code, http_status, message,
     request_body, response_body, credit_score, result_pdf_url, created_at`
+
+// succeededPredicate narrows credit_analytics_requests to the rows that represent
+// a report the user actually received: a 2xx from Digitap carrying a body.
+//
+// Every request is persisted, successes and failures alike, so a support question
+// months later still has the provider's own answer beside our decision. But a
+// failed pull is not a report, and conflating the two on a consumer-facing path
+// does real damage:
+//
+//   - It is not a past check. Listed, it is a history entry that opens nothing.
+//   - Worse, it reads as a CONSUMED ENTITLEMENT. The app decides whether a paid
+//     score check still owes the user a pull by comparing the newest PAID order
+//     against the newest row here (HomeViewModel.checkUnconsumedScoreCheck). A
+//     failed pull is by definition newer than the payment that triggered it, so
+//     an unfiltered list marks the check spent and puts the paywall back in front
+//     of someone who has already paid — inviting them to buy a second time for a
+//     report our vendor failed to deliver.
+//
+// The client cannot draw this distinction itself: ReportSummary carries
+// {id, createdAt, creditScore}, and a thin-file success — which DOES legitimately
+// consume the check, since the bureau answered — is null-scored exactly like a
+// failure.
+//
+// Deliberately the same predicate FindLatestByAccount already applied on its own:
+// "a report" now means one thing on every read path instead of two.
+const succeededPredicate = `http_status >= 200 AND http_status < 300
+		   AND response_body IS NOT NULL`
 
 // Create inserts a credit-analytics request row and fills the server-assigned
 // fields (id, created_at) on the supplied model.
 func (r *CreditAnalyticsRepo) Create(ctx context.Context, req *models.CreditAnalyticsRequest) error {
-	return pgxscan.Get(ctx, r.pool, req,
+	err := pgxscan.Get(ctx, r.pool, req,
 		`INSERT INTO credit_analytics_requests
-		     (account_id, client_ref_num, mobile_no, request_id, result_code,
-		      http_status, message, request_body, response_body, credit_score)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		     (account_id, client_ref_num, mobile_no, idempotency_key, request_id,
+		      result_code, http_status, message, request_body, response_body, credit_score)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 RETURNING `+creditAnalyticsCols,
-		req.AccountID, req.ClientRefNum, req.MobileNo, req.RequestID, req.ResultCode,
-		req.HTTPStatus, req.Message, req.RequestBody, req.ResponseBody, req.CreditScore,
+		req.AccountID, req.ClientRefNum, req.MobileNo, req.IdempotencyKey, req.RequestID,
+		req.ResultCode, req.HTTPStatus, req.Message, req.RequestBody, req.ResponseBody,
+		req.CreditScore,
 	)
+	// A duplicate (account_id, idempotency_key) means a concurrent call already
+	// claimed this key. Surfaced as ErrConflict so the service can return that
+	// call's row instead of a second report.
+	return classifyPgErr(err)
 }
 
 // SetResultPDFURL writes the stored object's s3:// URI onto a row once the
@@ -62,24 +94,60 @@ func (r *CreditAnalyticsRepo) FindByID(ctx context.Context, id int64) (*models.C
 	return &req, nil
 }
 
-// FindByAccountPaged returns one page of an account's rows, newest first.
+// FindByAccountAndKey returns the row a previous call stored under this
+// account's idempotency key, or ErrNotFound.
+//
+// Scoped to the account, not global: the key is chosen by the client, so a
+// globally-keyed lookup would let one account guess another's key and read a
+// stranger's credit report.
+//
+// Deliberately returns rows whatever their outcome, unlike the reports list. A
+// replay must answer with what the first call actually produced — if that call
+// failed, the replay says so rather than quietly running a second billed pull
+// that the caller believes is the same request.
+func (r *CreditAnalyticsRepo) FindByAccountAndKey(ctx context.Context, accountID int64, key string) (*models.CreditAnalyticsRequest, error) {
+	var req models.CreditAnalyticsRequest
+	err := pgxscan.Get(ctx, r.pool, &req,
+		`SELECT `+creditAnalyticsCols+` FROM credit_analytics_requests
+		 WHERE account_id = $1 AND idempotency_key = $2`, accountID, key)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &req, nil
+}
+
+// FindByAccountPaged returns one page of an account's reports, newest first.
 // limit is the page size; offset is the zero-based row offset.
+//
+// Failed pulls are excluded — see succeededPredicate. This list is what the app
+// calls "my past score checks" AND what it measures a paid-but-unrun check
+// against, and a failure is neither.
 func (r *CreditAnalyticsRepo) FindByAccountPaged(ctx context.Context, accountID int64, limit, offset int) ([]models.CreditAnalyticsRequest, error) {
 	rs := []models.CreditAnalyticsRequest{}
 	err := pgxscan.Select(ctx, r.pool, &rs,
 		`SELECT `+creditAnalyticsCols+` FROM credit_analytics_requests
 		 WHERE account_id = $1
+		   AND `+succeededPredicate+`
 		 ORDER BY id DESC
 		 LIMIT $2 OFFSET $3`, accountID, limit, offset)
 	return rs, err
 }
 
-// CountByAccount returns the total number of rows for an account (for the
+// CountByAccount returns the total number of reports for an account (for the
 // pagination total field).
+//
+// Must apply the same filter as FindByAccountPaged or the total overcounts the
+// pages it describes: an account with one report and two failed attempts would
+// report 3 items across a single page of 1.
 func (r *CreditAnalyticsRepo) CountByAccount(ctx context.Context, accountID int64) (int64, error) {
 	var n int64
 	err := r.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM credit_analytics_requests WHERE account_id = $1`, accountID).Scan(&n)
+		`SELECT COUNT(*) FROM credit_analytics_requests
+		 WHERE account_id = $1
+		   AND `+succeededPredicate, accountID).Scan(&n)
 	return n, err
 }
 
@@ -104,8 +172,7 @@ func (r *CreditAnalyticsRepo) FindLatestByAccount(ctx context.Context, accountID
 	err := pgxscan.Get(ctx, r.pool, &req,
 		`SELECT `+creditAnalyticsCols+` FROM credit_analytics_requests
 		 WHERE account_id = $1
-		   AND http_status >= 200 AND http_status < 300
-		   AND response_body IS NOT NULL
+		   AND `+succeededPredicate+`
 		 ORDER BY (credit_score IS NOT NULL) DESC, id DESC
 		 LIMIT 1`, accountID)
 	if errors.Is(err, pgx.ErrNoRows) {

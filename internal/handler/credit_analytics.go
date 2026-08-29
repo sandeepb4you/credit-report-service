@@ -30,9 +30,10 @@ func NewCreditAnalyticsHandler(svc *service.CreditAnalyticsService) *CreditAnaly
 // @Produce      json
 // @Security     BearerAuth
 // @Param        request  body      service.CreditAnalyticsInput  false  "Credit-analytics request (device_ip optional; defaults to the caller's IP)"
-// @Success      201      {object}  service.ReportInsights
+// @Success      201      {object}  service.ReportInsights  "Response header X-Report-Reused: true means an existing recent report was returned instead of a new bureau pull"
 // @Failure      400      {object}  apperr.ErrorBody  "Invalid request body / missing profile or PAN / upstream 400"
 // @Failure      401      {object}  apperr.ErrorBody  "Not authenticated"
+// @Failure      402      {object}  apperr.ErrorBody  "No unspent score-check purchase on the account — send the user to the paywall"
 // @Failure      422      {object}  apperr.ErrorBody  "Upstream tradeline limit exceeded"
 // @Failure      502      {object}  apperr.ErrorBody  "Digitap unreachable, or returned an unhandled error"
 // @Failure      503      {object}  apperr.ErrorBody  "Digitap rejected our client credentials (server misconfiguration)"
@@ -53,7 +54,7 @@ func (h *CreditAnalyticsHandler) Request(c *fiber.Ctx) error {
 		in.DeviceIP = c.IP()
 	}
 
-	row, err := h.svc.Request(c.Context(), accountID, in)
+	row, reused, err := h.svc.Request(c.Context(), accountID, in)
 	if err != nil {
 		// On upstream-mapped errors the row has already been persisted; surface
 		// the error envelope as usual, and attach the row id via X-Request-Id so
@@ -62,6 +63,13 @@ func (h *CreditAnalyticsHandler) Request(c *fiber.Ctx) error {
 			c.Set("X-Credit-Analytics-Id", strconv.FormatInt(row.ID, 10))
 		}
 		return err
+	}
+	// Reuse is a property of how THIS request was served, not of the report, so
+	// it travels as a header rather than a field on the shared insights body —
+	// which /reports/{id} and /latest-insights return too, and where the question
+	// does not arise. A client that ignores it is unaffected.
+	if reused {
+		c.Set("X-Report-Reused", "true")
 	}
 	// Return the derived analytics rather than the raw Digitap row, so a client
 	// gets the same insights shape from this endpoint as from /reports/{id}.

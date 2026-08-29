@@ -3070,6 +3070,12 @@
                             "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
                     },
+                    "402": {
+                        "description": "No unspent score-check purchase on the account — send the user to the paywall",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
                     "422": {
                         "description": "Upstream tradeline limit exceeded",
                         "schema": {
@@ -4450,6 +4456,10 @@
             "type": "object",
             "properties": {
                 "device_ip": {
+                    "type": "string"
+                },
+                "idempotency_key": {
+                    "description": "IdempotencyKey makes the pull safe to repeat. Optional — omitting it keeps\nthe old behaviour where every call is a new billed request — but the app\nalways sends one, because this endpoint costs the user money twice over: a\nDigitap call we are billed for, and one of their paid orders spent.\n\nThe key must identify the ATTEMPT, not the request: a client that mints a\nfresh one on every retry has bought nothing, since the whole point is that\na re-entered screen sends the same key the first entry did.",
                     "type": "string"
                 }
             }

@@ -57,6 +57,19 @@ type PanFailure struct{ Msg string }
 
 func (e *PanFailure) Error() string { return e.Msg }
 
+// PaymentRequired maps to HTTP 402: the caller is authenticated and permitted,
+// but the thing they asked for has to be bought first and their account holds no
+// unspent purchase of it.
+//
+// Its own status rather than 403, because the two mean opposite things to a
+// client. 403 is "you may not have this", which is final and should show an
+// error. 402 is "you may have this once you pay", which the app answers by
+// opening the paywall — a distinction the user experiences as a dead end versus
+// a next step.
+type PaymentRequired struct{ Msg string }
+
+func (e *PaymentRequired) Error() string { return e.Msg }
+
 // PayloadTooLarge maps to HTTP 413.
 type PayloadTooLarge struct{ Msg string }
 
@@ -85,6 +98,7 @@ func NewConflict(msg string) error           { return &Conflict{Msg: msg} }
 func NewUnauthorized(msg string) error       { return &Unauthorized{Msg: msg} }
 func NewForbidden(msg string) error          { return &Forbidden{Msg: msg} }
 func NewPanFailure(msg string) error         { return &PanFailure{Msg: msg} }
+func NewPaymentRequired(msg string) error    { return &PaymentRequired{Msg: msg} }
 func NewPayloadTooLarge(msg string) error    { return &PayloadTooLarge{Msg: msg} }
 func NewServiceUnavailable(msg string) error { return &ServiceUnavailable{Msg: msg} }
 func NewBadGateway(msg string) error         { return &BadGateway{Msg: msg} }
@@ -121,6 +135,7 @@ func StatusFor(err error) (status int, title, msg string, details map[string]str
 		ua  *Unauthorized
 		fb  *Forbidden
 		pf  *PanFailure
+		pr  *PaymentRequired
 		ptl *PayloadTooLarge
 		su  *ServiceUnavailable
 		bg  *BadGateway
@@ -143,6 +158,8 @@ func StatusFor(err error) (status int, title, msg string, details map[string]str
 		return 403, "Forbidden", fb.Msg, nil
 	case errors.As(err, &pf):
 		return 422, "Unprocessable Entity", pf.Msg, nil
+	case errors.As(err, &pr):
+		return 402, "Payment Required", pr.Msg, nil
 	case errors.As(err, &ptl):
 		return 413, "Payload Too Large", ptl.Msg, nil
 	case errors.As(err, &su):

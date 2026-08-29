@@ -167,7 +167,7 @@ func main() {
 	couponSvc := service.NewCouponService(couponRepo, orderRepo)
 	authSvc := service.NewAuthService(
 		accountRepo, otpSvc, mailSvc, smsSender, tokenSvc, sessionSvc, couponSvc, cfg.Auth)
-	analyticsSvc := service.NewCreditAnalyticsService(digitapClient, analyticsRepo, accountRepo)
+	analyticsSvc := service.NewCreditAnalyticsService(digitapClient, analyticsRepo, accountRepo, orderRepo, cfg.CreditAnalytics)
 	if cfg.Demo.Enabled {
 		slog.Warn("DEMO MODE ENABLED: submitted PANs are auto-verified without the external KYC provider; do not use in production")
 	}

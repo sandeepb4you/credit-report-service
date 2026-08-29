@@ -24,6 +24,7 @@ func TestTypedErrors(t *testing.T) {
 		{"Unauthorized", NewUnauthorized("nope"), "nope"},
 		{"Forbidden", NewForbidden("no admin"), "no admin"},
 		{"PanFailure", NewPanFailure("bad pan"), "bad pan"},
+		{"PaymentRequired", NewPaymentRequired("buy it first"), "buy it first"},
 		{"PayloadTooLarge", NewPayloadTooLarge("too big"), "too big"},
 		{"ServiceUnavailable", NewServiceUnavailable("down"), "down"},
 	}
@@ -276,5 +277,42 @@ func TestStatusFor_WrappedErrorDoesNotLeakItsPrefix(t *testing.T) {
 	}
 	if msg != "PAN format is invalid" {
 		t.Errorf("msg = %q, want just the typed message with no wrapping context", msg)
+	}
+}
+
+
+// TestPaymentRequiredStatus pins 402 for an unpurchased paid action.
+//
+// The status is the contract, not a detail: the app routes a 402 from the
+// credit-analytics pull to the paywall and anything else to an error state, so
+// a drift to 403 here would show "you may not do this" to a user who simply has
+// not paid yet — a dead end where there should be a Buy button.
+func TestPaymentRequiredStatus(t *testing.T) {
+	status, title, msg, details := StatusFor(NewPaymentRequired("purchase required"))
+	if status != http.StatusPaymentRequired {
+		t.Errorf("status = %d, want %d", status, http.StatusPaymentRequired)
+	}
+	if title != "Payment Required" {
+		t.Errorf("title = %q, want %q", title, "Payment Required")
+	}
+	if msg != "purchase required" {
+		t.Errorf("msg = %q, want %q", msg, "purchase required")
+	}
+	if details != nil {
+		t.Errorf("details = %v, want nil", details)
+	}
+}
+
+// TestPaymentRequiredSurvivesWrapping guards the same mapping through a wrap,
+// since the service returns it up through layers that add context.
+func TestPaymentRequiredSurvivesWrapping(t *testing.T) {
+	wrapped := fmt.Errorf("request credit analytics: %w", NewPaymentRequired("purchase required"))
+	status, _, msg, _ := StatusFor(wrapped)
+	if status != http.StatusPaymentRequired {
+		t.Errorf("status = %d, want %d", status, http.StatusPaymentRequired)
+	}
+	// The wrapping prefix must not reach the response body.
+	if msg != "purchase required" {
+		t.Errorf("msg = %q, want %q (wrapper text leaked)", msg, "purchase required")
 	}
 }

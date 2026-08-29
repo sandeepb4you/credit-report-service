@@ -596,6 +596,17 @@ definitions:
     properties:
       device_ip:
         type: string
+      idempotency_key:
+        description: |-
+          IdempotencyKey makes the pull safe to repeat. Optional — omitting it keeps
+          the old behaviour where every call is a new billed request — but the app
+          always sends one, because this endpoint costs the user money twice over: a
+          Digitap call we are billed for, and one of their paid orders spent.
+
+          The key must identify the ATTEMPT, not the request: a client that mints a
+          fresh one on every retry has bought nothing, since the whole point is that
+          a re-entered screen sends the same key the first entry did.
+        type: string
     type: object
   credit-report-service_internal_service.DigitapInitiateResponse:
     properties:
@@ -3500,6 +3511,11 @@ paths:
             $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
         "401":
           description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "402":
+          description: No unspent score-check purchase on the account — send the user
+            to the paywall
           schema:
             $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
         "422":

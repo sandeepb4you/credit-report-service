@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"math/big"
 	"net/http"
 	"sort"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"credit-report-service/internal/apperr"
+	"credit-report-service/internal/config"
 	"credit-report-service/internal/digitap"
 	"credit-report-service/internal/models"
 	"credit-report-service/internal/repository"
@@ -52,6 +54,17 @@ type CreditAnalyticsService struct {
 	client   *digitap.Client
 	repo     *repository.CreditAnalyticsRepo
 	accounts *repository.AccountRepo
+	// orders is the paywall. A bureau pull is a product the user buys, and this
+	// is what proves they did.
+	//
+	// Required, not one of the optional Set* dependencies below: those degrade to
+	// a less rich report when unwired, which is a visible loss. An unwired
+	// paywall degrades to free bureau calls billed to us, and nothing on screen
+	// would say so. A constructor argument cannot be forgotten.
+	orders *repository.OrderRepo
+	// reuseWindow answers a pull with a recent successful report instead of
+	// calling Digitap. Zero disables it. See config.CreditAnalyticsConfig.
+	reuseWindow time.Duration
 	// loanSwitch is optional: when set, insights responses are enriched with
 	// balance-transfer opportunities. Injected after construction (the two
 	// services share the analytics repo) via SetLoanSwitch.
@@ -87,8 +100,13 @@ func NewCreditAnalyticsService(
 	client *digitap.Client,
 	repo *repository.CreditAnalyticsRepo,
 	accounts *repository.AccountRepo,
+	orders *repository.OrderRepo,
+	cfg config.CreditAnalyticsConfig,
 ) *CreditAnalyticsService {
-	return &CreditAnalyticsService{client: client, repo: repo, accounts: accounts}
+	return &CreditAnalyticsService{
+		client: client, repo: repo, accounts: accounts, orders: orders,
+		reuseWindow: cfg.ReuseWindow,
+	}
 }
 
 // SetLoanSwitch wires the loan-switch service used to enrich insights with
@@ -114,10 +132,20 @@ func (s *CreditAnalyticsService) SetPDFUploader(u *ReportUploader) {
 }
 
 // CreditAnalyticsInput is the validated payload for a credit-analytics request.
-// With the payload now built server-side, device_ip is the only field the
-// caller contributes.
+// The Digitap payload is built server-side; these two are all the caller
+// contributes.
 type CreditAnalyticsInput struct {
 	DeviceIP string `json:"device_ip"`
+
+	// IdempotencyKey makes the pull safe to repeat. Optional — omitting it keeps
+	// the old behaviour where every call is a new billed request — but the app
+	// always sends one, because this endpoint costs the user money twice over: a
+	// Digitap call we are billed for, and one of their paid orders spent.
+	//
+	// The key must identify the ATTEMPT, not the request: a client that mints a
+	// fresh one on every retry has bought nothing, since the whole point is that
+	// a re-entered screen sends the same key the first entry did.
+	IdempotencyKey string `json:"idempotency_key"`
 }
 
 // ReportSummary is the trimmed list-item shape for the reports endpoint: the
@@ -431,8 +459,24 @@ func (in *CreditAnalyticsInput) validate() map[string]string {
 	if strings.TrimSpace(in.DeviceIP) == "" {
 		d["device_ip"] = "is required"
 	}
+	// Optional, but bounded when present: it is stored in a VARCHAR(64) and
+	// compared as an equality key, so anything longer is a 500 from the driver
+	// rather than the 400 the caller deserves. The charset keeps it to something
+	// safe to log and to put in an index.
+	if key := strings.TrimSpace(in.IdempotencyKey); key != "" {
+		if len(key) > maxIdempotencyKeyLen {
+			d["idempotency_key"] = fmt.Sprintf("must be at most %d characters", maxIdempotencyKeyLen)
+		} else if !idempotencyKeyFormat.MatchString(key) {
+			d["idempotency_key"] = "may contain only letters, digits, '-' and '_'"
+		}
+	}
 	return d
 }
+
+// maxIdempotencyKeyLen matches the column width; see migration 0016.
+const maxIdempotencyKeyLen = 64
+
+var idempotencyKeyFormat = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 // digitapPayload is the request body posted to /credit_analytics/request. Field
 // names match the upstream JSON contract exactly. The integer flags use plain
@@ -465,24 +509,95 @@ type digitapPayload struct {
 //   - 422: tradeline rejection   -> apperr.PanFailure       (422)
 //   - anything else              -> apperr.BadGateway       (502)
 //
-// An unreachable provider is apperr.BadGateway too. Only 400 and 422 reach the
-// caller as 4xx, because only those two can be the caller's own doing.
+// An unreachable provider is apperr.BadGateway too. Only 400, 402 and 422 reach
+// the caller as 4xx, because only those three can be the caller's own doing.
 //
 // A row is persisted before any error is returned, so failed upstream calls are
 // still queryable in the DB.
-func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, in CreditAnalyticsInput) (*models.CreditAnalyticsRequest, error) {
+//
+// The pull is a paid product, gated on an unspent PAID order (402 otherwise).
+// The order of the three gates is load-bearing:
+//
+//  1. profile + PAN (buildPayload) — a user whose PAN is unverified must be told
+//     that, not sent to a paywall to buy a pull that would fail the moment they
+//     came back from paying for it.
+//  2. entitlement — checked before the vendor call, so an unpaid caller costs us
+//     nothing. A caller with nothing to spend is answered with a recent report
+//     when one is inside the reuse window (see reusableReport), and 402 only
+//     when there is nothing to hand back. A caller WITH a purchase always gets a
+//     live pull: that is what they bought.
+//  3. the pull itself — and the entitlement is SPENT only once the vendor
+//     actually delivered. A pull that fails leaves the purchase unspent and
+//     retryable, because the user paid for a report and did not get one; making
+//     them buy a second one for our vendor's outage is indefensible.
+// The bool reports that the row is a REUSED earlier report rather than a pull
+// made for this request, so the caller can say so instead of implying it just
+// came from the bureau. An idempotency replay does NOT set it: that is the same
+// attempt arriving twice, and describing it as an older report would be wrong.
+func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, in CreditAnalyticsInput) (*models.CreditAnalyticsRequest, bool, error) {
 	if details := in.validate(); len(details) > 0 {
-		return nil, apperr.NewValidationWith("invalid credit-analytics request", details)
+		return nil, false, apperr.NewValidationWith("invalid credit-analytics request", details)
+	}
+
+	// Replay check, before anything else. A repeated key must answer with what
+	// the first call produced, so it is settled ahead of the profile, PAN and
+	// entitlement gates: re-running those could refuse a replay of a request that
+	// already succeeded, purely because the account moved on since.
+	key := strings.TrimSpace(in.IdempotencyKey)
+	if key != "" {
+		switch prior, lerr := s.repo.FindByAccountAndKey(ctx, accountID, key); {
+		case lerr == nil:
+			slog.Info("credit-analytics replayed: returning the first call's report",
+				"account_id", accountID, "report_id", prior.ID, "idempotency_key", key)
+			return prior, false, nil
+		case errors.Is(lerr, repository.ErrNotFound):
+			// First use of this key — carry on.
+		default:
+			// Fail closed, for the same reason the entitlement read does: proceeding
+			// blind risks the exact double charge the key exists to prevent.
+			slog.Error("credit-analytics idempotency lookup failed",
+				"account_id", accountID, "error", lerr)
+			return nil, false, apperr.NewServiceUnavailable(
+				"We couldn't check your request. Please try again in a moment.")
+		}
 	}
 
 	payload, err := s.buildPayload(ctx, accountID, in.DeviceIP)
 	if err != nil {
-		return nil, err
+		return nil, false, err
+	}
+
+	// The paywall. Until this existed the endpoint was authenticated but free:
+	// the gate lived only in the app, so a token holder calling the API directly
+	// got bureau reports we pay for and never bought.
+	entitled, err := s.orders.HasUnspentEntitlement(ctx, accountID, models.ProductCreditAnalysis)
+	if err != nil {
+		// Fail closed. An entitlement we cannot read is not an entitlement we may
+		// assume: the failure mode of guessing "yes" is unbounded free bureau
+		// calls, and of guessing "no" is one retry for a user who really did pay.
+		slog.Error("credit-analytics entitlement check failed",
+			"account_id", accountID, "error", err)
+		return nil, false, apperr.NewServiceUnavailable(
+			"We couldn't confirm your purchase. Please try again in a moment.")
+	}
+	if !entitled {
+		// Nothing bought to spend — so rather than refuse outright, hand back a
+		// recent report if one is close enough to be the same answer. This gives
+		// nothing away: GET /credit-analytics/latest-insights already returns
+		// that identical report to any authenticated account for free. What the
+		// paywall sells is a FRESH pull, and this path performs none.
+		if recent := s.reusableReport(ctx, accountID); recent != nil {
+			return recent, true, nil
+		}
+		slog.Info("credit-analytics refused: no unspent purchase, no reusable report",
+			"account_id", accountID)
+		return nil, false, apperr.NewPaymentRequired(
+			"Your score check needs to be purchased before we can fetch your report.")
 	}
 
 	reqBody, err := json.Marshal(payload)
 	if err != nil {
-		return nil, fmt.Errorf("marshal credit-analytics request: %w", err)
+		return nil, false, fmt.Errorf("marshal credit-analytics request: %w", err)
 	}
 
 	// Time the upstream call so latency is observable independently of the
@@ -492,7 +607,7 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 	upstreamLatency := time.Since(upstart).Milliseconds()
 	if err != nil {
 		// Network/transport failure — persist what we have, then surface the error.
-		row := s.buildRow(accountID, payload, reqBody)
+		row := s.buildRow(accountID, payload, reqBody, key)
 		_ = s.persist(ctx, row)
 		slog.Error("credit-analytics upstream unreachable",
 			"account_id", accountID,
@@ -510,11 +625,11 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 		// The raw error stays in the log above and out of the response: a Go
 		// transport error can carry internal hostnames, IPs and ports, and it
 		// means nothing to the person reading it on a phone.
-		return nil, apperr.NewBadGateway(
+		return nil, false, apperr.NewBadGateway(
 			"Credit report service is unreachable right now. Please try again in a few minutes.")
 	}
 
-	row := s.buildRow(accountID, payload, reqBody)
+	row := s.buildRow(accountID, payload, reqBody, key)
 	if env != nil {
 		code := env.HTTPResponseCode
 		row.HTTPStatus = &code
@@ -531,7 +646,22 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 		}
 	}
 	if persistErr := s.persist(ctx, row); persistErr != nil {
-		return nil, persistErr
+		// A concurrent call claimed this key between our lookup above and this
+		// insert. Both reached Digitap — the vendor call cannot be un-made — but
+		// only one row exists, so only one entitlement is spent and the caller
+		// gets one consistent answer. Closing the window properly means claiming
+		// the key before the upstream call, which costs an extra write on every
+		// request to defend against a race the app cannot currently produce
+		// (its pull is sequential). Logged at Warn so a change in that shape
+		// shows up rather than staying invisible.
+		if key != "" && errors.Is(persistErr, repository.ErrConflict) {
+			if prior, lerr := s.repo.FindByAccountAndKey(ctx, accountID, key); lerr == nil {
+				slog.Warn("credit-analytics idempotency race: duplicate upstream call, one row kept",
+					"account_id", accountID, "report_id", prior.ID, "idempotency_key", key)
+				return prior, false, nil
+			}
+		}
+		return nil, false, persistErr
 	}
 
 	// The row is already persisted, so from here on the only question is what
@@ -545,6 +675,24 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 			"result_code", env.ResultCode,
 			"latency_ms", upstreamLatency,
 		)
+		// The vendor delivered, so the purchase is now spent — and only now.
+		// Best-effort by design: the report exists and the user is entitled to
+		// see it, so a bookkeeping failure here must not turn a delivered report
+		// into an error. It leaves the entitlement unspent, which errs toward the
+		// user (they could run one more pull) and is loud in the log.
+		if spent, serr := s.orders.SpendEntitlement(
+			ctx, accountID, models.ProductCreditAnalysis, row.ID,
+		); serr != nil {
+			slog.Error("credit-analytics entitlement not spent: update failed",
+				"account_id", accountID, "report_id", row.ID, "error", serr)
+		} else if !spent {
+			// Nothing was claimable although the gate above passed. A concurrent
+			// pull took the last order between the two statements — rare, and
+			// worth a line, because the alternative reading is a hole in the gate.
+			slog.Warn("credit-analytics entitlement not spent: none left to claim",
+				"account_id", accountID, "report_id", row.ID)
+		}
+
 		// report_type 3 carries result_pdf: a ~1-hour URL for the generated PDF.
 		// Hand it to the relay (download → encrypt → S3 → write-back) if wired.
 		// Best-effort: a missing uploader, missing field, or full queue just
@@ -554,7 +702,7 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 				s.pdfUploader.Submit(accountID, row.ID, pdfURL)
 			}
 		}
-		return row, nil
+		return row, false, nil
 	}
 
 	// env is non-nil on every path where client.Request returns a nil error,
@@ -571,7 +719,7 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 		"upstream_status", httpStatus,
 		"message", upstreamMsg,
 	)
-	return row, fail.err
+	return row, false, fail.err
 }
 
 // upstreamFailure is how one non-2xx Digitap status should be reported: the
@@ -773,9 +921,14 @@ func (s *CreditAnalyticsService) buildPayload(ctx context.Context, accountID int
 
 // buildRow assembles a model row from the assembled payload (before the upstream
 // response fields are filled in by the caller).
-func (s *CreditAnalyticsService) buildRow(accountID int64, p *digitapPayload, reqBody []byte) *models.CreditAnalyticsRequest {
+func (s *CreditAnalyticsService) buildRow(accountID int64, p *digitapPayload, reqBody []byte, key string) *models.CreditAnalyticsRequest {
+	var idem *string
+	if key != "" {
+		idem = &key
+	}
 	return &models.CreditAnalyticsRequest{
-		AccountID:    &accountID,
+		AccountID:      &accountID,
+		IdempotencyKey: idem,
 		ClientRefNum: p.ClientRefNum,
 		MobileNo:     p.MobileNo,
 		RequestBody:  reqBody,
@@ -787,6 +940,45 @@ func (s *CreditAnalyticsService) persist(ctx context.Context, row *models.Credit
 		return fmt.Errorf("persist credit-analytics request: %w", err)
 	}
 	return nil
+}
+
+// reusableReport returns the account's most recent successful report when it is
+// young enough to stand in for a fresh pull, or nil.
+//
+// Consulted ONLY when the account holds no unspent purchase. Someone who has
+// bought a check has bought a live bureau call and gets one — handing them a
+// report they already had would take their money for nothing, and would leave
+// the purchase unspent, so the app would go on offering them the same check and
+// returning the same stale report. Reuse exists to avoid billing the VENDOR for
+// an answer we already hold, not to avoid giving a paying user what they paid
+// for.
+//
+// A reused report never spends an entitlement — on this path there is none to
+// spend, by construction.
+//
+// Fails OPEN: a lookup error returns nil, so the caller carries on to the live
+// pull. Unlike the entitlement read, which guards money going out and must
+// refuse when unsure, this one only decides whether work can be skipped.
+func (s *CreditAnalyticsService) reusableReport(ctx context.Context, accountID int64) *models.CreditAnalyticsRequest {
+	if s.reuseWindow <= 0 {
+		return nil
+	}
+	recent, err := s.repo.FindLatestByAccount(ctx, accountID)
+	if err != nil {
+		if !errors.Is(err, repository.ErrNotFound) {
+			slog.Warn("credit-analytics reuse lookup failed; treating as no reusable report",
+				"account_id", accountID, "error", err)
+		}
+		return nil
+	}
+	age := time.Since(recent.CreatedAt)
+	if age >= s.reuseWindow {
+		return nil
+	}
+	slog.Info("credit-analytics reused: recent report served in place of a purchase",
+		"account_id", accountID, "report_id", recent.ID,
+		"age", age.Round(time.Minute).String(), "window", s.reuseWindow.String())
+	return recent
 }
 
 // ListReports returns one page of the caller's reports, newest first. Each
