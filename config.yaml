@@ -137,13 +137,18 @@ credit-analytics:
   # no latency.
   #
   # Reuse is checked AFTER the paywall, never before: without a purchase there is
-  # no refresh at all, stored or live. It is a saving on a check someone bought,
-  # not a way to obtain one for free.
+  # no refresh at all. It is a saving on our vendor bill, not a discount.
   #
-  # A reused report DOES spend the purchase. The check buys a current report and a
-  # report inside this window is one, so the account is not left holding a credit
-  # it can do nothing with for a week. The app says which it got on the processing
-  # screen rather than leaving the user to wonder why their score did not move.
+  # The purchase IS spent on a reused report. A credit file barely moves inside
+  # this window, so the stored report is what a live call would return — what a
+  # check buys is a current report, not a guaranteed round-trip to the bureau.
+  #
+  # The consequence to keep in view: paying twice inside the window returns the
+  # same report twice and spends both. That is accepted, since the data genuinely
+  # has not changed, but nothing on the server side stops a user buying something
+  # they already have. Prevent that before the payment if it matters.
+  #
+  # Reuse is invisible to the user: the app runs the same flow either way.
   #
   # Set it to 0 when testing the Digitap integration itself, or a paid caller
   # inside the window never reaches the provider and an upstream regression hides.

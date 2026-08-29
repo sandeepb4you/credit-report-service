@@ -522,9 +522,9 @@ type digitapPayload struct {
 //     that, not sent to a paywall to buy a pull that would fail the moment they
 //     came back from paying for it.
 //  2. entitlement — checked before the vendor call, so an unpaid caller costs us
-//     nothing and gets nothing: without a purchase there is no refresh at all,
-//     live or reused. Past it, a report inside the reuse window satisfies the
-//     purchase without a bureau call; otherwise the pull runs.
+//     nothing and gets nothing: without a purchase there is no refresh at all.
+//     Past it, a report inside the reuse window is served in place of the call
+//     and spends the purchase, because inside that window it is the same answer.
 //  3. the pull itself — and the entitlement is SPENT only once the vendor
 //     actually delivered. A pull that fails leaves the purchase unspent and
 //     retryable, because the user paid for a report and did not get one; making
@@ -569,7 +569,7 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 	// The paywall. Until this existed the endpoint was authenticated but free:
 	// the gate lived only in the app, so a token holder calling the API directly
 	// got bureau reports we pay for and never bought.
-	paidAt, err := s.orders.UnspentEntitlementPaidAt(ctx, accountID, models.ProductCreditAnalysis)
+	entitled, err := s.orders.HasUnspentEntitlement(ctx, accountID, models.ProductCreditAnalysis)
 	if err != nil {
 		// Fail closed. An entitlement we cannot read is not an entitlement we may
 		// assume: the failure mode of guessing "yes" is unbounded free bureau
@@ -579,17 +579,19 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 		return nil, false, apperr.NewServiceUnavailable(
 			"We couldn't confirm your purchase. Please try again in a moment.")
 	}
-	if paidAt == nil {
-		// No purchase, no refresh — not even a stored one. Reuse is a saving on
-		// a check the caller has bought, not a way to obtain one for free.
+	if !entitled {
+		// No purchase, no refresh. Reuse is a saving on a check someone bought,
+		// never a way to obtain one for free.
 		slog.Info("credit-analytics refused: no unspent purchase", "account_id", accountID)
 		return nil, false, apperr.NewPaymentRequired(
 			"Your score check needs to be purchased before we can fetch your report.")
 	}
 
-	// The caller has bought a check. If a report they already have can honestly
-	// satisfy it, spend it on that instead of calling the bureau.
-	if recent := s.reusableReport(ctx, accountID, *paidAt); recent != nil {
+	// The caller has bought a check. A bureau file barely moves inside the reuse
+	// window, so a report from within it IS the answer a live call would give —
+	// serve that and skip the vendor bill. The purchase is spent either way: what
+	// it buys is a current report, not a guaranteed API call.
+	if recent := s.reusableReport(ctx, accountID); recent != nil {
 		s.spendEntitlement(ctx, accountID, recent.ID)
 		return recent, true, nil
 	}
@@ -976,34 +978,27 @@ func (s *CreditAnalyticsService) spendEntitlement(ctx context.Context, accountID
 // reusableReport returns the account's most recent successful report when it is
 // young enough to stand in for a fresh pull, or nil.
 //
-// Consulted ONLY after the entitlement gate has passed. Reuse is a saving on a
-// check the caller has already bought, never a way to obtain one for free:
-// without a purchase there is no refresh at all, stored or live.
+// Consulted ONLY after the entitlement gate has passed: reuse is a saving on a
+// check the caller has bought, never a way to obtain one for free.
 //
-// Two conditions, and the second matters more than the first.
+// The premise is that a credit file barely moves inside this window, so the
+// stored report is what a live call would return. The purchase is therefore spent
+// on it: what a check buys is a current report, not a guaranteed round-trip to
+// the bureau. What the user is spared is the wait; what we are spared is the
+// vendor bill.
 //
-// The report must be younger than the reuse window — recent enough that a fresh
-// call would say the same thing.
+// The consequence to keep in view: paying twice inside the window returns the
+// same report twice, and spends both. That is accepted — the data genuinely has
+// not changed — but it means nothing on this path stops a user buying something
+// they already have. If that needs preventing, prevent it before the payment,
+// not here.
 //
-// And it must not predate the payment. paidAt is when the caller bought the check
-// this reuse would spend, and a report generated BEFORE that money changed hands
-// cannot be what the money bought. Without this check, buying a check moments
-// after a pull handed the buyer that same pull and consumed the purchase — and
-// because the stored report stayed inside the window, every further purchase was
-// eaten the same way, so the account could not obtain a fresh pull at any price
-// until the report aged out. Someone who pays after seeing a report is asking for
-// a newer one by definition, and gets a live call.
-//
-// A reused report DOES spend the purchase. Past both checks the report is
-// genuinely what the check bought — newer than the payment, and current — so the
-// account is not left holding a credit it can do nothing with. What the user is
-// spared is the wait; what we are spared is the vendor bill. Reuse is invisible
-// to them either way: the app runs the same flow whichever it got.
+// Reuse is invisible to the user: the app runs the same flow whichever it got.
 //
 // Fails OPEN: a lookup error returns nil, so the caller carries on to the live
 // pull. Unlike the entitlement read, which guards money going out and must
 // refuse when unsure, this one only decides whether work can be skipped.
-func (s *CreditAnalyticsService) reusableReport(ctx context.Context, accountID int64, paidAt time.Time) *models.CreditAnalyticsRequest {
+func (s *CreditAnalyticsService) reusableReport(ctx context.Context, accountID int64) *models.CreditAnalyticsRequest {
 	if s.reuseWindow <= 0 {
 		return nil
 	}
@@ -1013,12 +1008,6 @@ func (s *CreditAnalyticsService) reusableReport(ctx context.Context, accountID i
 			slog.Warn("credit-analytics reuse lookup failed; treating as no reusable report",
 				"account_id", accountID, "error", err)
 		}
-		return nil
-	}
-	if recent.CreatedAt.Before(paidAt) {
-		slog.Info("credit-analytics reuse skipped: report predates the purchase",
-			"account_id", accountID, "report_id", recent.ID,
-			"report_at", recent.CreatedAt, "paid_at", paidAt)
 		return nil
 	}
 	age := time.Since(recent.CreatedAt)
@@ -1032,7 +1021,7 @@ func (s *CreditAnalyticsService) reusableReport(ctx context.Context, accountID i
 		slog.Warn("credit-analytics reuse not counted",
 			"account_id", accountID, "report_id", recent.ID, "error", err)
 	}
-	slog.Info("credit-analytics reused: recent report served in place of a purchase",
+	slog.Info("credit-analytics reused: free refresh inside the window",
 		"account_id", accountID, "report_id", recent.ID,
 		"age", age.Round(time.Minute).String(), "window", s.reuseWindow.String())
 	return recent

@@ -147,39 +147,24 @@ func (r *OrderRepo) MarkOrderPaid(ctx context.Context, uid string, cfPaymentID, 
 
 // ---- entitlements ---------------------------------------------------------
 
-// UnspentEntitlementPaidAt returns when the account paid for the check that
-// SpendEntitlement would claim next, or nil when it holds none.
+// HasUnspentEntitlement reports whether the account holds a PAID order of
+// productCode that has not yet been spent on a delivered report.
 //
 // This is the read used to GATE an action, and it is deliberately separate from
 // SpendEntitlement, which claims one. Checking before doing the expensive,
 // billable work means a user with no entitlement is turned away without a vendor
 // call; claiming afterwards means a vendor failure cannot swallow their purchase.
-//
-// It returns the timestamp rather than a bool because "do they have one" is not
-// enough to decide whether a stored report may satisfy it. A report generated
-// BEFORE the money was paid cannot be what that money bought — see
-// reusableReport. Ordered to match SpendEntitlement exactly, so the order whose
-// paid_at is inspected here is the one that actually gets spent.
-//
-// A nil paid_at on a PAID row (which should not happen) comes back as nil and is
-// treated as no entitlement rather than as a timestamp we could compare against.
-func (r *OrderRepo) UnspentEntitlementPaidAt(ctx context.Context, accountID int64, productCode string) (*time.Time, error) {
-	var paidAt *time.Time
+func (r *OrderRepo) HasUnspentEntitlement(ctx context.Context, accountID int64, productCode string) (bool, error) {
+	var exists bool
 	err := r.pool.QueryRow(ctx,
-		`SELECT paid_at FROM orders
-		 WHERE account_id = $1
-		   AND product_code = $2
-		   AND status = $3
-		   AND consumed_at IS NULL
-		 ORDER BY paid_at, id
-		 LIMIT 1`, accountID, productCode, models.OrderPaid).Scan(&paidAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return paidAt, nil
+		`SELECT EXISTS (
+		     SELECT 1 FROM orders
+		     WHERE account_id = $1
+		       AND product_code = $2
+		       AND status = $3
+		       AND consumed_at IS NULL
+		 )`, accountID, productCode, models.OrderPaid).Scan(&exists)
+	return exists, err
 }
 
 // SpendEntitlement claims the account's oldest unspent PAID order of productCode
