@@ -33,6 +33,43 @@ func (r *OrderRepo) ListActiveProducts(ctx context.Context) ([]models.Product, e
 	return ps, err
 }
 
+// ListAllProducts returns every product, active or not, for the admin catalog.
+//
+// Separate from ListActiveProducts rather than a flag on it: the customer-facing
+// list must never be one boolean away from advertising a retired plan.
+func (r *OrderRepo) ListAllProducts(ctx context.Context) ([]models.Product, error) {
+	ps := []models.Product{}
+	err := pgxscan.Select(ctx, r.pool, &ps,
+		`SELECT `+productCols+` FROM products ORDER BY code`)
+	return ps, err
+}
+
+// UpdateProduct changes a plan's price and availability.
+//
+// Only these two fields, and only for a code that already exists: name and
+// description are customer-facing copy that belongs with the rest of the product
+// content, and creating a plan means adding a product_code that orders and
+// coupons can reference, which is a migration rather than a form.
+//
+// COALESCE so a caller can change one without restating the other, and without
+// the handler having to read-modify-write and race another admin.
+func (r *OrderRepo) UpdateProduct(
+	ctx context.Context, code string, amount *float64, active *bool,
+) (*models.Product, error) {
+	var p models.Product
+	err := pgxscan.Get(ctx, r.pool, &p,
+		`UPDATE products SET
+		     amount = COALESCE($2, amount),
+		     active = COALESCE($3, active),
+		     updated_at = now()
+		 WHERE code = $1
+		 RETURNING `+productCols, code, amount, active)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &p, classifyPgErr(err)
+}
+
 func (r *OrderRepo) FindProduct(ctx context.Context, code string) (*models.Product, error) {
 	var p models.Product
 	err := pgxscan.Get(ctx, r.pool, &p,

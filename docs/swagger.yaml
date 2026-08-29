@@ -1357,6 +1357,15 @@ definitions:
         example: ABCDE1234F
         type: string
     type: object
+  internal_handler.updatePlanReq:
+    properties:
+      active:
+        example: true
+        type: boolean
+      amount:
+        example: 299
+        type: number
+    type: object
   internal_handler.updateProfileReq:
     properties:
       dateOfBirth:
@@ -2117,6 +2126,73 @@ paths:
       summary: Update loan-switch settings (admin)
       tags:
       - loan-providers
+  /admin/plans:
+    get:
+      description: The admin view of the catalog. Unlike GET /products this returns
+        inactive plans too, so a retired one can be found and re-enabled.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/credit-report-service_internal_models.Product'
+            type: array
+        "403":
+          description: Requires plan:manage
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: List every plan, retired ones included
+      tags:
+      - admin
+  /admin/plans/{code}:
+    patch:
+      consumes:
+      - application/json
+      description: 'Updates the catalog price and/or the active flag for one plan.
+        Omitted fields are left alone. Deactivating removes the plan from GET /products
+        AND makes POST /orders refuse it, so it is a real retirement rather than a
+        hide. Price changes are never retroactive: existing orders keep the amount
+        they were created with.'
+      parameters:
+      - description: Plan code, e.g. CREDIT_ANALYSIS
+        in: path
+        name: code
+        required: true
+        type: string
+      - description: Fields to change
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.updatePlanReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.Product'
+        "400":
+          description: Nothing to change, or a negative amount
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Requires plan:manage
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: No such plan
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Change a plan's price or availability
+      tags:
+      - admin
   /auth/email/send:
     post:
       consumes:
@@ -3502,7 +3578,8 @@ paths:
       - application/json
       responses:
         "201":
-          description: Created
+          description: 'Response header X-Report-Reused: true means an existing recent
+            report was returned instead of a new bureau pull'
           schema:
             $ref: '#/definitions/credit-report-service_internal_service.ReportInsights'
         "400":

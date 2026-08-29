@@ -45,6 +45,64 @@ func (h *OrderHandler) ListProducts(c *fiber.Ctx) error {
 	return c.JSON(products)
 }
 
+// ---- GET /api/admin/plans -------------------------------------------------
+
+// AdminListPlans godoc
+//
+// @Summary      List every plan, retired ones included
+// @Description  The admin view of the catalog. Unlike GET /products this returns inactive plans too, so a retired one can be found and re-enabled.
+// @Tags         admin
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {array}   models.Product
+// @Failure      403  {object}  apperr.ErrorBody  "Requires plan:manage"
+// @Router       /admin/plans [get]
+func (h *OrderHandler) AdminListPlans(c *fiber.Ctx) error {
+	plans, err := h.svc.ListAllPlans(c.Context())
+	if err != nil {
+		return err
+	}
+	return c.JSON(plans)
+}
+
+// ---- PATCH /api/admin/plans/{code} ----------------------------------------
+
+// updatePlanReq carries only what an admin may change. Both fields are
+// POINTERS so "not supplied" is distinguishable from "set to zero/false" —
+// with plain values, omitting active would silently retire the plan and
+// omitting amount would silently make it free.
+type updatePlanReq struct {
+	Amount *float64 `json:"amount" example:"299"`
+	Active *bool    `json:"active" example:"true"`
+}
+
+// AdminUpdatePlan godoc
+//
+// @Summary      Change a plan's price or availability
+// @Description  Updates the catalog price and/or the active flag for one plan. Omitted fields are left alone. Deactivating removes the plan from GET /products AND makes POST /orders refuse it, so it is a real retirement rather than a hide. Price changes are never retroactive: existing orders keep the amount they were created with.
+// @Tags         admin
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        code     path      string         true  "Plan code, e.g. CREDIT_ANALYSIS"
+// @Param        request  body      updatePlanReq  true  "Fields to change"
+// @Success      200      {object}  models.Product
+// @Failure      400      {object}  apperr.ErrorBody  "Nothing to change, or a negative amount"
+// @Failure      403      {object}  apperr.ErrorBody  "Requires plan:manage"
+// @Failure      404      {object}  apperr.ErrorBody  "No such plan"
+// @Router       /admin/plans/{code} [patch]
+func (h *OrderHandler) AdminUpdatePlan(c *fiber.Ctx) error {
+	var req updatePlanReq
+	if err := c.BodyParser(&req); err != nil {
+		return apperr.NewValidation("invalid JSON body")
+	}
+	plan, err := h.svc.UpdatePlan(c.Context(), c.Params("code"), req.Amount, req.Active)
+	if err != nil {
+		return err
+	}
+	return c.JSON(plan)
+}
+
 // ---- POST /api/orders -----------------------------------------------------
 
 type createOrderReq struct {

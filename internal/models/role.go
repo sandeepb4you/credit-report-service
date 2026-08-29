@@ -41,6 +41,7 @@ const (
 	PermCouponAdmin        = "coupon:admin"         // see and revoke anyone's coupons
 	PermLoanProviderManage = "loan-provider:manage" // curate loan providers + switch settings
 	PermBankOfferingManage = "bank-offering:manage" // curate score-builder bank offerings
+	PermPlanManage         = "plan:manage"          // price and retire the purchasable plans
 )
 
 // rolePerms lists the permissions each role adds on top of the role beneath
@@ -60,6 +61,7 @@ var rolePerms = map[string][]string{
 		PermCouponAdmin,
 		PermLoanProviderManage,
 		PermBankOfferingManage,
+		PermPlanManage,
 	},
 }
 

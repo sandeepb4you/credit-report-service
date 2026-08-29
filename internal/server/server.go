@@ -244,6 +244,13 @@ func New(
 	bo.Put("/:id<int>", scoreBuilder.UpdateOffering)
 	bo.Delete("/:id<int>", scoreBuilder.DeleteOffering)
 
+	// Plan pricing and retirement, gated on 'plan:manage'. PATCH rather than PUT:
+	// an admin changing a price must not have to restate the active flag, and
+	// vice versa — see updatePlanReq for why those fields are pointers.
+	pl := api.Group("/admin/plans", middleware.RequirePermission(tokens, epochs, models.PermPlanManage))
+	pl.Get("/", orders.AdminListPlans)
+	pl.Patch("/:code", orders.AdminUpdatePlan)
+
 	// ---- Admin (permission-gated) ----------------------------------------
 	//
 	// Each route declares the capability it needs rather than a role name, so

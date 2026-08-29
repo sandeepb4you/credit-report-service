@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -80,6 +82,52 @@ func (s *OrderService) ListProducts(ctx context.Context) ([]models.Product, erro
 // only the code, never an amount — and the redemption is committed in the same
 // transaction as the order, so a coupon can never be consumed without an order
 // to show for it.
+// ListAllPlans returns the whole catalog, retired plans included, for admin.
+func (s *OrderService) ListAllPlans(ctx context.Context) ([]models.Product, error) {
+	return s.orders.ListAllProducts(ctx)
+}
+
+// UpdatePlan changes a plan's price or availability. Both fields are optional;
+// nil leaves the stored value alone.
+//
+// Deactivating is the supported way to retire a plan, and it is a real removal
+// rather than a hide: ListActiveProducts stops advertising it AND CreateOrder
+// refuses it, so a client holding the code cannot buy it either.
+//
+// A price change is deliberately NOT retroactive. Existing orders keep the
+// amount they were created with — orders snapshot their own price — so this can
+// never alter what someone has already been charged or is midway through paying.
+func (s *OrderService) UpdatePlan(
+	ctx context.Context, code string, amount *float64, active *bool,
+) (*models.Product, error) {
+	code = strings.ToUpper(strings.TrimSpace(code))
+	if code == "" {
+		return nil, apperr.NewValidationWith("Validation failed",
+			map[string]string{"code": "code is required"})
+	}
+	if amount == nil && active == nil {
+		return nil, apperr.NewValidationWith("Validation failed",
+			map[string]string{"amount": "provide amount, active, or both"})
+	}
+	if amount != nil {
+		// A negative price would be a refund the gateway cannot express, and NaN
+		// or Inf would reach the database as a value no currency column can hold.
+		if math.IsNaN(*amount) || math.IsInf(*amount, 0) || *amount < 0 {
+			return nil, apperr.NewValidationWith("Validation failed",
+				map[string]string{"amount": "must be a non-negative number"})
+		}
+	}
+	p, err := s.orders.UpdateProduct(ctx, code, amount, active)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, apperr.NewNotFound("Plan not found")
+	}
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("plan updated", "code", p.Code, "amount", p.Amount, "active", p.Active)
+	return p, nil
+}
+
 func (s *OrderService) CreateOrder(
 	ctx context.Context, accountID int64, productCode, couponCode string,
 ) (*PurchaseResult, error) {
