@@ -1021,7 +1021,7 @@ func (s *CreditAnalyticsService) reusableReport(ctx context.Context, accountID i
 		slog.Warn("credit-analytics reuse not counted",
 			"account_id", accountID, "report_id", recent.ID, "error", err)
 	}
-	slog.Info("credit-analytics reused: free refresh inside the window",
+	slog.Info("credit-analytics reused: paid check served from a recent report",
 		"account_id", accountID, "report_id", recent.ID,
 		"age", age.Round(time.Minute).String(), "window", s.reuseWindow.String())
 	return recent
