@@ -242,6 +242,17 @@ func buildApp(cfg *config.Config, pool *pgxpool.Pool) *fiber.App {
 		false, // demo mode off: the stub is the seam, not an auto-verify shortcut
 	)
 
+	// Credit analytics is wired because the app's Home screen depends on how this
+	// endpoint answers for a report that carries no score — see the no-score test.
+	// The Digitap client is the offline stub; nothing here calls upstream.
+	analyticsSvc := service.NewCreditAnalyticsService(
+		digitap.New(digitap.Config{}),
+		repository.NewCreditAnalyticsRepo(pool),
+		accountRepo,
+		orderRepo,
+		cfg.CreditAnalytics,
+	)
+
 	referralH := handler.NewAdminReferralHandler(
 		service.NewReferralService(repository.NewReferralRepo(pool), accountRepo))
 
@@ -249,7 +260,7 @@ func buildApp(cfg *config.Config, pool *pgxpool.Pool) *fiber.App {
 		cfg,
 		handler.NewHealthHandler(),
 		handler.NewAuthHandler(authSvc, sessionSvc, cfg.Auth.CookieSecure),
-		nil, // analytics
+		handler.NewCreditAnalyticsHandler(analyticsSvc),
 		handler.NewKycHandler(kycSvc),
 		nil, // orders
 		handler.NewCouponHandler(couponSvc),
@@ -520,4 +531,56 @@ func (h *harness) referralReportBy(token, identifier string) map[string]any {
 		h.t.Fatalf("referral report by %q: %d %s", identifier, res.Status, res.Raw)
 	}
 	return res.Body
+}
+
+// insertNoRecordReport stores the report a bureau pull writes when Digitap
+// answers result 102, "no record found": a real row, a real payload, and no
+// SCORE block at all. Written directly because reproducing it through the pull
+// would mean driving the upstream client to return nothing, which is the one
+// thing the offline stub does not do — it always synthesizes a scored report.
+func (h *harness) insertNoRecordReport(accountID int64) int64 {
+	h.t.Helper()
+
+	const body = `{"result_json":{"INProfileResponse":{
+		"Header":{"SystemCode":"0","ReportDate":"20260830","ReportTime":"101500"},
+		"UserMessage":{"UserMessageText":"No record found"},
+		"CAIS_Account":{"CAIS_Account_DETAILS":[]},
+		"TotalCAPS_Summary":{"TotalCAPSLast180Days":"0","TotalCAPSLast90Days":"0",
+		                     "TotalCAPSLast30Days":"0","TotalCAPSLast7Days":"0"}}}}`
+
+	return h.insertReport(accountID, body, nil, 102, "no record found")
+}
+
+// insertScoredReport stores an ordinary successful pull carrying a bureau score.
+func (h *harness) insertScoredReport(accountID int64, score int) int64 {
+	h.t.Helper()
+
+	body := `{"result_json":{"INProfileResponse":{
+		"Header":{"SystemCode":"0","ReportDate":"20260830","ReportTime":"101500"},
+		"CAIS_Account":{"CAIS_Account_DETAILS":[]},
+		"TotalCAPS_Summary":{"TotalCAPSLast180Days":"0","TotalCAPSLast90Days":"0",
+		                     "TotalCAPSLast30Days":"0","TotalCAPSLast7Days":"0"},
+		"SCORE":{"BureauScore":"` + strconv.Itoa(score) + `","BureauScoreConfidLevel":"H"}}}}`
+
+	return h.insertReport(accountID, body, &score, 101, "success")
+}
+
+func (h *harness) insertReport(
+	accountID int64, body string, score *int, resultCode int, message string,
+) int64 {
+	h.t.Helper()
+
+	var id int64
+	err := h.pool.QueryRow(h.baseCtx,
+		`INSERT INTO credit_analytics_requests
+		     (account_id, client_ref_num, mobile_no, request_id, result_code,
+		      http_status, message, request_body, response_body, credit_score)
+		 VALUES ($1, 'CA-TEST', 'XXXXXX0000', 'test-req', $2, 200, $3,
+		         '{}'::jsonb, $4::jsonb, $5)
+		 RETURNING id`,
+		accountID, resultCode, message, body, score).Scan(&id)
+	if err != nil {
+		h.t.Fatalf("insert report for account %d: %v", accountID, err)
+	}
+	return id
 }
