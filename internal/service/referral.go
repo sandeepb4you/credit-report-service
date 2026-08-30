@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"time"
 
 	"credit-report-service/internal/apperr"
@@ -30,10 +32,14 @@ const (
 // ReferralService assembles the admin referral report.
 type ReferralService struct {
 	referrals *repository.ReferralRepo
+	// accounts resolves the "show me this person's referrals" lookup. Narrow on
+	// purpose: this service reads the referral graph and must not be able to
+	// change an account.
+	accounts accountFinder
 }
 
-func NewReferralService(referrals *repository.ReferralRepo) *ReferralService {
-	return &ReferralService{referrals: referrals}
+func NewReferralService(referrals *repository.ReferralRepo, accounts accountFinder) *ReferralService {
+	return &ReferralService{referrals: referrals, accounts: accounts}
 }
 
 // ReferralQuery is a parsed, already-validated request for the report.
@@ -47,6 +53,12 @@ type ReferralQuery struct {
 	// does not narrow TotalReferred or the leaderboard.
 	ReferrerID *int64
 
+	// Identifier is a phone number or email address naming that same referrer,
+	// for callers who have the detail an operator actually holds rather than an
+	// account id. Resolved to a ReferrerID; ignored when ReferrerID is already
+	// set, so a screen that has both does not have to decide which wins.
+	Identifier string
+
 	Limit  int
 	Offset int
 }
@@ -57,6 +69,19 @@ func (s *ReferralService) Report(ctx context.Context, q ReferralQuery) (*models.
 	from, to, err := resolveReferralWindow(q.From, q.To)
 	if err != nil {
 		return nil, err
+	}
+
+	// An identifier that names nobody is a 404, kept distinct from an account
+	// that simply referred nobody. Collapsing the two would answer a mistyped
+	// number with a confident "no referrals", which is the wrong answer to a
+	// question that was never asked.
+	referrerID := q.ReferrerID
+	if referrerID == nil && strings.TrimSpace(q.Identifier) != "" {
+		acc, err := findAccountByIdentifier(ctx, s.accounts, q.Identifier)
+		if err != nil {
+			return nil, err
+		}
+		referrerID = &acc.ID
 	}
 
 	limit := q.Limit
@@ -84,18 +109,31 @@ func (s *ReferralService) Report(ctx context.Context, q ReferralQuery) (*models.
 	if err != nil {
 		return nil, err
 	}
-	items, filtered, err := s.referrals.ListReferred(ctx, from, end, q.ReferrerID, limit, offset)
+	items, filtered, err := s.referrals.ListReferred(ctx, from, end, referrerID, limit, offset)
 	if err != nil {
 		return nil, err
 	}
 
-	return &models.ReferralReport{
+	report := &models.ReferralReport{
 		From:          from.Format(referralDateLayout),
 		To:            to.Format(referralDateLayout),
 		TotalReferred: total,
 		Referrers:     referrers,
 		Referred:      models.ReferredPage{Items: items, Total: filtered},
-	}, nil
+	}
+
+	// Name who the list was narrowed to. Read separately rather than picked out
+	// of the leaderboard, because the whole point of the lookup is that the
+	// person may not be on it.
+	if referrerID != nil {
+		who, err := s.referrals.ReferrerSummaryFor(ctx, *referrerID, from, end)
+		if err != nil && !errors.Is(err, repository.ErrNotFound) {
+			return nil, err
+		}
+		report.Referrer = who
+	}
+
+	return report, nil
 }
 
 // resolveReferralWindow fills in whichever end of the range the caller left

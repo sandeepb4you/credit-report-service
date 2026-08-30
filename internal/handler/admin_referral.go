@@ -28,17 +28,19 @@ func NewAdminReferralHandler(svc *service.ReferralService) *AdminReferralHandler
 // Report godoc
 //
 // @Summary      Referral report for a date range (admin only)
-// @Description  Who referred whom, over a window of whole UTC days. Returns the period total, a leaderboard of referrers (busiest first, capped at 100) and a page of the individual referred accounts. Omitting both dates gives the last 30 days; naming only one fills the other in. `referrerId` narrows the account list to one referrer without moving the headline total or the leaderboard, so drilling in never hides the rest of the period. Rows carry the referred user's phone and email, which is why this needs the 'referral:view' permission.
+// @Description  Who referred whom, over a window of whole UTC days. Narrow to one referrer by `referrerId`, or by `identifier` (their phone or email) when that is what you have — the response then carries a `referrer` block naming them, which matters because an account that referred nobody in the window is absent from the leaderboard and could not otherwise be labelled. Returns the period total, a leaderboard of referrers (busiest first, capped at 100) and a page of the individual referred accounts. Omitting both dates gives the last 30 days; naming only one fills the other in. `referrerId` narrows the account list to one referrer without moving the headline total or the leaderboard, so drilling in never hides the rest of the period. Rows carry the referred user's phone and email, which is why this needs the 'referral:view' permission.
 // @Tags         admin
 // @Produce      json
 // @Security     BearerAuth
 // @Param        from        query     string  false  "First day, inclusive (YYYY-MM-DD). Defaults to 30 days before `to`."
 // @Param        to          query     string  false  "Last day, inclusive (YYYY-MM-DD). Defaults to today (UTC)."
 // @Param        referrerId  query     int     false  "Show only this referrer's signups"
+// @Param        identifier  query     string  false  "Phone or email naming that referrer, when you have the contact detail rather than the id. Ignored if referrerId is set; 404 if it names no account."
 // @Param        limit       query     int     false  "Max referred accounts to return (default 50, max 200)"
 // @Param        offset      query     int     false  "Referred accounts to skip (default 0)"
 // @Success      200  {object}  ReferralReportResponse
 // @Failure      400  {object}  apperr.ErrorBody  "Unparseable date, inverted range, or a range over a year"
+// @Failure      404  {object}  apperr.ErrorBody  "identifier names no account"
 // @Failure      401  {object}  apperr.ErrorBody  "Not authenticated"
 // @Failure      403  {object}  apperr.ErrorBody  "Missing the 'referral:view' permission"
 // @Router       /admin/referrals [get]
@@ -55,6 +57,7 @@ func (h *AdminReferralHandler) Report(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	identifier := strings.TrimSpace(c.Query("identifier"))
 	limit, err := queryInt(c, "limit")
 	if err != nil {
 		return err
@@ -68,6 +71,7 @@ func (h *AdminReferralHandler) Report(c *fiber.Ctx) error {
 		From:       from,
 		To:         to,
 		ReferrerID: referrerID,
+		Identifier: identifier,
 		Limit:      limit,
 		Offset:     offset,
 	})

@@ -373,3 +373,144 @@ func TestReferralReport_IsRefusedWithoutASession(t *testing.T) {
 		t.Errorf("anonymous: %d %s, want 401", res.Status, res.Raw)
 	}
 }
+
+// ---- looking a referrer up by phone or email ------------------------------
+
+// The leaderboard is built from the referred accounts, so it can only show
+// people who referred someone. "Did this person refer anyone?" is a question
+// whose answer is usually no, and the lookup exists so that answer can be
+// stated rather than left as an empty screen.
+
+func TestReferralReport_LooksUpAReferrerByPhone(t *testing.T) {
+	h := newHarness(t)
+
+	referrerToken, referrerID := h.signInByPhone(referrerPhone, "")
+	code := h.referralCodeOf(referrerToken)
+	h.signInByPhone(joinerPhone, code)
+
+	admin := h.makeAdmin(adminPhone)
+	report := h.referralReportBy(admin, referrerPhone)
+
+	who, _ := report["referrer"].(map[string]any)
+	if who == nil {
+		t.Fatalf("no referrer block naming who the list was narrowed to: %v", report)
+	}
+	if id := int64(intOf(who["accountId"])); id != referrerID {
+		t.Errorf("resolved to account %d, want %d", id, referrerID)
+	}
+	if got, _ := who["referralCode"].(string); got != code {
+		t.Errorf("referrer code = %q, want %q", got, code)
+	}
+
+	page, _ := report["referred"].(map[string]any)
+	if n := intOf(page["total"]); n != 1 {
+		t.Errorf("referred.total = %d, want 1", n)
+	}
+}
+
+func TestReferralReport_LooksUpAReferrerByEmail(t *testing.T) {
+	h := newHarness(t)
+
+	// An email signup, so the account has an address to be found by.
+	const email = "agent@example.com"
+	signup := h.post("/api/auth/signup", "", map[string]string{
+		"email": email, "password": "hunter2pass",
+	})
+	if signup.Status != http.StatusCreated {
+		t.Fatalf("signup: %d %s", signup.Status, signup.Raw)
+	}
+	verified := h.post("/api/auth/verify-email", "", map[string]string{
+		"email": email, "otp": testMasterOTP,
+	})
+	agentToken, agentID := h.tokenAndID(verified)
+	code := h.referralCodeOf(agentToken)
+	h.signInByPhone(joinerPhone, code)
+
+	admin := h.makeAdmin(adminPhone)
+	report := h.referralReportBy(admin, email)
+
+	who, _ := report["referrer"].(map[string]any)
+	if who == nil {
+		t.Fatalf("no referrer block: %v", report)
+	}
+	if id := int64(intOf(who["accountId"])); id != agentID {
+		t.Errorf("resolved to account %d, want %d", id, agentID)
+	}
+}
+
+// The case the lookup exists for: a real account that referred nobody in the
+// window. It must answer "zero", with the person still named — not fall back to
+// an empty screen the way the leaderboard would.
+func TestReferralReport_NamesAReferrerWhoReferredNobody(t *testing.T) {
+	h := newHarness(t)
+
+	_, quietID := h.signInByPhone(referrerPhone, "")
+
+	admin := h.makeAdmin(adminPhone)
+	report := h.referralReportBy(admin, referrerPhone)
+
+	who, _ := report["referrer"].(map[string]any)
+	if who == nil {
+		t.Fatalf("an account with no referrals must still be named: %v", report)
+	}
+	if id := int64(intOf(who["accountId"])); id != quietID {
+		t.Errorf("resolved to account %d, want %d", id, quietID)
+	}
+	if n := intOf(who["referredCount"]); n != 0 {
+		t.Errorf("referredCount = %d, want 0", n)
+	}
+	page, _ := report["referred"].(map[string]any)
+	if n := intOf(page["total"]); n != 0 {
+		t.Errorf("referred.total = %d, want 0", n)
+	}
+	// And they are absent from the leaderboard, which is exactly why the
+	// referrer block has to carry them.
+	for _, row := range listOf(report["referrers"]) {
+		if int64(intOf(row["accountId"])) == quietID {
+			t.Errorf("account %d should not be on the leaderboard with zero referrals", quietID)
+		}
+	}
+}
+
+// A mistyped number must not answer "no referrals" — that is a confident answer
+// to a question nobody asked.
+func TestReferralReport_UnknownIdentifierIsNotFound(t *testing.T) {
+	h := newHarness(t)
+	admin := h.makeAdmin(adminPhone)
+
+	res := h.get("/api/admin/referrals?identifier=%2B919700000000", admin)
+	if res.Status != http.StatusNotFound {
+		t.Errorf("unknown number: %d %s, want 404", res.Status, res.Raw)
+	}
+
+	res = h.get("/api/admin/referrals?identifier=nobody%40example.com", admin)
+	if res.Status != http.StatusNotFound {
+		t.Errorf("unknown email: %d %s, want 404", res.Status, res.Raw)
+	}
+}
+
+// The window still applies to a lookup: the same person, asked about a month
+// they were idle, is zero.
+func TestReferralReport_LookupHonoursTheDateRange(t *testing.T) {
+	h := newHarness(t)
+
+	referrerToken, _ := h.signInByPhone(referrerPhone, "")
+	code := h.referralCodeOf(referrerToken)
+	_, joinerID := h.signInByPhone(joinerPhone, code)
+	h.backdateReferral(joinerID, time.Now().UTC().AddDate(0, 0, -60))
+
+	admin := h.makeAdmin(adminPhone)
+
+	recent := h.referralReportBy(admin, referrerPhone)
+	page, _ := recent["referred"].(map[string]any)
+	if n := intOf(page["total"]); n != 0 {
+		t.Errorf("default window total = %d, want 0 — the signup is 60 days old", n)
+	}
+
+	old := time.Now().UTC().AddDate(0, 0, -90).Format("2006-01-02")
+	now := time.Now().UTC().Format("2006-01-02")
+	wide := h.referralReport(admin, old, now, 0)
+	if n := intOf(wide["totalReferred"]); n != 1 {
+		t.Errorf("wide window total = %d, want 1", n)
+	}
+}

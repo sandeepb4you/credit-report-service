@@ -2,9 +2,11 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/georgysavva/scany/v2/pgxscan"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"credit-report-service/internal/models"
@@ -64,6 +66,41 @@ func (r *ReferralRepo) TopReferrers(
 		out = []models.ReferrerSummary{}
 	}
 	return out, err
+}
+
+// ReferrerSummaryFor is one named account's row, whether or not they referred
+// anyone in the window.
+//
+// TopReferrers cannot answer this: it is built from the referred accounts, so a
+// referrer with nothing in the period is simply absent from it. That absence is
+// the whole reason this exists — "did this person refer anyone last month?" is
+// a question whose answer is usually no, and a screen that can only show people
+// who did cannot state it.
+func (r *ReferralRepo) ReferrerSummaryFor(
+	ctx context.Context, accountID int64, from, to time.Time,
+) (*models.ReferrerSummary, error) {
+	var out models.ReferrerSummary
+	err := pgxscan.Get(ctx, r.pool, &out,
+		`SELECT ref.id                                              AS account_id,
+		        TRIM(BOTH ' ' FROM COALESCE(ref.first_name, '') || ' ' ||
+		                           COALESCE(ref.last_name, ''))     AS name,
+		        ref.primary_phone                                   AS phone,
+		        ref.primary_email                                   AS email,
+		        code.code                                           AS referral_code,
+		        (SELECT COUNT(*) FROM accounts a
+		          WHERE a.referred_by_account_id = ref.id
+		            AND a.referred_at >= $2 AND a.referred_at < $3) AS referred_count
+		   FROM accounts ref
+		   LEFT JOIN coupons code
+		          ON code.created_by = ref.id
+		         AND code.kind = 'referral'
+		         AND code.revoked_at IS NULL
+		  WHERE ref.id = $1`,
+		accountID, from, to)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &out, err
 }
 
 // ListReferred pages the individual signups in the window, newest first.

@@ -1191,7 +1191,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Who referred whom, over a window of whole UTC days. Returns the period total, a leaderboard of referrers (busiest first, capped at 100) and a page of the individual referred accounts. Omitting both dates gives the last 30 days; naming only one fills the other in. ` + "`" + `referrerId` + "`" + ` narrows the account list to one referrer without moving the headline total or the leaderboard, so drilling in never hides the rest of the period. Rows carry the referred user's phone and email, which is why this needs the 'referral:view' permission.",
+                "description": "Who referred whom, over a window of whole UTC days. Narrow to one referrer by ` + "`" + `referrerId` + "`" + `, or by ` + "`" + `identifier` + "`" + ` (their phone or email) when that is what you have — the response then carries a ` + "`" + `referrer` + "`" + ` block naming them, which matters because an account that referred nobody in the window is absent from the leaderboard and could not otherwise be labelled. Returns the period total, a leaderboard of referrers (busiest first, capped at 100) and a page of the individual referred accounts. Omitting both dates gives the last 30 days; naming only one fills the other in. ` + "`" + `referrerId` + "`" + ` narrows the account list to one referrer without moving the headline total or the leaderboard, so drilling in never hides the rest of the period. Rows carry the referred user's phone and email, which is why this needs the 'referral:view' permission.",
                 "produces": [
                     "application/json"
                 ],
@@ -1216,6 +1216,12 @@ const docTemplate = `{
                         "type": "integer",
                         "description": "Show only this referrer's signups",
                         "name": "referrerId",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Phone or email naming that referrer, when you have the contact detail rather than the id. Ignored if referrerId is set; 404 if it names no account.",
+                        "name": "identifier",
                         "in": "query"
                     },
                     {
@@ -1252,6 +1258,12 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "Missing the 'referral:view' permission",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "identifier names no account",
                         "schema": {
                             "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
@@ -5389,6 +5401,14 @@ const docTemplate = `{
                     "allOf": [
                         {
                             "$ref": "#/definitions/credit-report-service_internal_models.ReferredPage"
+                        }
+                    ]
+                },
+                "referrer": {
+                    "description": "Referrer is who the list was narrowed to, and is null when it was not.\n\nIt is returned rather than left for the caller to look up because the\nnarrowing can name somebody who is NOT in Referrers: an account with no\nsignups in the window is absent from the leaderboard, and a screen that\ncould only label the filter from a leaderboard row would have nothing to\nshow in exactly the case an operator most needs an answer.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/credit-report-service_internal_models.ReferrerSummary"
                         }
                     ]
                 },

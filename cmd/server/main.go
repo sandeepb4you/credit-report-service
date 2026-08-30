@@ -278,7 +278,7 @@ func main() {
 	// Referral reporting is read-only over the accounts graph, so it takes its
 	// own repo rather than borrowing the coupon service that mints the codes.
 	adminReferralH := handler.NewAdminReferralHandler(
-		service.NewReferralService(repository.NewReferralRepo(pool)))
+		service.NewReferralService(repository.NewReferralRepo(pool), accountRepo))
 	// Statement handler gets the per-upload size cap and the optional webhook
 	// shared-secret so it can reject oversized PDFs and unauthenticated callbacks.
 	bankStmtH := handler.NewBankStatementHandler(

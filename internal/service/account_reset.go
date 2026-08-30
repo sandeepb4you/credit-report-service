@@ -20,6 +20,13 @@ import (
 // accountResetStore is the repository surface the reset needs. Narrow on
 // purpose: the interesting behaviour here is the confirmation and the object
 // cleanup, and both are testable without a database behind them.
+// accountFinder is the narrow lookup surface findAccountByIdentifier needs.
+// Both accountResetStore and the referral service's store satisfy it.
+type accountFinder interface {
+	FindByEmail(ctx context.Context, email string) (*models.Account, error)
+	FindByPhone(ctx context.Context, phone string) (*models.Account, error)
+}
+
 type accountResetStore interface {
 	FindByID(ctx context.Context, id int64) (*models.Account, error)
 	FindByEmail(ctx context.Context, email string) (*models.Account, error)
@@ -148,6 +155,19 @@ func (s *AccountResetService) deleteReportPDFs(ctx context.Context, accountID in
 // findByIdentifier resolves an email address or a mobile number, normalising
 // each the way its own sign-in path does so a lookup matches what signup stored.
 func (s *AccountResetService) findByIdentifier(ctx context.Context, identifier string) (*models.Account, error) {
+	return findAccountByIdentifier(ctx, s.accounts, identifier)
+}
+
+// findAccountByIdentifier resolves an account from the detail an operator
+// actually has in front of them: a mobile number or an email address.
+//
+// Package-level rather than a method because two admin screens need it — the
+// reset, and the referral report's "show me this person's referrals" lookup —
+// and two definitions of what counts as a phone number is exactly how the same
+// typed string finds an account on one screen and 404s on the other.
+func findAccountByIdentifier(
+	ctx context.Context, accounts accountFinder, identifier string,
+) (*models.Account, error) {
 	id := strings.TrimSpace(identifier)
 	if id == "" {
 		return nil, apperr.NewValidationWith("Validation failed", map[string]string{
@@ -155,7 +175,7 @@ func (s *AccountResetService) findByIdentifier(ctx context.Context, identifier s
 		})
 	}
 	if strings.Contains(id, "@") {
-		acc, err := s.accounts.FindByEmail(ctx, normalizeEmail(id))
+		acc, err := accounts.FindByEmail(ctx, normalizeEmail(id))
 		if err != nil {
 			return nil, apperr.NewNotFound("No account with that email address")
 		}
@@ -165,7 +185,7 @@ func (s *AccountResetService) findByIdentifier(ctx context.Context, identifier s
 	if err != nil {
 		return nil, err
 	}
-	acc, err := s.accounts.FindByPhone(ctx, phone)
+	acc, err := accounts.FindByPhone(ctx, phone)
 	if err != nil {
 		return nil, apperr.NewNotFound("No account with that phone number")
 	}

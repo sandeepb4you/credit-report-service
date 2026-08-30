@@ -243,7 +243,7 @@ func buildApp(cfg *config.Config, pool *pgxpool.Pool) *fiber.App {
 	)
 
 	referralH := handler.NewAdminReferralHandler(
-		service.NewReferralService(repository.NewReferralRepo(pool)))
+		service.NewReferralService(repository.NewReferralRepo(pool), accountRepo))
 
 	return server.New(
 		cfg,
@@ -508,4 +508,16 @@ func findReferred(t *testing.T, report map[string]any, accountID int64) map[stri
 	}
 	t.Fatalf("account %d is not in the referral report: %v", accountID, page)
 	return nil
+}
+
+// referralReportBy narrows the report to whoever holds a phone number or email
+// address, the way an operator would.
+func (h *harness) referralReportBy(token, identifier string) map[string]any {
+	h.t.Helper()
+
+	res := h.get("/api/admin/referrals?identifier="+url.QueryEscape(identifier), token)
+	if res.Status != http.StatusOK {
+		h.t.Fatalf("referral report by %q: %d %s", identifier, res.Status, res.Raw)
+	}
+	return res.Body
 }

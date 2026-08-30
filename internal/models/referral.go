@@ -26,6 +26,15 @@ type ReferralReport struct {
 	// Referred is the page of individual signups, narrowed to one referrer
 	// when the caller asked for that.
 	Referred ReferredPage `json:"referred"`
+
+	// Referrer is who the list was narrowed to, and is null when it was not.
+	//
+	// It is returned rather than left for the caller to look up because the
+	// narrowing can name somebody who is NOT in Referrers: an account with no
+	// signups in the window is absent from the leaderboard, and a screen that
+	// could only label the filter from a leaderboard row would have nothing to
+	// show in exactly the case an operator most needs an answer.
+	Referrer *ReferrerSummary `json:"referrer,omitempty"`
 }
 
 // ReferrerSummary is one account and how many signups it brought in.

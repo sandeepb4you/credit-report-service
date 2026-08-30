@@ -1165,6 +1165,17 @@ definitions:
         description: |-
           Referred is the page of individual signups, narrowed to one referrer
           when the caller asked for that.
+      referrer:
+        allOf:
+        - $ref: '#/definitions/credit-report-service_internal_models.ReferrerSummary'
+        description: |-
+          Referrer is who the list was narrowed to, and is null when it was not.
+
+          It is returned rather than left for the caller to look up because the
+          narrowing can name somebody who is NOT in Referrers: an account with no
+          signups in the window is absent from the leaderboard, and a screen that
+          could only label the filter from a leaderboard row would have nothing to
+          show in exactly the case an operator most needs an answer.
       referrers:
         description: |-
           Referrers is the leaderboard for the window, busiest first. Always the
@@ -2302,11 +2313,15 @@ paths:
       - admin
   /admin/referrals:
     get:
-      description: Who referred whom, over a window of whole UTC days. Returns the
-        period total, a leaderboard of referrers (busiest first, capped at 100) and
-        a page of the individual referred accounts. Omitting both dates gives the
-        last 30 days; naming only one fills the other in. `referrerId` narrows the
-        account list to one referrer without moving the headline total or the leaderboard,
+      description: Who referred whom, over a window of whole UTC days. Narrow to one
+        referrer by `referrerId`, or by `identifier` (their phone or email) when that
+        is what you have — the response then carries a `referrer` block naming them,
+        which matters because an account that referred nobody in the window is absent
+        from the leaderboard and could not otherwise be labelled. Returns the period
+        total, a leaderboard of referrers (busiest first, capped at 100) and a page
+        of the individual referred accounts. Omitting both dates gives the last 30
+        days; naming only one fills the other in. `referrerId` narrows the account
+        list to one referrer without moving the headline total or the leaderboard,
         so drilling in never hides the rest of the period. Rows carry the referred
         user's phone and email, which is why this needs the 'referral:view' permission.
       parameters:
@@ -2323,6 +2338,12 @@ paths:
         in: query
         name: referrerId
         type: integer
+      - description: Phone or email naming that referrer, when you have the contact
+          detail rather than the id. Ignored if referrerId is set; 404 if it names
+          no account.
+        in: query
+        name: identifier
+        type: string
       - description: Max referred accounts to return (default 50, max 200)
         in: query
         name: limit
@@ -2348,6 +2369,10 @@ paths:
             $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
         "403":
           description: Missing the 'referral:view' permission
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: identifier names no account
           schema:
             $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
       security:
