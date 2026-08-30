@@ -23,9 +23,16 @@ const (
 	CouponCodeMaxLen = 32
 )
 
-// ReferralCodePrefix marks generated referral codes so a user can tell at a
-// glance which kind of code they are holding.
-const ReferralCodePrefix = "REF"
+// ReferralCodeLen is the length of a generated referral code. Seven characters
+// out of the 32-symbol alphabet below is ~35 bits — far too sparse to guess at
+// while still being short enough to read down a phone line.
+//
+// Codes carry no prefix, so a referral code is not distinguishable by shape
+// from a discount code. That is safe because both live in one UNIQUE(code)
+// namespace: a code resolves to exactly one coupon, and the referral lookup
+// additionally filters on kind='referral'. Codes minted before this shortening
+// look like REF-XXXXXXXX and keep working — nothing resolves by shape.
+const ReferralCodeLen = 7
 
 // MinChargeableAmount is the smallest total the payment gateway will accept.
 // A coupon that discounts an order below this is rejected at checkout rather

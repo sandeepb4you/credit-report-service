@@ -90,10 +90,27 @@ func (s *AuthService) SendPhoneOTP(ctx context.Context, phone string) error {
 // VerifyPhoneOTP checks the code and signs the number in, creating an active
 // account on first use. The session is issued exactly like every other auth
 // method (issueSession), so devices/refresh/roles all behave identically.
+//
+// An optional referralCode attributes a newly created account to whoever owns
+// that code, matching Signup. Two ordering decisions matter here:
+//
+//   - The code is resolved BEFORE the OTP is checked, so an invalid one is a
+//     400 that leaves the challenge intact. Resolving after would burn the
+//     user's code on a typo in a different field and make them wait out the
+//     resend cooldown to fix it.
+//   - Attribution is applied only on the create branch. This endpoint is
+//     find-or-create, so a returning user is signing in, not signing up;
+//     rewriting their referrer on every login would let anyone re-attribute an
+//     existing customer by pasting a code into the box.
 func (s *AuthService) VerifyPhoneOTP(
-	ctx context.Context, phone, otp string, dev models.DeviceInfo,
+	ctx context.Context, phone, otp, referralCode string, dev models.DeviceInfo,
 ) (*AuthResult, error) {
 	normalized, err := normalizePhone(phone)
+	if err != nil {
+		return nil, err
+	}
+
+	referrerID, referrerCode, err := s.coupons.ResolveReferral(ctx, referralCode)
 	if err != nil {
 		return nil, err
 	}
@@ -126,6 +143,10 @@ func (s *AuthService) VerifyPhoneOTP(
 			Status:       models.AccountActive,
 			PrimaryPhone: &normalized,
 		}
+		if referrerID != 0 {
+			acc.ReferredByAccountID = &referrerID
+			acc.ReferredByCode = &referrerCode
+		}
 		created = true
 	} else if err != nil {
 		return nil, err
@@ -154,7 +175,8 @@ func (s *AuthService) VerifyPhoneOTP(
 		if acc, err = s.accounts.FindByID(ctx, acc.ID); err != nil {
 			return nil, err
 		}
-		slog.Info("account created via phone otp", "account_id", acc.ID)
+		slog.Info("account created via phone otp",
+			"account_id", acc.ID, "referred_by", referrerID)
 	}
 
 	slog.Info("phone verified", "account_id", acc.ID)

@@ -14,12 +14,12 @@ func TestGenerateReferralCode_Shape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(code, models.ReferralCodePrefix+"-") {
-		t.Errorf("code %q missing the REF- prefix", code)
+	if len(code) != models.ReferralCodeLen {
+		t.Errorf("code %q is %d chars, want %d", code, len(code), models.ReferralCodeLen)
 	}
-	if len(code) > models.CouponCodeMaxLen {
-		t.Errorf("code %q is %d chars, over the %d column limit",
-			code, len(code), models.CouponCodeMaxLen)
+	if len(code) < models.CouponCodeMinLen || len(code) > models.CouponCodeMaxLen {
+		t.Errorf("code %q is outside the %d-%d coupon code bounds",
+			code, models.CouponCodeMinLen, models.CouponCodeMaxLen)
 	}
 	// Must survive the same validation a hand-typed code goes through.
 	if _, err := normalizeCouponCode(code); err != nil {
@@ -33,9 +33,8 @@ func TestGenerateReferralCode_AvoidsAmbiguousGlyphs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		body := strings.TrimPrefix(code, models.ReferralCodePrefix+"-")
 		for _, bad := range []string{"I", "O", "0", "1"} {
-			if strings.Contains(body, bad) {
+			if strings.Contains(code, bad) {
 				t.Fatalf("code %q contains ambiguous glyph %q", code, bad)
 			}
 		}

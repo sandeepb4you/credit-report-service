@@ -188,12 +188,17 @@ func (h *AuthHandler) SendPhoneOTP(c *fiber.Ctx) error {
 type phoneOtpVerifyReq struct {
 	Phone string `json:"phone" example:"+919876543210"`
 	OTP   string `json:"otp"   example:"1234"`
+	// ReferralCode is optional and only honoured when this verification
+	// creates the account. An invalid code fails the call rather than being
+	// ignored, so the new user is never told their referrer got credit that
+	// nobody actually received.
+	ReferralCode string `json:"referralCode" example:"K7QM4XZ"`
 }
 
 // VerifyPhoneOTP godoc
 //
 // @Summary      Verify a phone OTP and sign in
-// @Description  Checks the code sent by POST /auth/otp/phone/send and opens a session for the calling device. A first-time number gets an account created on the spot (profile incomplete); an existing number signs into its account. Returns the same session payload as email login.
+// @Description  Checks the code sent by POST /auth/otp/phone/send and opens a session for the calling device. A first-time number gets an account created on the spot (profile incomplete); an existing number signs into its account. Returns the same session payload as email login. An optional `referralCode` attributes a newly created account to that code's owner; it is ignored when the number already has an account, and an unknown or revoked code is a 400 that leaves the OTP usable.
 // @Tags         auth
 // @Accept       json
 // @Produce      json
@@ -216,7 +221,8 @@ func (h *AuthHandler) VerifyPhoneOTP(c *fiber.Ctx) error {
 			map[string]string{"otp": "otp must be 4-8 digits"})
 	}
 	res, err := h.svc.VerifyPhoneOTP(
-		c.Context(), strings.TrimSpace(req.Phone), req.OTP, middleware.Device(c))
+		c.Context(), strings.TrimSpace(req.Phone), req.OTP,
+		strings.TrimSpace(req.ReferralCode), middleware.Device(c))
 	if err != nil {
 		return err
 	}

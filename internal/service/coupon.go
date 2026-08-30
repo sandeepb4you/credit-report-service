@@ -366,23 +366,26 @@ func (s *CouponService) ResolveReferral(ctx context.Context, code string) (int64
 // down, and retyped, and those four are where that goes wrong.
 const referralAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
-// generateReferralCode builds REF-XXXXXXXX from crypto/rand.
+// generateReferralCode builds a bare models.ReferralCodeLen-character code
+// from crypto/rand.
 //
 // Randomness rather than a derivation from the account id: a sequential or
 // hashed code would let anyone enumerate other people's referral codes, and
 // the code is the only thing standing between a stranger and mis-attributed
 // signups.
+//
+// The modulo bias here is negligible and deliberate: 256 % 32 == 0, so every
+// symbol in the alphabet is equally likely.
 func generateReferralCode() (string, error) {
-	const n = 8
-	buf := make([]byte, n)
+	buf := make([]byte, models.ReferralCodeLen)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}
-	out := make([]byte, n)
+	out := make([]byte, models.ReferralCodeLen)
 	for i, b := range buf {
 		out[i] = referralAlphabet[int(b)%len(referralAlphabet)]
 	}
-	return models.ReferralCodePrefix + "-" + string(out), nil
+	return string(out), nil
 }
 
 func referralRejected() error {
