@@ -22,7 +22,31 @@ FIXTURES = [
      "Derogatory: a written-off personal loan still owed, a settled consumer "
      "loan, and a card at 99%. Overall D, two derogatory tradelines - the "
      "fixture that reaches the code paths a clean file never does."),
+
+    # Edge cases: each is here for a path through the app, not for another
+    # point on the score line.
+    ("boundary_650_blended.json", 650, "boundary: rebuild/blended",
+     "Exactly on the <650 vs 650-749 journey boundary, where the score-builder "
+     "switches plan. Every factor grades B."),
+    ("boundary_750_protect.json", 750, "boundary: blended/protect",
+     "Exactly on the 750 boundary, where the plan becomes protect-what-you-have. "
+     "Overall A."),
+    ("all_accounts_closed_720.json", 720, "nothing live",
+     "Three tradelines, all closed. Outstanding, EMI and interest are all zero - "
+     "the state screens must render without dividing by anything. Utilisation is "
+     "0%, not absent: a closed card still contributes its limit."),
+    ("card_only_680.json", 680, "one product type",
+     "Two credit cards and nothing else, so credit mix grades C and there is no "
+     "EMI. The common shape for a young borrower."),
+    ("high_utilisation_clean_640.json", 640, "one problem, and it is utilisation",
+     "Three years of perfect payments against a card at 92%. Overall stays B "
+     "while utilisation alone is a D - the case where the headline grade hides "
+     "the thing that needs doing."),
 ]
+
+# The rising 500 -> 800 history uses only these: the edge-case fixtures are
+# distinct shapes, not points on a trend.
+BAND_FIXTURES = [f for f in FIXTURES if f[1] in (500, 600, 700, 800)]
 
 SRC = os.path.join("internal", "digitap", "testdata")
 OUT = os.path.join("docs", "examples", "load_score_scenarios.sql")
@@ -74,10 +98,7 @@ SET search_path TO report;
 \\if :{?scenario}   \\else \\set scenario none \\endif
 
 SELECT :account_id = 0      AS no_account,
-       :'scenario' = '800'  AS want_800,
-       :'scenario' = '700'  AS want_700,
-       :'scenario' = '600'  AS want_600,
-       :'scenario' = '500'  AS want_500,
+SELECTORS
        :'scenario' = 'history' AS want_history,
        :'scenario' = 'clean'   AS want_clean
 \\gset
@@ -136,7 +157,10 @@ def load(name):
 
 
 def main():
-    parts = [HEADER]
+    selectors = chr(10).join(
+        f"       :'scenario' = '{score}'  AS want_{score}," for _, score, _, _ in FIXTURES
+    )
+    parts = [HEADER.replace("SELECTORS", selectors)]
 
     for name, score, label, description in FIXTURES:
         parts.append(f"""
@@ -163,7 +187,7 @@ def main():
 -- ---------------------------------------------------------------------------
 \\if :want_history
 """)
-    for offset, (name, score, _, _) in zip((120, 90, 60, 30), reversed(FIXTURES)):
+    for offset, (name, score, _, _) in zip((120, 90, 60, 30), reversed(BAND_FIXTURES)):
         parts.append(insert(score, load(name), days_ago=offset) + "\n")
     parts.append("""\\echo '>> Loaded all four scenarios as a 500 -> 800 history.'
 \\endif

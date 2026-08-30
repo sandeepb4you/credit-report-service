@@ -388,6 +388,124 @@ SCENARIOS["score_500_poor.json"] = envelope(
 )
 
 
+# ---------------------------------------------------------------------------
+# Edge cases the score-band set does not reach.
+#
+# Each exists for a specific path through the app rather than for another point
+# on the score line: a band boundary, a file with nothing live on it, a file
+# with one product type, and a file whose only problem is utilisation.
+# ---------------------------------------------------------------------------
+
+# --- 650: the exact rebuild/blended boundary. -------------------------------
+# buildScoreBuilder switches journey at <650 vs 650-749, and nothing else sits
+# on the edge, so an off-by-one there would go unnoticed.
+SCENARIOS["boundary_650_blended.json"] = envelope(
+    score=650,
+    enquiries={"d180": 4, "d90": 2, "d30": 1, "d7": 0},
+    ref_suffix="650",
+    accounts=[
+        account("XXXXXXXXXXXXXXX3391", "10", "11", "R", "ICICI Bank Limited", "PVTICIC339",
+                opened="20220615", reported="20260812", months=36,
+                late={2: 30, 9: 30, 17: 60, 28: 30},
+                limit="200000", balance="88000", roi="42.00", last_payment="20260806"),
+        account("XXXXXXXXXXXXXXX7714", "05", "11", "I", "Axis Bank Limited", "PVTAXIS771",
+                opened="20220620", reported="20260810", months=36,
+                late={1: 30, 6: 30, 13: 60, 20: 30, 30: 30},
+                tenure="48", original="400000", balance="210000",
+                roi="16.50", emi="11500", last_payment="20260805"),
+        account("XXXXXXXXXXXXXXX2205", "06", "13", "I", "Bajaj Finance Limited", "PVTBAJF220",
+                opened="20220210", reported="20230515", months=12,
+                late={4: 30},
+                tenure="12", original="60000", balance="0", roi="21.00",
+                closed="20230510", last_payment="20230510"),
+    ],
+)
+
+# --- 750: the exact blended/protect boundary. -------------------------------
+SCENARIOS["boundary_750_protect.json"] = envelope(
+    score=750,
+    enquiries={"d180": 1, "d90": 1, "d30": 0, "d7": 0},
+    ref_suffix="750",
+    accounts=[
+        account("XXXXXXXXXXXXXXX8802", "02", "11", "I", "HDFC Bank Ltd", "PVTHDFC880",
+                opened="20180412", reported="20260812", months=36,
+                late={11: 30},
+                tenure="240", original="4200000", balance="2680000",
+                roi="8.75", emi="37200", last_payment="20260805"),
+        account("XXXXXXXXXXXXXXX4456", "10", "11", "R", "Axis Bank Limited", "PVTAXIS445",
+                opened="20190220", reported="20260810", months=36,
+                limit="300000", balance="54000", roi="41.00", last_payment="20260808"),
+        account("XXXXXXXXXXXXXXX6613", "01", "13", "I", "Kotak Mahindra Bank", "PVTKOTK661",
+                opened="20200105", reported="20240210", months=24,
+                tenure="48", original="620000", balance="0", roi="9.40",
+                closed="20240205", last_payment="20240205"),
+    ],
+)
+
+# --- Everything closed: nothing live on the file. ---------------------------
+# activeAccountCount, outstanding, EMI and interest all come out zero, which
+# several screens have to render without dividing by anything. Note the closed
+# CARD still counts toward utilisation — the parser measures revolving limits
+# before it checks whether the account is open — so this pins 0%, not "absent".
+SCENARIOS["all_accounts_closed_720.json"] = envelope(
+    score=720,
+    enquiries={"d180": 0, "d90": 0, "d30": 0, "d7": 0},
+    ref_suffix="720c",
+    accounts=[
+        account("XXXXXXXXXXXXXXX1102", "10", "13", "R", "HDFC Bank Ltd", "PVTHDFC110",
+                opened="20160310", reported="20240315", months=36,
+                limit="250000", balance="0", closed="20240310",
+                roi="40.00", last_payment="20240310"),
+        account("XXXXXXXXXXXXXXX9930", "01", "13", "I", "ICICI Bank Limited", "PVTICIC993",
+                opened="20170722", reported="20220810", months=24,
+                tenure="60", original="750000", balance="0", roi="9.25",
+                closed="20220805", last_payment="20220805"),
+        account("XXXXXXXXXXXXXXX5527", "05", "13", "I", "Bajaj Finance Limited", "PVTBAJF552",
+                opened="20190905", reported="20221010", months=24,
+                tenure="36", original="250000", balance="0", roi="14.00",
+                closed="20221005", last_payment="20221005"),
+    ],
+)
+
+# --- One product type: credit cards only. -----------------------------------
+# Credit mix grades C on a single type, which is the common shape for a young
+# borrower and is otherwise untested.
+SCENARIOS["card_only_680.json"] = envelope(
+    score=680,
+    enquiries={"d180": 2, "d90": 1, "d30": 0, "d7": 0},
+    ref_suffix="680card",
+    accounts=[
+        account("XXXXXXXXXXXXXXX7781", "10", "11", "R", "HDFC Bank Ltd", "PVTHDFC778",
+                opened="20200814", reported="20260812", months=36,
+                late={3: 30, 12: 30, 25: 60},
+                limit="150000", balance="42000", roi="42.00", last_payment="20260807"),
+        account("XXXXXXXXXXXXXXX3348", "10", "11", "R", "SBI Cards and Payment Services", "PVTSBIC334",
+                opened="20221105", reported="20260811", months=24,
+                late={5: 30, 16: 30},
+                limit="80000", balance="15000", roi="43.20", last_payment="20260806"),
+    ],
+)
+
+# --- One problem, and it is utilisation. ------------------------------------
+# Every payment on time for years, and a card at 92%. The overall grade stays
+# respectable, which is the point: it must not drown out a single severe factor,
+# and the recommendations should say "pay this down" rather than everything.
+SCENARIOS["high_utilisation_clean_640.json"] = envelope(
+    score=640,
+    enquiries={"d180": 0, "d90": 0, "d30": 0, "d7": 0},
+    ref_suffix="640util",
+    accounts=[
+        account("XXXXXXXXXXXXXXX2260", "10", "11", "R", "Axis Bank Limited", "PVTAXIS226",
+                opened="20170606", reported="20260813", months=36,
+                limit="100000", balance="92000", roi="44.00", last_payment="20260808"),
+        account("XXXXXXXXXXXXXXX8817", "05", "11", "I", "HDFC Bank Ltd", "PVTHDFC881",
+                opened="20230310", reported="20260811", months=36,
+                tenure="60", original="500000", balance="290000",
+                roi="13.75", emi="11400", last_payment="20260805"),
+    ],
+)
+
+
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     for name, doc in SCENARIOS.items():

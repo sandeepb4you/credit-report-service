@@ -23,6 +23,31 @@ both. `internal/service/score_scenarios_test.go` then re-checks the result
 through the real insights parser, including that each band's report card still
 agrees with its headline score — which is the property the whole set exists for.
 
+## What is in the set
+
+Nine reports. Four are points on the score line (500 / 600 / 700 / 800); the
+other five exist for a specific path through the app rather than for another
+score:
+
+| Fixture | Why it exists |
+| --- | --- |
+| `boundary_650_blended` | The exact `<650` vs `650-749` journey switch |
+| `boundary_750_protect` | The exact `750` switch to the protect plan |
+| `all_accounts_closed_720` | Nothing live: outstanding, EMI and interest all zero |
+| `card_only_680` | One product type, so credit mix grades C |
+| `high_utilisation_clean_640` | Perfect payments, card at 92% — one severe factor under a decent overall |
+
+Two of those encode behaviour that is easy to assume wrongly. A closed card
+still contributes its limit to utilisation, because the parser measures
+revolving limits before it checks whether the account is open — so the
+all-closed file reports 0%, not "no data". And `high_utilisation_clean` grades
+B overall while utilisation alone is a D, which is exactly when the per-factor
+breakdown has to be what the user is shown.
+
+There is deliberately no fixture for a provider failure. Digitap defines three
+result codes (101 found, 102 no record, 103 name missing) and a 503 is an
+HTTP-level failure, not a result envelope — there is no JSON shape to capture.
+
 ## Tuning a scenario
 
 The grades come out of `buildReportCard`, so the thresholds worth knowing are:
