@@ -30,6 +30,7 @@ func New(
 	scoreBuilder *handler.ScoreBuilderHandler,
 	bankStmt *handler.BankStatementHandler,
 	adminAccounts *handler.AdminAccountHandler,
+	adminReferrals *handler.AdminReferralHandler,
 	tokens *service.TokenService,
 	// epochs backs the stale-token check on the permission gates; see
 	// middleware.checkEpoch.
@@ -275,6 +276,13 @@ func New(
 	admin.Post("/accounts/:accountId<int>/reset",
 		middleware.RequirePermission(tokens, epochs, models.PermAccountReset),
 		adminAccounts.ResetAccount)
+
+	// The referral report reads across every account, so it is gated on its own
+	// permission rather than on kyc:verify -- reviewing PANs and reading the
+	// whole referral graph are different jobs even when one person does both.
+	admin.Get("/referrals",
+		middleware.RequirePermission(tokens, epochs, models.PermReferralView),
+		adminReferrals.Report)
 
 	return app
 }

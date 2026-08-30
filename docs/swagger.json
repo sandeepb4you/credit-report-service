@@ -1178,6 +1178,81 @@
                 }
             }
         },
+        "/admin/referrals": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Who referred whom, over a window of whole UTC days. Returns the period total, a leaderboard of referrers (busiest first, capped at 100) and a page of the individual referred accounts. Omitting both dates gives the last 30 days; naming only one fills the other in. `referrerId` narrows the account list to one referrer without moving the headline total or the leaderboard, so drilling in never hides the rest of the period. Rows carry the referred user's phone and email, which is why this needs the 'referral:view' permission.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Referral report for a date range (admin only)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "First day, inclusive (YYYY-MM-DD). Defaults to 30 days before `to`.",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Last day, inclusive (YYYY-MM-DD). Defaults to today (UTC).",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Show only this referrer's signups",
+                        "name": "referrerId",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max referred accounts to return (default 50, max 200)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Referred accounts to skip (default 0)",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.ReferralReportResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Unparseable date, inverted range, or a range over a year",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing the 'referral:view' permission",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/email/send": {
             "post": {
                 "security": [
@@ -1532,7 +1607,7 @@
         },
         "/auth/otp/phone/verify": {
             "post": {
-                "description": "Checks the code sent by POST /auth/otp/phone/send and opens a session for the calling device. A first-time number gets an account created on the spot (profile incomplete); an existing number signs into its account. Returns the same session payload as email login.",
+                "description": "Checks the code sent by POST /auth/otp/phone/send and opens a session for the calling device. A first-time number gets an account created on the spot (profile incomplete); an existing number signs into its account. Returns the same session payload as email login. An optional `referralCode` attributes a newly created account to that code's owner; it is ignored when the number already has an account, and an unknown or revoked code is a 400 that leaves the OTP usable.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4468,6 +4543,92 @@
                 }
             }
         },
+        "credit-report-service_internal_models.ReferredAccount": {
+            "type": "object",
+            "properties": {
+                "accountId": {
+                    "type": "integer",
+                    "example": 87
+                },
+                "email": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "Ravi Kumar"
+                },
+                "phone": {
+                    "type": "string"
+                },
+                "profileCompleted": {
+                    "description": "ProfileCompleted is the cheapest signal of whether a referral turned\ninto a real user or stopped at the OTP screen.",
+                    "type": "boolean"
+                },
+                "referredAt": {
+                    "type": "string"
+                },
+                "referredByAccountId": {
+                    "type": "integer",
+                    "example": 12
+                },
+                "referredByCode": {
+                    "description": "ReferredByCode is the code as typed at signup, which for an older\naccount may be a REF-prefixed one the referrer no longer holds.",
+                    "type": "string",
+                    "example": "K7QM4XZ"
+                },
+                "referredByName": {
+                    "type": "string",
+                    "example": "Asha Menon"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "ACTIVE"
+                }
+            }
+        },
+        "credit-report-service_internal_models.ReferredPage": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/credit-report-service_internal_models.ReferredAccount"
+                    }
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 42
+                }
+            }
+        },
+        "credit-report-service_internal_models.ReferrerSummary": {
+            "type": "object",
+            "properties": {
+                "accountId": {
+                    "type": "integer",
+                    "example": 12
+                },
+                "email": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "Asha Menon"
+                },
+                "phone": {
+                    "type": "string"
+                },
+                "referralCode": {
+                    "description": "ReferralCode is the referrer's current live code. Null when the account\nhas never opened the app's referral screen — codes are minted on first\nread, so an account can have referrals attributed to a code that was\nlater revoked and not yet replaced.",
+                    "type": "string",
+                    "example": "K7QM4XZ"
+                },
+                "referredCount": {
+                    "type": "integer",
+                    "example": 12
+                }
+            }
+        },
         "credit-report-service_internal_service.AuthResult": {
             "type": "object",
             "properties": {
@@ -5209,6 +5370,40 @@
                 }
             }
         },
+        "internal_handler.ReferralReportResponse": {
+            "type": "object",
+            "properties": {
+                "from": {
+                    "description": "From and To are the inclusive first and last day of the window.",
+                    "type": "string",
+                    "example": "2026-07-31"
+                },
+                "referred": {
+                    "description": "Referred is the page of individual signups, narrowed to one referrer\nwhen the caller asked for that.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/credit-report-service_internal_models.ReferredPage"
+                        }
+                    ]
+                },
+                "referrers": {
+                    "description": "Referrers is the leaderboard for the window, busiest first. Always the\nwhole window, so the drill-down never hides who else was recruiting.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/credit-report-service_internal_models.ReferrerSummary"
+                    }
+                },
+                "to": {
+                    "type": "string",
+                    "example": "2026-08-30"
+                },
+                "totalReferred": {
+                    "description": "TotalReferred counts every attributed signup in the window and ignores\nReferrerID — it is the headline number for the period, so drilling into\none referrer must not make it move. The filtered count is Referred.Total.",
+                    "type": "integer",
+                    "example": 42
+                }
+            }
+        },
         "internal_handler.ReportEmailResponse": {
             "type": "object",
             "properties": {
@@ -5410,6 +5605,11 @@
                 "phone": {
                     "type": "string",
                     "example": "+919876543210"
+                },
+                "referralCode": {
+                    "description": "ReferralCode is optional and only honoured when this verification\ncreates the account. An invalid code fails the call rather than being\nignored, so the new user is never told their referrer got credit that\nnobody actually received.",
+                    "type": "string",
+                    "example": "K7QM4XZ"
                 }
             }
         },

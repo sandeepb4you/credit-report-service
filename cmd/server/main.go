@@ -275,6 +275,10 @@ func main() {
 	accountResetSvc := service.NewAccountResetService(accountRepo)
 	accountResetSvc.SetPDFStore(pdfStore)
 	adminAccountH := handler.NewAdminAccountHandler(accountResetSvc)
+	// Referral reporting is read-only over the accounts graph, so it takes its
+	// own repo rather than borrowing the coupon service that mints the codes.
+	adminReferralH := handler.NewAdminReferralHandler(
+		service.NewReferralService(repository.NewReferralRepo(pool)))
 	// Statement handler gets the per-upload size cap and the optional webhook
 	// shared-secret so it can reject oversized PDFs and unauthenticated callbacks.
 	bankStmtH := handler.NewBankStatementHandler(
@@ -306,7 +310,7 @@ func main() {
 	)
 
 	app := server.New(cfg, healthH, authH, analyticsH, kycH, orderH, couponH, loanH, scoreBuilderH, bankStmtH,
-		adminAccountH, tokenSvc, accountRepo)
+		adminAccountH, adminReferralH, tokenSvc, accountRepo)
 
 	go func() {
 		addr := ":" + itoa(cfg.Server.Port)

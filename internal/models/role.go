@@ -42,6 +42,7 @@ const (
 	PermLoanProviderManage = "loan-provider:manage" // curate loan providers + switch settings
 	PermBankOfferingManage = "bank-offering:manage" // curate score-builder bank offerings
 	PermPlanManage         = "plan:manage"          // price and retire the purchasable plans
+	PermReferralView       = "referral:view"        // read the referral graph across accounts
 )
 
 // rolePerms lists the permissions each role adds on top of the role beneath
@@ -62,6 +63,10 @@ var rolePerms = map[string][]string{
 		PermLoanProviderManage,
 		PermBankOfferingManage,
 		PermPlanManage,
+		// Deliberately not granted to agents: the report names every referred
+		// user, and an agent seeing their own recruits would still be reading
+		// other agents' rows out of the same query.
+		PermReferralView,
 	},
 }
 
