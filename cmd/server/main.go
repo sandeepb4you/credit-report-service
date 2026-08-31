@@ -187,8 +187,8 @@ func main() {
 	// the FD-card hero names a real product with an apply CTA.
 	analyticsSvc.SetScoreBuilder(scoreBuilderSvc)
 
-	// Credit-report PDF relay: report_type 3 returns a Digitap URL good for about
-	// an hour, so we take our own copy — download it, encrypt it with the
+	// Credit-report PDF relay: Digitap answers with a result_pdf URL good for
+	// about an hour, so we take our own copy — download it, encrypt it with the
 	// holder's PAN + date of birth, and put it in S3. Credentials come from the
 	// instance's IAM role via the default chain; an empty bucket selects the stub
 	// so a dev machine needs no AWS at all. Best-effort: a failure leaves

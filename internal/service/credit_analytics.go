@@ -32,11 +32,16 @@ const (
 	consentYes     = "yes"
 	deviceTypeWeb  = "web"
 	nameLookupOff  = 0 // name_lookup: 0 = use the supplied first/last name
-	// reportTypeFlag 3 asks Digitap to include result_pdf: a ~1-hour URL for the
-	// generated PDF report. We download it, encrypt it and upload it to S3
-	// asynchronously (ReportUploader), storing the object URI on the row.
-	// 0 returns JSON only.
-	reportTypeFlag = 3
+	// reportTypeFlag asks Digitap for the PDF alongside the JSON: the response
+	// then carries result_pdf, a ~1-hour URL for the generated report, which we
+	// download, encrypt and upload to S3 asynchronously (ReportUploader),
+	// storing the object URI on the row. 0 returns JSON only.
+	//
+	// 1, not 3, on Digitap's own instruction: every report_type 3 pull came back
+	// with result_pdf null (prod client 36537966, Aug 2026), so the relay never
+	// had a link to fetch, and their team answered that 1 is the value that
+	// returns the PDF.
+	reportTypeFlag = 1
 	otpDigits      = 6
 
 	// timestampLayout matches the Digitap spec's DDMMYYYY-HH:MM:SS format.
@@ -124,9 +129,8 @@ func (s *CreditAnalyticsService) SetScoreBuilder(sb *ScoreBuilderService) {
 }
 
 // SetPDFUploader wires the async PDF relay. Optional; when set, a successful
-// report_type 3 pull enqueues the Digitap result_pdf for download, encryption
-// and upload to S3. When unset, result_pdf is ignored (the JSON report is
-// still stored).
+// pull enqueues the Digitap result_pdf for download, encryption and upload to
+// S3. When unset, result_pdf is ignored (the JSON report is still stored).
 func (s *CreditAnalyticsService) SetPDFUploader(u *ReportUploader) {
 	s.pdfUploader = u
 }
@@ -712,7 +716,7 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 		// The vendor delivered, so the purchase is now spent — and only now.
 		s.spendEntitlement(ctx, accountID, row.ID)
 
-		// report_type 3 carries result_pdf: a ~1-hour URL for the generated PDF.
+		// The response carries result_pdf: a ~1-hour URL for the generated PDF.
 		// Hand it to the relay (download → encrypt → S3 → write-back) if wired.
 		// Best-effort: a missing uploader, missing field, or full queue just
 		// means result_pdf_url stays null; the report/score are unaffected.
@@ -1576,10 +1580,11 @@ func extractBureauScore(raw json.RawMessage) *int64 {
 	return &score
 }
 
-// extractResultPDF lifts the result_pdf URL out of the Digitap response. With
-// report_type 3, Digitap returns result_pdf: a URL for the generated PDF valid
-// for ~1 hour. The field's exact nesting in the envelope isn't documented, so
-// this checks the likely locations defensively and returns "" when not found
+// extractResultPDF lifts the result_pdf URL out of the Digitap response. When
+// the request asks for a PDF (reportTypeFlag), Digitap returns result_pdf: a URL
+// for the generated PDF valid for ~1 hour. The field's exact nesting in the
+// envelope isn't documented, so this checks the likely locations defensively
+// and returns "" when not found
 // (the caller treats that as "no PDF to relay" — best-effort, never an error).
 //
 // Checked locations, in order:

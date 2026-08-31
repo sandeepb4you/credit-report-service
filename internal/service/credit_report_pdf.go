@@ -1,7 +1,7 @@
 // Package service — async credit-report PDF relay (Digitap → S3).
 //
-// When a credit-analytics request uses report_type 3, Digitap returns
-// result_pdf: a URL for the generated PDF that is valid for ~1 hour. This file
+// When a credit-analytics request asks for a PDF (reportTypeFlag), Digitap
+// returns result_pdf: a URL for the generated PDF that is valid for ~1 hour. This file
 // implements the off-request relay that downloads that PDF, encrypts it with the
 // account holder's PAN and date of birth, uploads it to S3, and stores the
 // object's s3:// URI on the analytics row.

@@ -204,9 +204,9 @@ digitap:
 
 s3:
   # Object storage for the credit-report PDF relay. Credit analytics sends
-  # report_type 3; Digitap answers with a result_pdf link that lives about an
-  # hour, which a worker downloads, encrypts with the holder's PAN + date of
-  # birth, and uploads here — the s3:// URI is stored on the analytics row and
+  # a report_type that includes the PDF; Digitap answers with a result_pdf link
+  # that lives about an hour, which a worker downloads, encrypts with the
+  # holder's PAN + date of birth, and uploads here — the s3:// URI is stored on the analytics row and
   # reads are presigned per request, because the bucket is private.
   #
   # NO CREDENTIALS HERE, and none in the environment either: the service runs on
