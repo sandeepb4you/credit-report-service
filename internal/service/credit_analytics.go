@@ -32,16 +32,26 @@ const (
 	consentYes     = "yes"
 	deviceTypeWeb  = "web"
 	nameLookupOff  = 0 // name_lookup: 0 = use the supplied first/last name
-	// reportTypeFlag asks Digitap for the PDF alongside the JSON: the response
-	// then carries result_pdf, a ~1-hour URL for the generated report, which we
-	// download, encrypt and upload to S3 asynchronously (ReportUploader),
-	// storing the object URI on the row. 0 returns JSON only.
+	// reportTypeFlag selects the response format. Spec V2.7 s1.4.2.1 (the PDF in
+	// docs/digitap/) lists: 0 or omitted = JSON only, 1 = XML pre-signed URL ONLY,
+	// 2 = JSON + XML, 3 = JSON + PDF, 4 = JSON + PDF + XML. The URLs live about an
+	// hour, which is why the PDF is relayed (download, encrypt, S3) rather than
+	// handed to the app.
 	//
-	// 1, not 3, on Digitap's own instruction: every report_type 3 pull came back
-	// with result_pdf null (prod client 36537966, Aug 2026), so the relay never
-	// had a link to fetch, and their team answered that 1 is the value that
-	// returns the PDF.
-	reportTypeFlag = 1
+	// 4 because we need result_json AND result_pdf, and the two narrower values
+	// each failed in prod:
+	//
+	//   - 3 (JSON + PDF) is what the spec says to use, but every pull came back
+	//     with "result_pdf": null, so the relay never had a link to fetch. The
+	//     spec notes the PDF format is customized per client via the RM, so a
+	//     provisioning gap on their side is the likely cause -- and if 4 also
+	//     returns null, that is the finding to take back to them.
+	//   - 1 was the RM's advice for getting a PDF, and it is XML-only: no
+	//     result_json at all, so the score parser had nothing to read.
+	//
+	// 4 asks for the XML too, which we ignore -- there is no narrower value that
+	// pairs JSON with PDF apart from the 3 that does not deliver one.
+	reportTypeFlag = 4
 	otpDigits      = 6
 
 	// timestampLayout matches the Digitap spec's DDMMYYYY-HH:MM:SS format.
