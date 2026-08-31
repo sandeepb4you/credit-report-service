@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/spf13/viper"
 )
@@ -31,6 +32,13 @@ type Config struct {
 	Statement       StatementConfig       `mapstructure:"statement"`
 	S3              S3Config              `mapstructure:"s3"`
 	Demo            DemoConfig            `mapstructure:"demo"`
+
+	// Warnings holds problems found while loading that are worth an operator's
+	// attention but not worth refusing to boot over. Load runs before the
+	// logger exists (see cmd/server/main.go), so they are collected here and
+	// emitted by the caller once logging is configured. Never contains a
+	// secret's value -- only its shape.
+	Warnings []string `mapstructure:"-"`
 }
 
 // S3Config configures the credit-report PDF store.
@@ -413,11 +421,73 @@ func Load(profile string) (*Config, error) {
 		cfg.Server.TrustedProxies = splitList(raw)
 	}
 
+	cfg.sanitizeMailPassword()
+
 	if err := cfg.validateLocalOnly(profile); err != nil {
 		return nil, err
 	}
 
 	return &cfg, nil
+}
+
+// googleSMTPHosts are Google's SMTP endpoints. An app password for one of these
+// is provably 16 lower-case letters with no spaces, which is what lets
+// sanitizeMailPassword repair a pasted one instead of only complaining about it.
+var googleSMTPHosts = map[string]bool{
+	"smtp.gmail.com":      true,
+	"smtp.googlemail.com": true,
+}
+
+// googleAppPasswordLen is the length Google generates. Not a validation rule --
+// only the basis for a warning, since Google could change it.
+const googleAppPasswordLen = 16
+
+// sanitizeMailPassword repairs a mail password pasted in Google's display form,
+// recording what it did in Warnings.
+//
+// Google shows an app password as four groups of four ("xxxx xxxx xxxx xxxx")
+// and expects it entered without the spaces. Pasting what is displayed is the
+// obvious mistake, and it took every transactional email down for two days in
+// August 2026: SMTP AUTH fails, so the password-reset OTP, the signup OTP,
+// contact linking and report delivery all break together while phone sign-in
+// over SMS keeps working -- which reads as a mail-account problem rather than a
+// config one, and is why this is worth catching at boot.
+//
+// On a Google host the whitespace cannot be part of the secret, so it is
+// stripped. Refusing to boot would trade broken email for a dead API, and mail
+// here already degrades rather than dies (an empty host selects the stub
+// sender). On any other host the password is passed through exactly as
+// configured -- a space may genuinely belong to it -- and only reported.
+//
+// The warnings carry lengths, never the password.
+func (c *Config) sanitizeMailPassword() {
+	if c.Mail.Host == "" || c.Mail.Password == "" {
+		return
+	}
+	host := strings.ToLower(strings.TrimSpace(c.Mail.Host))
+	google := googleSMTPHosts[host]
+
+	if strings.ContainsFunc(c.Mail.Password, unicode.IsSpace) {
+		if !google {
+			c.Warnings = append(c.Warnings, fmt.Sprintf(
+				"mail.password for host %q contains whitespace, which most SMTP servers "+
+					"reject; sending it exactly as configured", host))
+			return
+		}
+		stripped := strings.Join(strings.Fields(c.Mail.Password), "")
+		c.Mail.Password = stripped
+		c.Warnings = append(c.Warnings, fmt.Sprintf(
+			"mail.password contained whitespace and was stripped to %d characters: a Google "+
+				"app password is displayed in groups of four but must be sent without the "+
+				"spaces. Correct MAIL_PASSWORD so this stops appearing", len(stripped)))
+	}
+
+	if google && len(c.Mail.Password) != googleAppPasswordLen {
+		c.Warnings = append(c.Warnings, fmt.Sprintf(
+			"mail.password is %d characters; a Google app password is %d. If this is the "+
+				"account's own password, SMTP AUTH will reject it -- generate an app password",
+			len(c.Mail.Password), googleAppPasswordLen))
+	}
 }
 
 // localProfiles are the APP_PROFILE values that count as a developer machine.

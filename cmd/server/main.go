@@ -51,6 +51,14 @@ func main() {
 	}
 	initLogger(cfg.Log, profile)
 
+	// Config warnings are found during Load, which runs before the logger
+	// exists, so they are emitted here instead of where they were spotted.
+	// Warn rather than fatal: each one names a setting that still boots but
+	// will not work as the operator intends.
+	for _, w := range cfg.Warnings {
+		slog.Warn("configuration warning", "detail", w)
+	}
+
 	rootCtx, cancel := signal.NotifyContext(context.Background(),
 		os.Interrupt, syscall.SIGTERM)
 	defer cancel()

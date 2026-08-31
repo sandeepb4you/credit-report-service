@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -392,5 +393,53 @@ func TestLoad_CurlLogging_DefaultsOff(t *testing.T) {
 	}
 	if cfg.Digitap.LogRequestCurl {
 		t.Error("digitap.log-request-curl defaulted to true; PII logging must never be the default")
+	}
+}
+
+// TestSanitizeMailPassword pins the repair of a Google app password pasted in
+// its displayed form, the failure that took prod's transactional email down for
+// two days in August 2026. The whitespace cannot belong to a Google app
+// password, so it is stripped there and only reported elsewhere.
+func TestSanitizeMailPassword(t *testing.T) {
+	const displayed = "abcd efgh ijkl mnop" // what Google shows: 4x4 + 3 spaces
+	const wanted = "abcdefghijklmnop"       // what SMTP AUTH accepts
+
+	tests := []struct {
+		name         string
+		host         string
+		password     string
+		wantPassword string
+		wantWarnings int
+	}{
+		{"gmail strips the display spaces", "smtp.gmail.com", displayed, wanted, 1},
+		{"googlemail host too", "smtp.googlemail.com", displayed, wanted, 1},
+		{"host casing is ignored", "SMTP.Gmail.com", displayed, wanted, 1},
+		{"a correct app password is untouched", "smtp.gmail.com", wanted, wanted, 0},
+		{"other hosts keep their spaces, with a warning", "smtp.example.com", displayed, displayed, 1},
+		{"no host means the stub sender, nothing to check", "", displayed, displayed, 0},
+		{"wrong length on gmail is flagged, not changed", "smtp.gmail.com", "shortpass", "shortpass", 1},
+		{"stripped and still the wrong length warns twice", "smtp.gmail.com", "ab cd", "abcd", 2},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Config{}
+			c.Mail.Host = tc.host
+			c.Mail.Password = tc.password
+
+			c.sanitizeMailPassword()
+
+			if c.Mail.Password != tc.wantPassword {
+				t.Errorf("password = %q, want %q", c.Mail.Password, tc.wantPassword)
+			}
+			if len(c.Warnings) != tc.wantWarnings {
+				t.Errorf("warnings = %d (%v), want %d", len(c.Warnings), c.Warnings, tc.wantWarnings)
+			}
+			for _, w := range c.Warnings {
+				if strings.Contains(w, tc.password) || strings.Contains(w, tc.wantPassword) {
+					t.Errorf("warning leaks the password: %q", w)
+				}
+			}
+		})
 	}
 }
