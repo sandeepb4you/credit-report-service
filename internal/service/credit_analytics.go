@@ -903,13 +903,18 @@ func (s *CreditAnalyticsService) buildPayload(ctx context.Context, accountID int
 		missing["last_name"] = "account profile has no last name; complete your profile"
 	}
 	if len(missing) > 0 {
-		// Debug: these are routine client omissions, not faults. Keys only,
-		// never the values (mobile/name are PII).
-		slog.Debug("credit-analytics rejected: incomplete profile",
+		// Info so a rejected request is explainable from default-level logs
+		// without redeploying at debug. Keys only, never the values
+		// (mobile/name are PII).
+		slog.Info("credit-analytics rejected: incomplete profile",
 			"account_id", accountID,
 			"missing", keysOf(missing),
 		)
-		return nil, apperr.NewValidationWith("invalid credit-analytics request", missing)
+		// The message is what the app shows verbatim in its failure state, so
+		// it is written for the user; the details map keeps the per-field
+		// specifics for clients that render them.
+		return nil, apperr.NewValidationWith(
+			"Complete your profile (name and mobile number) before requesting a credit report", missing)
 	}
 
 	// PAN must already be on file AND verified. Verification is an admin action
@@ -917,17 +922,22 @@ func (s *CreditAnalyticsService) buildPayload(ctx context.Context, accountID int
 	// credit-analytics upstream.
 	kyc, err := s.accounts.FindKYCByAccount(ctx, accountID)
 	if err != nil {
-		return nil, apperr.NewValidationWith("invalid credit-analytics request",
+		slog.Info("credit-analytics rejected: no KYC record", "account_id", accountID)
+		return nil, apperr.NewValidationWith(
+			"Submit your PAN before requesting a credit report",
 			map[string]string{"pan": "no PAN on file; submit one via POST /api/kyc/pan"})
 	}
 	if strings.TrimSpace(kyc.PANNumber) == "" {
-		return nil, apperr.NewValidationWith("invalid credit-analytics request",
+		slog.Info("credit-analytics rejected: no PAN on file", "account_id", accountID)
+		return nil, apperr.NewValidationWith(
+			"Submit your PAN before requesting a credit report",
 			map[string]string{"pan": "no PAN on file; submit one via POST /api/kyc/pan"})
 	}
 	if !kyc.PANVerified {
-		slog.Debug("credit-analytics rejected: PAN not verified", "account_id", accountID)
-		return nil, apperr.NewValidationWith("invalid credit-analytics request",
-			map[string]string{"pan": "PAN not verified; an admin must verify it before requesting credit analytics"})
+		slog.Info("credit-analytics rejected: PAN not verified", "account_id", accountID)
+		return nil, apperr.NewValidationWith(
+			"Your PAN verification is still in progress. Your report will be available once it completes.",
+			map[string]string{"pan": "PAN not verified; verification is pending admin review"})
 	}
 
 	otp, err := generateOTP(otpDigits)
