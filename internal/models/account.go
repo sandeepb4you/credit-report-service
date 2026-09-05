@@ -119,6 +119,16 @@ type KYCRecord struct {
 	// telling a client how many guesses remain helps only an attacker.
 	VerificationAttempts int `json:"-" db:"verification_attempts"`
 	RejectionReason  *string    `json:"rejectionReason,omitempty" db:"rejection_reason"`
+	// PANDateOfBirth is the date of birth tied to this PAN — from the prefill
+	// provider on automated verification, or typed by the user on the card
+	// upload screen. Part of the KYC evidence (and half the report-PDF
+	// password), distinct from accounts.date_of_birth, which is editable
+	// profile data.
+	PANDateOfBirth *time.Time `json:"panDateOfBirth,omitempty" db:"pan_date_of_birth"`
+	// DocumentID points at the uploaded card (documents table) supporting this
+	// record, when there is one. The row carries the file's metadata; the
+	// bytes stay behind the presigned admin endpoint.
+	DocumentID *int64 `json:"documentId,omitempty" db:"document_id"`
 	VerifiedAt       *time.Time `json:"verifiedAt,omitempty" db:"verified_at"`
 	// ReviewedByAccountID / ReviewedAt record which admin made the last
 	// verify-or-reject decision and when. Both are NULL until someone reviews
@@ -144,6 +154,12 @@ type KYCStatus struct {
 	// RejectionReason is set only on a REJECTED record; it is what the client
 	// shows the user so they know what to correct before re-submitting.
 	RejectionReason *string    `json:"rejectionReason,omitempty"`
+	// DocumentUploaded reports whether a PAN card image/PDF is on file for the
+	// manual-review path, so a client on a PENDING record can tell "waiting on
+	// the user to upload" from "waiting on an admin to review".
+	DocumentUploaded   bool       `json:"documentUploaded"`
+	DocumentFileName   *string    `json:"documentFileName,omitempty"`
+	DocumentUploadedAt *time.Time `json:"documentUploadedAt,omitempty"`
 	VerifiedAt      *time.Time `json:"verifiedAt,omitempty"`
 	// CreatedAt is when the account first submitted a PAN; UpdatedAt is when
 	// the record last changed (a re-submission or a verification).
@@ -170,15 +186,31 @@ func NewKYCStatus(rec *KYCRecord) KYCStatus {
 		last4 = last4[n-4:]
 	}
 	return KYCStatus{
-		Status:          rec.Status,
-		PANSubmitted:    true,
-		PANVerified:     rec.PANVerified,
-		PANLast4:        last4,
-		RejectionReason: rec.RejectionReason,
-		VerifiedAt:      rec.VerifiedAt,
-		CreatedAt:       &rec.CreatedAt,
-		UpdatedAt:       &rec.UpdatedAt,
+		Status:       rec.Status,
+		PANSubmitted: true,
+		PANVerified:  rec.PANVerified,
+		PANLast4:     last4,
+		// The file's own metadata (name, upload time) lives on the documents
+		// row; callers that have it attach it via AttachDocument.
+		DocumentUploaded: rec.DocumentID != nil,
+		RejectionReason:  rec.RejectionReason,
+		VerifiedAt:       rec.VerifiedAt,
+		CreatedAt:        &rec.CreatedAt,
+		UpdatedAt:        &rec.UpdatedAt,
 	}
+}
+
+// AttachDocument fills the status's file metadata from the documents row the
+// record points at. Separate from NewKYCStatus because the projection only
+// has the KYC row; whether fetching the document is worth a query is the
+// caller's call (the status endpoint does, the profile read does not).
+func (k *KYCStatus) AttachDocument(d *Document) {
+	if d == nil {
+		return
+	}
+	k.DocumentUploaded = true
+	k.DocumentFileName = &d.FileName
+	k.DocumentUploadedAt = &d.UpdatedAt
 }
 
 // Done reports whether KYC is complete — the single flag a client needs to
@@ -199,7 +231,18 @@ type KYCReviewItem struct {
 
 	PANNumber string  `json:"pan"               db:"pan_number"`
 	PANName   *string `json:"panName,omitempty" db:"pan_name"`
-	Status    string  `json:"status"            db:"status"`
+	// PANDateOfBirth rides along so the reviewer can compare it against the
+	// date printed on the uploaded card.
+	PANDateOfBirth *time.Time `json:"panDateOfBirth,omitempty" db:"pan_date_of_birth"`
+	Status         string     `json:"status"            db:"status"`
+
+	// HasDocument tells the reviewer there is an uploaded PAN card to look at
+	// (fetched separately via the presigned document endpoint). The file's own
+	// metadata rides along so the queue can label it without a second call.
+	HasDocument        bool       `json:"hasDocument"                  db:"has_document"`
+	DocumentFileName   *string    `json:"documentFileName,omitempty"   db:"document_filename"`
+	DocumentMimeType   *string    `json:"documentMimeType,omitempty"   db:"document_mime_type"`
+	DocumentUploadedAt *time.Time `json:"documentUploadedAt,omitempty" db:"document_uploaded_at"`
 
 	// CreatedAt is when the account first submitted a PAN; UpdatedAt is when
 	// the record last changed, and is what the queue is ordered by — a

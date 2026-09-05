@@ -261,7 +261,8 @@ func buildApp(cfg *config.Config, pool *pgxpool.Pool) *fiber.App {
 		handler.NewHealthHandler(),
 		handler.NewAuthHandler(authSvc, sessionSvc, cfg.Auth.CookieSecure),
 		handler.NewCreditAnalyticsHandler(analyticsSvc),
-		handler.NewKycHandler(kycSvc),
+		// 10MB doc cap, mirroring the registration.pan.document-max-size default.
+		handler.NewKycHandler(kycSvc, 10_000_000),
 		nil, // orders
 		handler.NewCouponHandler(couponSvc),
 		nil, // loans

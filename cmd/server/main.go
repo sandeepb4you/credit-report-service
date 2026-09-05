@@ -221,6 +221,9 @@ func main() {
 	// email-delivery endpoints.
 	analyticsSvc.SetReportPDFStore(pdfStore)
 	analyticsSvc.SetReportMailer(mailSvc)
+	// Uploaded PAN card documents share the same private bucket; with the stub
+	// the upload endpoint reports document storage unavailable.
+	kycSvc.SetDocumentStore(pdfStore)
 
 	// Bank-statement analysis: text-layer PDF parser + async worker pool.
 	// Parser follows the same empty-credentials-⇒-stub convention as the other
@@ -272,7 +275,7 @@ func main() {
 	healthH := handler.NewHealthHandler()
 	authH := handler.NewAuthHandler(authSvc, sessionSvc, cfg.Auth.CookieSecure)
 	analyticsH := handler.NewCreditAnalyticsHandler(analyticsSvc)
-	kycH := handler.NewKycHandler(kycSvc)
+	kycH := handler.NewKycHandler(kycSvc, serverMaxBytes(cfg.Registration.PAN.DocumentMaxSize))
 	orderH := handler.NewOrderHandler(orderSvc)
 	couponH := handler.NewCouponHandler(couponSvc)
 	loanH := handler.NewLoanSwitchHandler(loanSwitchSvc)

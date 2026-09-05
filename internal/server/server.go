@@ -216,6 +216,11 @@ func New(
 	k := api.Group("/kyc", requireAuth)
 	k.Get("/status", kyc.GetStatus)
 	k.Post("/pan", kyc.SubmitPAN)
+	// Manual-verification path: a card image/PDF for the admin queue, used when
+	// automated verification hit a provider gap or the submission was rejected.
+	k.Post("/pan/document", kyc.UploadPANDocument)
+	// The caller's own card, for the in-app preview; reviewers use the admin route.
+	k.Get("/pan/document", kyc.GetMyPANDocument)
 
 	// ---- Loan switch (interest optimizer) -------------------------------
 	//
@@ -260,6 +265,8 @@ func New(
 	// routes tighten it where they need more.
 	admin := api.Group("/admin", middleware.RequirePermission(tokens, epochs, models.PermKycVerify))
 	admin.Get("/kyc/pending", kyc.ListPending)
+	admin.Get("/kyc/pan/:accountId<int>/document", kyc.GetPANDocument)
+	admin.Get("/kyc/pan/:accountId<int>/document/file", kyc.GetPANDocumentFile)
 	admin.Post("/kyc/pan/:accountId<int>/verify", kyc.VerifyPAN)
 	admin.Post("/kyc/pan/:accountId<int>/reject", kyc.RejectPAN)
 	admin.Put("/accounts/:accountId<int>/role",

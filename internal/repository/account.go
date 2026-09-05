@@ -384,7 +384,8 @@ func (r *AccountRepo) InvalidatePasswordResetTokens(
 const kycCols = `id, account_id, pan_number, pan_name, pan_verified,
     aadhaar_last4, aadhaar_reference, aadhaar_pan_linked, status, provider,
     provider_ref, verification_attempts,
-    rejection_reason, verified_at, reviewed_by_account_id, reviewed_at,
+    rejection_reason, pan_date_of_birth, document_id,
+    verified_at, reviewed_by_account_id, reviewed_at,
     created_at, updated_at`
 
 // MarkPANVerifiedByProvider records an automated verification: the provider
@@ -395,7 +396,7 @@ const kycCols = `id, account_id, pan_number, pan_name, pan_verified,
 // say which system decided and which lookup decided it, so the two kinds of
 // approval remain tellable apart in an audit.
 func (r *AccountRepo) MarkPANVerifiedByProvider(
-	ctx context.Context, accountID int64, panName, provider, providerRef string,
+	ctx context.Context, accountID int64, panName, provider, providerRef string, dob *time.Time,
 ) (*models.KYCRecord, error) {
 	var k models.KYCRecord
 	err := pgxscan.Get(ctx, r.pool, &k,
@@ -405,13 +406,16 @@ func (r *AccountRepo) MarkPANVerifiedByProvider(
 		        pan_name              = NULLIF($2, ''),
 		        provider              = NULLIF($3, ''),
 		        provider_ref          = NULLIF($4, ''),
+		        -- The provider's DOB when it gave one; a provider that returned
+		        -- none must not erase a DOB the user already supplied.
+		        pan_date_of_birth     = COALESCE($5, kyc_records.pan_date_of_birth),
 		        rejection_reason      = NULL,
 		        verified_at           = now(),
 		        verification_attempts = 0,
 		        updated_at            = now()
 		  WHERE account_id = $1
 		 RETURNING `+kycCols,
-		accountID, panName, provider, providerRef,
+		accountID, panName, provider, providerRef, dob,
 	)
 	if err != nil {
 		return nil, classifyPgErr(err)
@@ -471,6 +475,12 @@ func (r *AccountRepo) UpsertPAN(ctx context.Context, accountID int64, panNumber 
 		        provider_ref      = CASE
 		            WHEN kyc_records.pan_number IS DISTINCT FROM EXCLUDED.pan_number
 		            THEN NULL ELSE kyc_records.provider_ref END,
+		        -- An uploaded card documents the PAN it pictures, so a different
+		        -- PAN orphans the reference: cleared here, and the next upload
+		        -- replaces the documents row itself (current-state, one per kind).
+		        document_id       = CASE
+		            WHEN kyc_records.pan_number IS DISTINCT FROM EXCLUDED.pan_number
+		            THEN NULL ELSE kyc_records.document_id END,
 		        updated_at        = now()
 		 RETURNING `+kycCols,
 		accountID, panNumber,
@@ -511,9 +521,15 @@ func (r *AccountRepo) ListKYCByStatus(
 	err := pgxscan.Select(ctx, r.pool, &out,
 		`SELECT k.account_id, a.primary_email, a.primary_phone,
 		        a.first_name, a.last_name,
-		        k.pan_number, k.pan_name, k.status, k.created_at, k.updated_at
+		        k.pan_number, k.pan_name, k.pan_date_of_birth, k.status,
+		        (k.document_id IS NOT NULL) AS has_document,
+		        d.filename   AS document_filename,
+		        d.mime_type  AS document_mime_type,
+		        d.updated_at AS document_uploaded_at,
+		        k.created_at, k.updated_at
 		   FROM kyc_records k
 		   JOIN accounts a ON a.id = k.account_id
+		   LEFT JOIN documents d ON d.id = k.document_id
 		  WHERE k.status = $1
 		  ORDER BY k.updated_at DESC, k.account_id DESC
 		  LIMIT $2 OFFSET $3`,

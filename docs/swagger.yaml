@@ -307,9 +307,23 @@ definitions:
         type: integer
       createdAt:
         type: string
+      documentId:
+        description: |-
+          DocumentID points at the uploaded card (documents table) supporting this
+          record, when there is one. The row carries the file's metadata; the
+          bytes stay behind the presigned admin endpoint.
+        type: integer
       id:
         type: integer
       pan:
+        type: string
+      panDateOfBirth:
+        description: |-
+          PANDateOfBirth is the date of birth tied to this PAN — from the prefill
+          provider on automated verification, or typed by the user on the card
+          upload screen. Part of the KYC evidence (and half the report-PDF
+          password), distinct from accounts.date_of_birth, which is editable
+          profile data.
         type: string
       panName:
         type: string
@@ -344,13 +358,30 @@ definitions:
           the record last changed, and is what the queue is ordered by — a
           re-submitted PAN needs review again, so it belongs back at the top.
         type: string
+      documentFileName:
+        type: string
+      documentMimeType:
+        type: string
+      documentUploadedAt:
+        type: string
       email:
         type: string
       firstName:
         type: string
+      hasDocument:
+        description: |-
+          HasDocument tells the reviewer there is an uploaded PAN card to look at
+          (fetched separately via the presigned document endpoint). The file's own
+          metadata rides along so the queue can label it without a second call.
+        type: boolean
       lastName:
         type: string
       pan:
+        type: string
+      panDateOfBirth:
+        description: |-
+          PANDateOfBirth rides along so the reviewer can compare it against the
+          date printed on the uploaded card.
         type: string
       panName:
         type: string
@@ -380,6 +411,16 @@ definitions:
         description: |-
           CreatedAt is when the account first submitted a PAN; UpdatedAt is when
           the record last changed (a re-submission or a verification).
+        type: string
+      documentFileName:
+        type: string
+      documentUploaded:
+        description: |-
+          DocumentUploaded reports whether a PAN card image/PDF is on file for the
+          manual-review path, so a client on a PENDING record can tell "waiting on
+          the user to upload" from "waiting on an admin to review".
+        type: boolean
+      documentUploadedAt:
         type: string
       panLast4:
         description: |-
@@ -1153,6 +1194,21 @@ definitions:
         example: "+919876543210"
         type: string
     type: object
+  internal_handler.PANDocumentLinkResponse:
+    properties:
+      expiresInSeconds:
+        example: 600
+        type: integer
+      fileName:
+        example: pan-card.jpg
+        type: string
+      mimeType:
+        example: image/jpeg
+        type: string
+      url:
+        description: URL is presigned and expires; ask again rather than storing it.
+        type: string
+    type: object
   internal_handler.ReferralReportResponse:
     properties:
       from:
@@ -1860,6 +1916,50 @@ paths:
       summary: Update a bank offering (admin)
       tags:
       - bank-offerings
+  /admin/kyc/pan/{accountId}/document:
+    get:
+      description: Returns a short-lived presigned URL for the PAN card document the
+        named account uploaded, so a reviewer can look at the card before verifying
+        or rejecting. Needs the 'kyc:verify' permission — the document is identity
+        PII.
+      parameters:
+      - description: Account id whose document to fetch
+        in: path
+        name: accountId
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handler.PANDocumentLinkResponse'
+        "400":
+          description: accountId must be an integer
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Missing the 'kyc:verify' permission
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: No PAN on file, or no document uploaded
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "503":
+          description: Document storage is not configured
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Get a download link for an account's uploaded PAN document (admin only)
+      tags:
+      - kyc
   /admin/kyc/pan/{accountId}/reject:
     post:
       consumes:
@@ -3891,6 +3991,91 @@ paths:
       security:
       - BearerAuth: []
       summary: Submit and verify the authenticated account's PAN
+      tags:
+      - kyc
+  /kyc/pan/document:
+    get:
+      description: Streams the file the authenticated account uploaded for manual
+        review, with its stored content type, so the app can render a preview. Own-account
+        only — reviewers use the admin endpoint. 404 until a document has been uploaded.
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: The document bytes (image or PDF)
+          schema:
+            type: file
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: No PAN on file, or no document uploaded
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "503":
+          description: Document storage is not configured
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Fetch the caller's own uploaded PAN card document
+      tags:
+      - kyc
+    post:
+      consumes:
+      - multipart/form-data
+      description: Accepts a photograph or PDF of the PAN card under the multipart
+        field "file" (JPEG/PNG/PDF), for the manual-review path — used when automated
+        verification hit a provider data gap, or after a rejection. An optional "pan"
+        form field submits or corrects the PAN itself; it is required if no PAN is
+        on file yet. The upload never counts against the verification-attempt cap.
+        A REJECTED record returns to PENDING. Returns the refreshed KYC status.
+      parameters:
+      - description: PAN card image (JPEG/PNG) or PDF
+        in: formData
+        name: file
+        required: true
+        type: file
+      - description: PAN, if not already on file or being corrected
+        in: formData
+        name: pan
+        type: string
+      - description: Date of birth as printed on the card (YYYY-MM-DD); stored beside
+          the PAN for the reviewer
+        in: formData
+        name: dob
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_models.KYCStatus'
+        "400":
+          description: No file / unsupported type / missing PAN
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "409":
+          description: PAN already verified, or linked to another account
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "413":
+          description: File exceeds the maximum allowed size
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "503":
+          description: Document storage is not configured
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Upload a PAN card document for manual verification
       tags:
       - kyc
   /kyc/status:

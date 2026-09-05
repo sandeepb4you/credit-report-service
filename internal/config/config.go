@@ -362,6 +362,9 @@ type PANConfig struct {
 	// PAN-plus-name is guessable for a known person, so an uncapped retry loop
 	// is a brute-force oracle billed to us per call.
 	MaxVerificationAttempts int `mapstructure:"max-verification-attempts"`
+	// DocumentMaxSize caps a PAN card document upload (parsed via
+	// server.ParseSize, e.g. "10MB").
+	DocumentMaxSize string `mapstructure:"document-max-size"`
 }
 
 type OCRConfig struct {
@@ -636,6 +639,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("registration.otp.max-sends", 5)
 	v.SetDefault("registration.pan.name-match-distance", 2)
 	v.SetDefault("registration.pan.max-verification-attempts", 3)
+	v.SetDefault("registration.pan.document-max-size", "10MB")
 	v.SetDefault("registration.ocr.provider", "stub")
 	v.SetDefault("registration.ocr.min-confidence", 0.8)
 
@@ -720,6 +724,7 @@ func allKeys() []string {
 		"registration.otp.max-sends",
 		"registration.pan.name-match-distance",
 		"registration.pan.max-verification-attempts",
+		"registration.pan.document-max-size",
 		"registration.ocr.provider", "registration.ocr.min-confidence",
 		"credit-analytics.reuse-window",
 		"digitap.base-url", "digitap.client-id", "digitap.client-secret", "digitap.timeout",

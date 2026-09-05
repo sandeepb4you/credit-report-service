@@ -154,6 +154,12 @@ func (c *PrefillClient) IsStub() bool { return c.stub }
 const (
 	StubName = "JOHN DOE"
 	StubPAN  = "ABCDE1234F"
+
+	// StubGapSuffix: a mobile number ending in this simulates a provider gap
+	// (result 102, "no record against this mobile"), which is how the
+	// manual-review path is exercised locally — the stub matches every other
+	// number, so nothing would ever land PENDING without it.
+	StubGapSuffix = "0000"
 )
 
 // Lookup asks which identity is registered against mobile. clientRef is echoed
@@ -172,6 +178,17 @@ func (c *PrefillClient) Lookup(ctx context.Context, clientRef, mobile string) (*
 
 	if c.stub {
 		slog.Debug("digitap prefill stub response (no credentials configured)", "client_ref_num", clientRef)
+		// A number ending in the gap suffix simulates "no record against this
+		// mobile" (102). Without it the stub always matches, and the manual-review
+		// path — PENDING record, card upload, admin verify — could never be
+		// exercised on a machine without credentials.
+		if strings.HasSuffix(national, StubGapSuffix) {
+			return &PrefillOutcome{
+				ResultCode: PrefillNoRecord,
+				RequestID:  "stub-" + clientRef,
+				Message:    "no record (stub)",
+			}, nil
+		}
 		return &PrefillOutcome{
 			ResultCode: PrefillFound,
 			RequestID:  "stub-" + clientRef,

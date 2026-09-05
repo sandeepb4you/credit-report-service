@@ -1,8 +1,11 @@
 package handler
 
 import (
+	"io"
+	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 
@@ -15,10 +18,14 @@ import (
 // KycHandler exposes the PAN submission endpoint.
 type KycHandler struct {
 	svc *service.KycService
+	// maxDocBytes caps a PAN card document upload
+	// (registration.pan.document-max-size), enforced here so an oversized file
+	// fails with 413 before its bytes are read.
+	maxDocBytes int
 }
 
-func NewKycHandler(svc *service.KycService) *KycHandler {
-	return &KycHandler{svc: svc}
+func NewKycHandler(svc *service.KycService, maxDocBytes int) *KycHandler {
+	return &KycHandler{svc: svc, maxDocBytes: maxDocBytes}
 }
 
 type submitPanReq struct {
@@ -70,6 +77,198 @@ func (h *KycHandler) SubmitPAN(c *fiber.Ctx) error {
 		return err
 	}
 	return c.Status(fiber.StatusCreated).JSON(rec)
+}
+
+// UploadPANDocument godoc
+//
+// @Summary      Upload a PAN card document for manual verification
+// @Description  Accepts a photograph or PDF of the PAN card under the multipart field "file" (JPEG/PNG/PDF), for the manual-review path — used when automated verification hit a provider data gap, or after a rejection. An optional "pan" form field submits or corrects the PAN itself; it is required if no PAN is on file yet. The upload never counts against the verification-attempt cap. A REJECTED record returns to PENDING. Returns the refreshed KYC status.
+// @Tags         kyc
+// @Accept       multipart/form-data
+// @Produce      json
+// @Security     BearerAuth
+// @Param        file  formData  file    true   "PAN card image (JPEG/PNG) or PDF"
+// @Param        pan   formData  string  false  "PAN, if not already on file or being corrected"
+// @Param        dob   formData  string  false  "Date of birth as printed on the card (YYYY-MM-DD); stored beside the PAN for the reviewer"
+// @Success      201   {object}  models.KYCStatus
+// @Failure      400   {object}  apperr.ErrorBody  "No file / unsupported type / missing PAN"
+// @Failure      401   {object}  apperr.ErrorBody  "Not authenticated"
+// @Failure      409   {object}  apperr.ErrorBody  "PAN already verified, or linked to another account"
+// @Failure      413   {object}  apperr.ErrorBody  "File exceeds the maximum allowed size"
+// @Failure      503   {object}  apperr.ErrorBody  "Document storage is not configured"
+// @Router       /kyc/pan/document [post]
+func (h *KycHandler) UploadPANDocument(c *fiber.Ctx) error {
+	accountID, ok := middleware.AccountID(c)
+	if !ok {
+		return apperr.NewUnauthorized("Not authenticated")
+	}
+
+	fileHeader, err := c.FormFile("file")
+	if err != nil {
+		return apperr.NewValidation("no file uploaded under field 'file'")
+	}
+	mimeType := strings.ToLower(strings.TrimSpace(fileHeader.Header.Get("Content-Type")))
+	if !looksLikePANDocument(fileHeader.Filename, mimeType) {
+		return apperr.NewValidation("only JPEG, PNG or PDF documents are supported")
+	}
+	if fileHeader.Size == 0 {
+		return apperr.NewValidation("uploaded file is empty")
+	}
+	if h.maxDocBytes > 0 && fileHeader.Size > int64(h.maxDocBytes) {
+		return apperr.NewPayloadTooLarge("document exceeds the maximum allowed size")
+	}
+
+	// Optional DOB, same shape and bounds as the profile's (validateDOB): a
+	// malformed date is a 400 here, not a silently dropped field the reviewer
+	// then never sees.
+	var dob *time.Time
+	if raw := strings.TrimSpace(c.FormValue("dob")); raw != "" {
+		parsed, perr := time.Parse("2006-01-02", raw)
+		if perr != nil {
+			return apperr.NewValidationWith("Validation failed",
+				map[string]string{"dob": "dob must be YYYY-MM-DD"})
+		}
+		if msg := validateDOB(parsed, time.Now().UTC()); msg != "" {
+			return apperr.NewValidationWith("Validation failed", map[string]string{"dob": msg})
+		}
+		dob = &parsed
+	}
+
+	file, err := fileHeader.Open()
+	if err != nil {
+		return apperr.NewValidation("could not open the uploaded file")
+	}
+	defer file.Close()
+	data := make([]byte, fileHeader.Size)
+	if _, err := io.ReadFull(file, data); err != nil {
+		return apperr.NewValidation("could not read the uploaded file")
+	}
+
+	st, err := h.svc.UploadPANDocument(
+		c.Context(), accountID, c.FormValue("pan"), fileHeader.Filename, mimeType, dob, data)
+	if err != nil {
+		return err
+	}
+	return c.Status(fiber.StatusCreated).JSON(st)
+}
+
+// looksLikePANDocument accepts the formats a PAN card plausibly arrives in: a
+// phone photo (JPEG/PNG) or a scan/download (PDF). Extension or content type
+// may each be missing or generic, so either one vouching is enough — the file
+// is only ever shown to a human reviewer, never parsed.
+func looksLikePANDocument(filename, contentType string) bool {
+	switch strings.ToLower(path.Ext(filename)) {
+	case ".pdf", ".jpg", ".jpeg", ".png":
+		return true
+	}
+	switch contentType {
+	case "application/pdf", "image/jpeg", "image/png":
+		return true
+	}
+	return false
+}
+
+// GetMyPANDocument godoc
+//
+// @Summary      Fetch the caller's own uploaded PAN card document
+// @Description  Streams the file the authenticated account uploaded for manual review, with its stored content type, so the app can render a preview. Own-account only — reviewers use the admin endpoint. 404 until a document has been uploaded.
+// @Tags         kyc
+// @Produce      octet-stream
+// @Security     BearerAuth
+// @Success      200  {file}    binary            "The document bytes (image or PDF)"
+// @Failure      401  {object}  apperr.ErrorBody  "Not authenticated"
+// @Failure      404  {object}  apperr.ErrorBody  "No PAN on file, or no document uploaded"
+// @Failure      503  {object}  apperr.ErrorBody  "Document storage is not configured"
+// @Router       /kyc/pan/document [get]
+func (h *KycHandler) GetMyPANDocument(c *fiber.Ctx) error {
+	accountID, ok := middleware.AccountID(c)
+	if !ok {
+		return apperr.NewUnauthorized("Not authenticated")
+	}
+	doc, data, err := h.svc.DocumentContent(c.Context(), accountID)
+	if err != nil {
+		return err
+	}
+	c.Set(fiber.HeaderContentType, doc.MimeType)
+	c.Set(fiber.HeaderContentDisposition, `inline; filename="`+doc.FileName+`"`)
+	return c.Send(data)
+}
+
+// GetPANDocumentFile godoc
+//
+// @Summary      Fetch an account's uploaded PAN card document (admin only)
+// @Description  Streams the named account's uploaded card with its stored content type, so the review console renders it inline; the presigned-link sibling remains for downloading. Needs the 'kyc:verify' permission.
+// @Tags         kyc
+// @Produce      octet-stream
+// @Security     BearerAuth
+// @Param        accountId  path      int  true  "Account id whose document to fetch"
+// @Success      200        {file}    binary            "The document bytes (image or PDF)"
+// @Failure      400        {object}  apperr.ErrorBody  "accountId must be an integer"
+// @Failure      401        {object}  apperr.ErrorBody  "Not authenticated"
+// @Failure      403        {object}  apperr.ErrorBody  "Missing the 'kyc:verify' permission"
+// @Failure      404        {object}  apperr.ErrorBody  "No PAN on file, or no document uploaded"
+// @Failure      503        {object}  apperr.ErrorBody  "Document storage is not configured"
+// @Router       /admin/kyc/pan/{accountId}/document/file [get]
+func (h *KycHandler) GetPANDocumentFile(c *fiber.Ctx) error {
+	if _, ok := middleware.AccountID(c); !ok {
+		return apperr.NewUnauthorized("Not authenticated")
+	}
+	accountID, err := strconv.ParseInt(c.Params("accountId"), 10, 64)
+	if err != nil {
+		return apperr.NewValidation("accountId must be an integer")
+	}
+	doc, data, err := h.svc.DocumentContent(c.Context(), accountID)
+	if err != nil {
+		return err
+	}
+	c.Set(fiber.HeaderContentType, doc.MimeType)
+	c.Set(fiber.HeaderContentDisposition, `inline; filename="`+doc.FileName+`"`)
+	return c.Send(data)
+}
+
+// PANDocumentLinkResponse carries a short-lived presigned URL for an uploaded
+// PAN card document, for the admin review screen.
+type PANDocumentLinkResponse struct {
+	// URL is presigned and expires; ask again rather than storing it.
+	URL              string `json:"url"`
+	ExpiresInSeconds int    `json:"expiresInSeconds" example:"600"`
+	FileName         string `json:"fileName,omitempty" example:"pan-card.jpg"`
+	MimeType         string `json:"mimeType,omitempty" example:"image/jpeg"`
+}
+
+// GetPANDocument godoc
+//
+// @Summary      Get a download link for an account's uploaded PAN document (admin only)
+// @Description  Returns a short-lived presigned URL for the PAN card document the named account uploaded, so a reviewer can look at the card before verifying or rejecting. Needs the 'kyc:verify' permission — the document is identity PII.
+// @Tags         kyc
+// @Produce      json
+// @Security     BearerAuth
+// @Param        accountId  path      int  true  "Account id whose document to fetch"
+// @Success      200        {object}  PANDocumentLinkResponse
+// @Failure      400        {object}  apperr.ErrorBody  "accountId must be an integer"
+// @Failure      401        {object}  apperr.ErrorBody  "Not authenticated"
+// @Failure      403        {object}  apperr.ErrorBody  "Missing the 'kyc:verify' permission"
+// @Failure      404        {object}  apperr.ErrorBody  "No PAN on file, or no document uploaded"
+// @Failure      503        {object}  apperr.ErrorBody  "Document storage is not configured"
+// @Router       /admin/kyc/pan/{accountId}/document [get]
+func (h *KycHandler) GetPANDocument(c *fiber.Ctx) error {
+	if _, ok := middleware.AccountID(c); !ok {
+		return apperr.NewUnauthorized("Not authenticated")
+	}
+	accountID, err := strconv.ParseInt(c.Params("accountId"), 10, 64)
+	if err != nil {
+		return apperr.NewValidation("accountId must be an integer")
+	}
+	url, ttl, doc, err := h.svc.DocumentLink(c.Context(), accountID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(PANDocumentLinkResponse{
+		URL:              url,
+		ExpiresInSeconds: int(ttl.Seconds()),
+		FileName:         doc.FileName,
+		MimeType:         doc.MimeType,
+	})
 }
 
 // GetStatus godoc

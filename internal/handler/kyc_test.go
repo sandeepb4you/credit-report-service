@@ -8,7 +8,7 @@ import (
 )
 
 func TestGetKYCStatus_Unauthenticated(t *testing.T) {
-	h := NewKycHandler(nil)
+	h := NewKycHandler(nil, 0)
 	app := newApp()
 	app.Get("/api/kyc/status", h.GetStatus)
 
@@ -23,7 +23,7 @@ func TestGetKYCStatus_Unauthenticated(t *testing.T) {
 }
 
 func TestListPendingKYC_Unauthenticated(t *testing.T) {
-	h := NewKycHandler(nil)
+	h := NewKycHandler(nil, 0)
 	app := newApp()
 	app.Get("/api/admin/kyc/pending", h.ListPending)
 
@@ -44,7 +44,7 @@ func TestListPendingKYC_BadPaging(t *testing.T) {
 	cases := []string{"?limit=fifty", "?offset=abc", "?limit=10&offset=1.5"}
 	for _, q := range cases {
 		t.Run(q, func(t *testing.T) {
-			h := NewKycHandler(nil)
+			h := NewKycHandler(nil, 0)
 			app := newApp()
 			app.Use(func(c *fiber.Ctx) error {
 				c.Locals("accountID", int64(1))
@@ -61,5 +61,50 @@ func TestListPendingKYC_BadPaging(t *testing.T) {
 				t.Errorf("status = %d, want 400", resp.StatusCode)
 			}
 		})
+	}
+}
+
+// The upload accepts what a PAN card plausibly arrives as — a phone photo or a
+// scan — and either the extension or the content type vouching is enough.
+func TestLooksLikePANDocument(t *testing.T) {
+	cases := []struct {
+		filename, contentType string
+		want                  bool
+	}{
+		{"pan.jpg", "", true},
+		{"pan.JPEG", "", true},
+		{"pan.png", "image/png", true},
+		{"pan.pdf", "application/pdf", true},
+		{"pan", "image/jpeg", true},           // extension lost, mime vouches
+		{"pan.heic", "image/heic", false},     // iPhone default — not accepted
+		{"pan.docx", "application/msword", false},
+		{"pan.txt", "", false},
+	}
+	for _, tc := range cases {
+		if got := looksLikePANDocument(tc.filename, tc.contentType); got != tc.want {
+			t.Errorf("looksLikePANDocument(%q, %q) = %v, want %v",
+				tc.filename, tc.contentType, got, tc.want)
+		}
+	}
+}
+
+// An upload with no file must 400 before any service call — the nil service
+// would panic if reached.
+func TestUploadPANDocument_NoFile(t *testing.T) {
+	h := NewKycHandler(nil, 0)
+	app := newApp()
+	app.Use(func(c *fiber.Ctx) error {
+		c.Locals("accountID", int64(1))
+		return c.Next()
+	})
+	app.Post("/api/kyc/pan/document", h.UploadPANDocument)
+
+	req := httptest.NewRequest("POST", "/api/kyc/pan/document", nil)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 400 {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
 	}
 }
