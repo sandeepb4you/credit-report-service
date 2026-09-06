@@ -131,3 +131,24 @@ func upper(s string) string {
 	}
 	return string(out)
 }
+
+// The stored object's extension comes from the filename when it is one of the
+// accepted formats, falls back to the mime type, and is omitted rather than
+// guessed when neither says anything usable.
+func TestDocumentExt(t *testing.T) {
+	cases := []struct {
+		filename, mime, want string
+	}{
+		{"card.jpg", "", ".jpg"},
+		{"card.JPEG", "image/jpeg", ".jpeg"},
+		{"card.pdf", "application/octet-stream", ".pdf"},
+		{"card", "image/png", ".png"},
+		{"card.bin", "image/jpeg", ".jpg"}, // unaccepted extension → mime decides
+		{"card", "text/plain", ""},
+	}
+	for _, tc := range cases {
+		if got := documentExt(tc.filename, tc.mime); got != tc.want {
+			t.Errorf("documentExt(%q, %q) = %q, want %q", tc.filename, tc.mime, got, tc.want)
+		}
+	}
+}

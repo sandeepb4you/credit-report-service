@@ -37,6 +37,14 @@ type OrderService struct {
 	coupons  *CouponService
 	gateway  payments.Gateway
 	cfg      config.CashfreeConfig
+	// scheduled is where a plan purchase's batch of prepaid report runs is
+	// minted at fulfilment. A constructor argument like the analytics service's
+	// order repo, and for the same reason: forgetting to wire it would mean
+	// plans that take money and schedule nothing.
+	scheduled *repository.ScheduledCheckRepo
+	// scheduleLoc is the business day boundary for due dates (see
+	// config.ScheduledChecksConfig.Timezone).
+	scheduleLoc *time.Location
 }
 
 func NewOrderService(
@@ -45,9 +53,12 @@ func NewOrderService(
 	coupons *CouponService,
 	gateway payments.Gateway,
 	cfg config.CashfreeConfig,
+	scheduled *repository.ScheduledCheckRepo,
+	scheduleLoc *time.Location,
 ) *OrderService {
 	return &OrderService{
 		orders: orders, accounts: accounts, coupons: coupons, gateway: gateway, cfg: cfg,
+		scheduled: scheduled, scheduleLoc: scheduleLoc,
 	}
 }
 
@@ -141,6 +152,22 @@ func (s *OrderService) CreateOrder(
 	}
 	if !product.Active {
 		return nil, apperr.NewConflict("Product is not available for purchase")
+	}
+
+	// One plan batch at a time. Two overlapping cadences would race each other's
+	// re-anchoring and read as double-billing; a user who wants more checks
+	// sooner can still buy one-time checks (which never touch the schedule).
+	// Checked at purchase rather than fulfilment because refusing money is
+	// kinder than refunding it.
+	if product.IsPlan() {
+		hasPending, perr := s.scheduled.HasPending(ctx, accountID)
+		if perr != nil {
+			return nil, perr
+		}
+		if hasPending {
+			return nil, apperr.NewConflict(
+				"You already have a plan with scheduled checks remaining. You can buy a new plan once they finish.")
+		}
 	}
 
 	account, err := s.accounts.FindByID(ctx, accountID)
@@ -274,7 +301,32 @@ func (s *OrderService) GetOrder(ctx context.Context, accountID int64, orderUID s
 		}
 		return s.findOwnedOrder(ctx, accountID, orderUID)
 	}
+	if order.Status == models.OrderPaid {
+		s.ensurePlanFulfilled(ctx, order)
+	}
 	return order, nil
+}
+
+// ensurePlanFulfilled re-runs the schedule mint for a PAID plan order whose
+// batch is missing. The gap it closes: fulfilOrder runs exactly once (on the
+// first PAID transition) and its mint is best-effort, so a DB error there
+// would leave money taken and nothing scheduled with no retry path — webhook
+// redeliveries never reach fulfilment again because MarkOrderPaid's status
+// guard reports them as not-first. The app polls this endpoint right after
+// checkout, which makes it the natural self-heal hook. One EXISTS per poll of
+// a healthy paid order; Mint's ON CONFLICT makes a racing double-heal inert.
+func (s *OrderService) ensurePlanFulfilled(ctx context.Context, order *models.Order) {
+	minted, err := s.scheduled.HasForOrder(ctx, order.ID)
+	if err != nil || minted {
+		return
+	}
+	product, err := s.orders.FindProduct(ctx, order.ProductCode)
+	if err != nil || !product.IsPlan() {
+		return
+	}
+	slog.Warn("plan fulfilment self-heal: PAID plan order had no scheduled checks; minting now",
+		"order_uid", order.OrderUID, "account_id", order.AccountID)
+	s.fulfillOrder(ctx, order)
 }
 
 // ListOrders returns the caller's order history, newest first.
@@ -310,7 +362,7 @@ func (s *OrderService) reconcile(ctx context.Context, order *models.Order) error
 			return err
 		}
 		if first {
-			s.fulfillOrder(order)
+			s.fulfillOrder(ctx, order)
 		}
 	case models.OrderExpired, models.OrderTerminated:
 		if err := s.orders.UpdateOrderStatus(ctx, order.OrderUID, res.Status, nil); err != nil {
@@ -409,7 +461,7 @@ func (s *OrderService) applyWebhook(ctx context.Context, env *webhookEnvelope) e
 			return err
 		}
 		if first {
-			s.fulfillOrder(order)
+			s.fulfillOrder(ctx, order)
 		}
 	case webhookPaymentFailed:
 		if err := s.orders.UpdateOrderStatus(ctx, orderUID, models.OrderFailed,
@@ -428,20 +480,82 @@ func (s *OrderService) applyWebhook(ctx context.Context, env *webhookEnvelope) e
 	return nil
 }
 
-// fulfillOrder logs what was bought.
+// fulfillOrder grants what was bought.
 //
-// There is deliberately no grant to make here: the PAID order IS the
-// entitlement. A paid order with consumed_at NULL is one unspent purchase, and
-// the credit-analytics pull claims it (OrderRepo.SpendEntitlement). Deriving it
-// from the order rather than writing a separate credit row means the two can
-// never disagree — and a refund or a reversal moves the entitlement with the
-// order instead of leaving a granted credit stranded behind it.
+// For a one-time product there is deliberately no grant to make: the PAID
+// order IS the entitlement. A paid order with consumed_at NULL is one unspent
+// purchase, and the credit-analytics pull claims it
+// (OrderRepo.SpendEntitlement). Deriving it from the order rather than writing
+// a separate credit row means the two can never disagree — and a refund or a
+// reversal moves the entitlement with the order instead of leaving a granted
+// credit stranded behind it.
+//
+// A PLAN purchase (product.IsPlan) is different: one payment buys a batch of
+// N runs on a cadence, so fulfilment materializes the whole schedule as
+// scheduled_score_checks rows — row 1 due TODAY (the "first check now"), row i
+// due (i-1) intervals later. The runner picks row 1 up within a sweep, or the
+// user, sitting in the app right after paying, runs it themselves (a due row
+// spends without confirmation). The order itself is never consumable by
+// SpendEntitlement — its product code isn't CREDIT_ANALYSIS — so the rows are
+// the only entitlement a plan grants, and there is nothing to double-count.
+//
+// Minting is idempotent two ways: MarkOrderPaid's status guard means only the
+// first PAID transition reaches here, and the (order_id, sequence_no) unique
+// key means a replayed mint inserts nothing. A mint failure is logged loudly
+// rather than failing the webhook: the payment HAS happened, and Cashfree's
+// retry (or the reconcile path) re-enters here to try again.
 //
 // MarkOrderPaid stamps fulfilled_at on the same transition, recording when the
 // entitlement was granted; consumed_at records when it was spent.
-func (s *OrderService) fulfillOrder(order *models.Order) {
+func (s *OrderService) fulfillOrder(ctx context.Context, order *models.Order) {
 	log.Printf("[order] fulfilled %s: account %d purchased %s",
 		order.OrderUID, order.AccountID, order.ProductCode)
+
+	product, err := s.orders.FindProduct(ctx, order.ProductCode)
+	if err != nil {
+		slog.Error("plan fulfilment: product lookup failed; scheduled checks NOT minted",
+			"order_uid", order.OrderUID, "product_code", order.ProductCode, "error", err)
+		return
+	}
+	if !product.IsPlan() {
+		return
+	}
+
+	n := product.ChecksIncluded
+	interval := *product.IntervalMonths
+	today := businessToday(s.scheduleLoc)
+	dueDates := make([]time.Time, n)
+	for i := range dueDates {
+		dueDates[i] = today.AddDate(0, interval*i, 0)
+	}
+	var expiresOn *time.Time
+	if product.ValidityDays != nil && *product.ValidityDays > 0 {
+		e := today.AddDate(0, 0, *product.ValidityDays)
+		expiresOn = &e
+	}
+	if err := s.scheduled.Mint(ctx, order.AccountID, order.ID, product.Code,
+		interval, dueDates, expiresOn); err != nil {
+		// The money is taken and the schedule is not there — the one state this
+		// feature must never sit in quietly. The webhook retry / reconcile path
+		// re-runs the mint (idempotent), but if this line is in the log more
+		// than transiently, someone paid for checks that aren't scheduled.
+		slog.Error("plan fulfilment: minting scheduled checks FAILED",
+			"order_uid", order.OrderUID, "account_id", order.AccountID,
+			"product_code", product.Code, "checks", n, "error", err)
+		return
+	}
+	slog.Info("plan fulfilled: scheduled checks minted",
+		"order_uid", order.OrderUID, "account_id", order.AccountID,
+		"product_code", product.Code, "checks", n, "interval_months", interval,
+		"first_due_on", today.Format("2006-01-02"))
+}
+
+// businessToday is the current date in the business timezone, carried as a
+// midnight-UTC time.Time so a DATE column receives exactly that day whatever
+// the driver does with zones.
+func businessToday(loc *time.Location) time.Time {
+	y, m, d := time.Now().In(loc).Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 }
 
 // ---- helpers ----------------------------------------------------------------

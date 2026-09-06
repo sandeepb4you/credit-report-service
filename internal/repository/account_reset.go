@@ -115,6 +115,30 @@ func (r *AccountRepo) ResetToSignup(
 		return nil, err
 	}
 
+	// Uploaded documents (PAN card and whatever else onboarding collects) go
+	// too, their objects riding the same best-effort bucket cleanup as the
+	// report PDFs. Before kyc_records only in the sense that it doesn't
+	// matter: the document_id FK is ON DELETE SET NULL either way.
+	docRows, err := tx.Query(ctx,
+		`DELETE FROM documents WHERE account_id = $1 RETURNING s3_uri`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	for docRows.Next() {
+		var uri string
+		if err := docRows.Scan(&uri); err != nil {
+			docRows.Close()
+			return nil, err
+		}
+		if uri != "" {
+			pdfURIs = append(pdfURIs, uri)
+		}
+	}
+	docRows.Close()
+	if err := docRows.Err(); err != nil {
+		return nil, err
+	}
+
 	// Coupon redemptions before orders: the redemption references order_uid, and
 	// clearing it is also what lets the same coupon be tested again.
 	for _, stmt := range []string{

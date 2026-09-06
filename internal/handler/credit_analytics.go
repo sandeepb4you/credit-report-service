@@ -33,7 +33,8 @@ func NewCreditAnalyticsHandler(svc *service.CreditAnalyticsService) *CreditAnaly
 // @Success      201      {object}  service.ReportInsights  "Response header X-Report-Reused: true means an existing recent report was returned instead of a new bureau pull"
 // @Failure      400      {object}  apperr.ErrorBody  "Invalid request body / missing profile or PAN / upstream 400"
 // @Failure      401      {object}  apperr.ErrorBody  "Not authenticated"
-// @Failure      402      {object}  apperr.ErrorBody  "No unspent score-check purchase on the account — send the user to the paywall"
+// @Failure      402      {object}  apperr.ErrorBody  "No unspent score-check purchase or scheduled plan run on the account — send the user to the paywall"
+// @Failure      409      {object}  apperr.ErrorBody  "The only funding is a scheduled plan run whose due date is still ahead and use_scheduled_quota was not sent. details carries reason=scheduled_quota_confirm, pendingRuns, nextDueOn and newNextDueOn (YYYY-MM-DD) for the confirmation dialog; re-send with use_scheduled_quota=true to spend it and re-anchor the schedule from today"
 // @Failure      422      {object}  apperr.ErrorBody  "Upstream tradeline limit exceeded"
 // @Failure      502      {object}  apperr.ErrorBody  "Digitap unreachable, or returned an unhandled error"
 // @Failure      503      {object}  apperr.ErrorBody  "Digitap rejected our client credentials (server misconfiguration)"
@@ -78,6 +79,28 @@ func (h *CreditAnalyticsHandler) Request(c *fiber.Ctx) error {
 		return err
 	}
 	return c.Status(fiber.StatusCreated).JSON(insights)
+}
+
+// ScheduledChecks godoc
+//
+// @Summary      The caller's scheduled score checks (myScorr Plus plan runs)
+// @Description  Returns the prepaid report runs the account's plan purchase minted: pending count, next due date, expiry, and the full run list (PENDING/RUNNING/DONE/FAILED/EXPIRED). An account with no plan gets pendingRuns 0 and an empty runs list — the normal one-time-purchase state, not an error. The app prices its "use a plan check now?" confirmation from this, but the server re-checks on the pull itself (the 409 on /request), so this endpoint is display, never authority.
+// @Tags         credit-analytics
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  service.ScheduledChecksView
+// @Failure      401  {object}  apperr.ErrorBody  "Not authenticated"
+// @Router       /credit-analytics/scheduled-checks [get]
+func (h *CreditAnalyticsHandler) ScheduledChecks(c *fiber.Ctx) error {
+	accountID, ok := middleware.AccountID(c)
+	if !ok {
+		return apperr.NewUnauthorized("Not authenticated")
+	}
+	view, err := h.svc.ScheduledChecks(c.Context(), accountID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(view)
 }
 
 // ListReports godoc

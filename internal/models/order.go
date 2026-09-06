@@ -20,6 +20,8 @@ const (
 	ProductCreditAnalysis        = "CREDIT_ANALYSIS"
 	ProductBankStatementAnalysis = "BANK_STATEMENT_ANALYSIS"
 	ProductUPIStatementAnalysis  = "UPI_STATEMENT_ANALYSIS"
+	ProductScorePlusQuarterly    = "SCORE_PLUS_QUARTERLY"
+	ProductScorePlusMonthly      = "SCORE_PLUS_MONTHLY"
 )
 
 // Product is the row model for the products table: the purchasable catalog.
@@ -32,11 +34,24 @@ type Product struct {
 	// clients render as a checklist on the plans screen.
 	Description string `json:"description" db:"description"`
 
+	// ChecksIncluded is how many score checks one purchase buys (1 for one-time
+	// products). IntervalMonths is the cadence between them and nil for one-time
+	// products — it is what makes fulfilment mint a scheduled batch. ValidityDays
+	// bounds how long unrun checks stay runnable (nil = forever). These are NOT
+	// subscription fields: payment is one Cashfree order, no mandate, no renewal.
+	ChecksIncluded int  `json:"checksIncluded" db:"checks_included"`
+	IntervalMonths *int `json:"intervalMonths,omitempty" db:"interval_months"`
+	ValidityDays   *int `json:"validityDays,omitempty" db:"validity_days"`
+
 	Currency  string    `json:"currency"  db:"currency"`
 	Active    bool      `json:"active"    db:"active"`
 	CreatedAt time.Time `json:"createdAt" db:"created_at"`
 	UpdatedAt time.Time `json:"updatedAt" db:"updated_at"`
 }
+
+// IsPlan reports whether a purchase of this product is fulfilled as a batch of
+// scheduled score checks rather than a single order-as-entitlement.
+func (p *Product) IsPlan() bool { return p.IntervalMonths != nil && *p.IntervalMonths > 0 }
 
 // Order is the row model for the orders table: one purchase attempt. OrderUID
 // is our public identifier and the order_id sent to Cashfree; the serial id

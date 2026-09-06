@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path"
 	"strings"
+	"time"
 
 	"credit-report-service/internal/apperr"
 	"credit-report-service/internal/config"
 	"credit-report-service/internal/models"
 	"credit-report-service/internal/repository"
+	"credit-report-service/internal/s3store"
 )
 
 // KycService implements PAN submission and verification.
@@ -32,6 +35,10 @@ type KycService struct {
 	verifier *PrefillVerifier
 	cfg      config.PANConfig
 	demoMode bool
+	// docs stores uploaded PAN card documents (same private bucket as the
+	// report PDFs). The stub client turns the upload path into a clear 503
+	// rather than pretending a file was kept.
+	docs *s3store.Client
 }
 
 func NewKycService(
@@ -42,6 +49,11 @@ func NewKycService(
 ) *KycService {
 	return &KycService{accounts: accounts, verifier: verifier, cfg: cfg, demoMode: demoMode}
 }
+
+// SetDocumentStore wires PAN card document storage (same pattern as the
+// analytics service's report-PDF store: the s3 client is built after the
+// services). Unset or stub, the upload endpoint answers 503.
+func (s *KycService) SetDocumentStore(docs *s3store.Client) { s.docs = docs }
 
 // SubmitPAN validates the submitted PAN and name, then verifies them against
 // the account's mobile number through the prefill provider.
@@ -57,7 +69,9 @@ func NewKycService(
 //   - provider gap   -> PENDING, no error: the provider had no record to
 //     compare against (102/103/503), which says nothing about whether the user
 //     is honest. Blocking here would strand every legitimate user the provider
-//     cannot see, so the record stays for the admin queue to settle.
+//     cannot see, so the record stays for the admin queue and onboarding
+//     continues; the pending state surfaces at the credit-report fetch, whose
+//     rejection reason the client shows. Not counted against the attempt cap.
 func (s *KycService) SubmitPAN(ctx context.Context, accountID int64, pan, fullName string) (*models.KYCRecord, error) {
 	pan = strings.ToUpper(strings.TrimSpace(pan))
 	fullName = strings.Join(strings.Fields(fullName), " ")
@@ -99,7 +113,7 @@ func (s *KycService) SubmitPAN(ctx context.Context, accountID int64, pan, fullNa
 
 	// Demo mode: no provider call at all. Never enabled in production.
 	if s.demoMode {
-		verified, verr := s.accounts.MarkPANVerifiedByProvider(ctx, accountID, fullName, "demo", "")
+		verified, verr := s.accounts.MarkPANVerifiedByProvider(ctx, accountID, fullName, "demo", "", nil)
 		if verr != nil {
 			return nil, verr
 		}
@@ -142,7 +156,11 @@ func (s *KycService) SubmitPAN(ctx context.Context, accountID int64, pan, fullNa
 		if name == "" {
 			name = fullName
 		}
-		verified, verr := s.accounts.MarkPANVerifiedByProvider(ctx, accountID, name, provider, verdict.ProviderRef)
+		// The provider's DOB lands on the KYC record beside the PAN it belongs
+		// to (as well as backfilling the profile below): it is verification
+		// evidence, kept apart from the editable accounts.date_of_birth.
+		verified, verr := s.accounts.MarkPANVerifiedByProvider(
+			ctx, accountID, name, provider, verdict.ProviderRef, verdict.ProviderDOB)
 		if verr != nil {
 			return nil, verr
 		}
@@ -167,8 +185,15 @@ func (s *KycService) SubmitPAN(ctx context.Context, accountID int64, pan, fullNa
 		return verified, nil
 
 	case verdict.ProviderGap:
-		slog.Info("pan stored unverified: provider had nothing to compare",
-			"account_id", accountID, "reason", verdict.Reason)
+		// Signup proceeds: the record stays PENDING for the admin queue and the
+		// response is a success, so onboarding is never stranded on a gap the
+		// user cannot fix. The pending state surfaces later, at the point it
+		// bites — the credit-report fetch rejects with the reason until an
+		// admin verifies. Warn (not Debug) so the gap is visible in default
+		// logs next to the lookup row.
+		slog.Warn("pan stored unverified: provider had nothing to compare",
+			"account_id", accountID, "reason", verdict.Reason,
+			"result_code", verdict.ResultCode, "client_ref", verdict.ClientRef)
 		return rec, nil
 
 	default:
@@ -257,7 +282,206 @@ func (s *KycService) Status(ctx context.Context, accountID int64) (models.KYCSta
 	if err != nil {
 		return models.KYCStatus{}, err
 	}
-	return models.NewKYCStatus(rec), nil
+	st := models.NewKYCStatus(rec)
+	// The file's name and upload time live on the documents row. Best-effort:
+	// a status the client can render beats failing it over metadata.
+	if rec.DocumentID != nil {
+		if doc, derr := s.accounts.FindDocumentByID(ctx, *rec.DocumentID); derr == nil {
+			st.AttachDocument(doc)
+		}
+	}
+	return st, nil
+}
+
+// UploadPANDocument stores a photograph or PDF of the user's PAN card, for the
+// manual-review path: when automated verification hit a provider gap (or was
+// rejected and the user is answering the rejection), the card is what gives an
+// admin something to judge beyond a typed number.
+//
+// pan is optional when a PAN is already on file — the common case, since the
+// gap path stores one — and required otherwise. Submitting a different PAN
+// than the one on file replaces it via the same UpsertPAN rules as SubmitPAN
+// (uniqueness conflict, attempt-counter reset on change).
+//
+// dob, when given, is stored on the record beside the PAN — the manual
+// counterpart of the DOB the prefill provider supplies on the automated path,
+// there for the reviewer to compare against the card. Nil keeps whatever the
+// record already holds.
+//
+// The upload itself never verifies anything and never counts against the
+// verification-attempt cap; it re-queues a REJECTED record to PENDING because
+// the new document is the user's answer to the rejection.
+func (s *KycService) UploadPANDocument(
+	ctx context.Context, accountID int64, pan, filename, mimeType string, dob *time.Time, data []byte,
+) (models.KYCStatus, error) {
+	if s.docs == nil || s.docs.IsStub() {
+		return models.KYCStatus{}, apperr.NewServiceUnavailable(
+			"Document storage is not configured on this server")
+	}
+
+	pan = strings.ToUpper(strings.TrimSpace(pan))
+	if pan != "" && !panFormat.MatchString(pan) {
+		return models.KYCStatus{}, apperr.NewValidationWith("Validation failed",
+			map[string]string{"pan": "PAN must be 5 letters, 4 digits, 1 letter (e.g. ABCDE1234F)"})
+	}
+
+	rec, err := s.accounts.FindKYCByAccount(ctx, accountID)
+	if errors.Is(err, repository.ErrNotFound) {
+		rec = nil
+	} else if err != nil {
+		return models.KYCStatus{}, err
+	}
+
+	if rec == nil && pan == "" {
+		return models.KYCStatus{}, apperr.NewValidationWith("Validation failed",
+			map[string]string{"pan": "pan is required — no PAN is on file yet"})
+	}
+	if rec != nil && rec.Status == models.KycVerified && (pan == "" || pan == rec.PANNumber) {
+		// Nothing to review: the claim this document supports is already
+		// settled. A *different* PAN is a new claim and falls through to the
+		// upsert below.
+		return models.KYCStatus{}, apperr.NewConflict("Your PAN is already verified")
+	}
+
+	if pan != "" && (rec == nil || rec.PANNumber != pan) {
+		rec, err = s.accounts.UpsertPAN(ctx, accountID, pan)
+		if err != nil {
+			if errors.Is(err, repository.ErrConflict) {
+				slog.Warn("pan document upload rejected: pan linked to another account",
+					"account_id", accountID)
+				return models.KYCStatus{}, apperr.NewConflict("PAN is already linked to another account")
+			}
+			return models.KYCStatus{}, err
+		}
+	}
+
+	// Key includes the upload time: every upload is its own object and its own
+	// documents row — earlier cards stay behind as history and the KYC record's
+	// document_id names the current one.
+	key := fmt.Sprintf("documents/%d/pan-%d%s",
+		accountID, time.Now().UnixMilli(), documentExt(filename, mimeType))
+	uri, err := s.docs.UploadAs(ctx, key, filename, mimeType, data)
+	if err != nil {
+		return models.KYCStatus{}, fmt.Errorf("store pan document: %w", err)
+	}
+
+	size := int64(len(data))
+	_, err = s.accounts.AttachKYCDocument(ctx, &models.Document{
+		AccountID: accountID,
+		DocType:   models.DocTypePAN,
+		S3URI:     uri,
+		FileName:  filename,
+		MimeType:  mimeType,
+		SizeBytes: &size,
+	}, dob)
+	if err != nil {
+		// The row insert failed after the object landed; take the orphan back
+		// out, best-effort, so the bucket doesn't accumulate documents no row
+		// points at.
+		if derr := s.docs.Delete(ctx, uri); derr != nil {
+			slog.Error("could not remove orphaned pan document", "account_id", accountID, "error", derr)
+		}
+		return models.KYCStatus{}, err
+	}
+
+	// account_id and file metadata only — never the PAN, and the filename is
+	// user-chosen so it stays out of the log too.
+	slog.Info("pan document stored", "account_id", accountID, "mime", mimeType, "bytes", len(data))
+	return s.Status(ctx, accountID)
+}
+
+// documentExt picks the stored object's extension from the upload's filename,
+// falling back to the mime type. The key's extension is cosmetic — the row
+// carries the real mime type — but a recognisable suffix helps anyone reading
+// the bucket.
+func documentExt(filename, mimeType string) string {
+	switch ext := strings.ToLower(path.Ext(filename)); ext {
+	case ".pdf", ".jpg", ".jpeg", ".png":
+		return ext
+	}
+	switch strings.ToLower(mimeType) {
+	case "application/pdf":
+		return ".pdf"
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	}
+	return ""
+}
+
+// DocumentContent returns an account's uploaded PAN card — metadata plus the
+// file bytes, relayed through the service rather than presigned. The app
+// renders the card inline (thumbnail + full view, for the owner and for the
+// reviewer), and a presigned S3 URL is the wrong shape for that: the app's
+// HTTP client attaches its bearer token to every request, which S3 rejects
+// alongside query-string auth, and on web the bucket would additionally need
+// CORS opened up. Bounded work: uploads are capped at the document size limit.
+//
+// Authorization is the caller's: the user route passes its own account id,
+// the admin route a path id behind PermKycVerify.
+func (s *KycService) DocumentContent(ctx context.Context, accountID int64) (*models.Document, []byte, error) {
+	if s.docs == nil || s.docs.IsStub() {
+		return nil, nil, apperr.NewServiceUnavailable(
+			"Document storage is not configured on this server")
+	}
+	rec, err := s.accounts.FindKYCByAccount(ctx, accountID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, nil, apperr.NewNotFound("No PAN on file for this account")
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	if rec.DocumentID == nil {
+		return nil, nil, apperr.NewNotFound("No document uploaded for this account")
+	}
+	doc, err := s.accounts.FindDocumentByID(ctx, *rec.DocumentID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, nil, apperr.NewNotFound("No document uploaded for this account")
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	data, err := s.docs.Download(ctx, doc.S3URI)
+	if err != nil {
+		return nil, nil, fmt.Errorf("fetch pan document: %w", err)
+	}
+	return doc, data, nil
+}
+
+// DocumentLink returns a short-lived presigned URL for an account's uploaded
+// PAN card document, plus the documents row (for the file's name and type).
+// Admin-only by construction: the caller must already be behind
+// PermKycVerify — this is the reviewer's view of what the user uploaded.
+func (s *KycService) DocumentLink(
+	ctx context.Context, accountID int64,
+) (string, time.Duration, *models.Document, error) {
+	if s.docs == nil || s.docs.IsStub() {
+		return "", 0, nil, apperr.NewServiceUnavailable(
+			"Document storage is not configured on this server")
+	}
+	rec, err := s.accounts.FindKYCByAccount(ctx, accountID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return "", 0, nil, apperr.NewNotFound("No PAN on file for this account")
+	}
+	if err != nil {
+		return "", 0, nil, err
+	}
+	if rec.DocumentID == nil {
+		return "", 0, nil, apperr.NewNotFound("No document uploaded for this account")
+	}
+	doc, err := s.accounts.FindDocumentByID(ctx, *rec.DocumentID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return "", 0, nil, apperr.NewNotFound("No document uploaded for this account")
+	}
+	if err != nil {
+		return "", 0, nil, err
+	}
+	url, ttl, err := s.docs.PresignGet(ctx, doc.S3URI)
+	if err != nil {
+		return "", 0, nil, fmt.Errorf("presign pan document: %w", err)
+	}
+	return url, ttl, doc, nil
 }
 
 // Bounds on the admin review queue page size. A default keeps an unbounded

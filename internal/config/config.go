@@ -27,6 +27,7 @@ type Config struct {
 	Registration    RegistrationConfig    `mapstructure:"registration"`
 	Digitap         DigitapConfig         `mapstructure:"digitap"`
 	CreditAnalytics CreditAnalyticsConfig `mapstructure:"credit-analytics"`
+	ScheduledChecks ScheduledChecksConfig `mapstructure:"scheduled-checks"`
 	Log             LogConfig             `mapstructure:"log"`
 	Cashfree        CashfreeConfig        `mapstructure:"cashfree"`
 	Statement       StatementConfig       `mapstructure:"statement"`
@@ -145,6 +146,44 @@ type CreditAnalyticsConfig struct {
 	// the upstream integration itself, since otherwise an unentitled caller never
 	// reaches Digitap and an upstream regression would go unnoticed.
 	ReuseWindow time.Duration `mapstructure:"reuse-window"`
+}
+
+// ScheduledChecksConfig drives the runner that executes the prepaid report
+// runs a myScorr Plus purchase minted (scheduled_score_checks).
+//
+// The schedule itself is durable rows in the database; these knobs only shape
+// how often we LOOK and how failures are retried. A missed sweep delays a run,
+// it never loses one.
+type ScheduledChecksConfig struct {
+	// PollInterval is how often the runner sweeps for due rows. The semantics
+	// are daily — a run is owed on a DATE — but the sweep is one cheap indexed
+	// query, so polling hourly bounds both how late a run starts and how soon a
+	// failed one is retried. The first sweep fires immediately at boot, so a
+	// restart never skips a day.
+	PollInterval time.Duration `mapstructure:"poll-interval"`
+	// Timezone is the business day boundary (IANA name). "Due on 3 Oct" means
+	// 3 Oct in this zone, whatever the server's own clock zone is.
+	Timezone string `mapstructure:"timezone"`
+	// MaxAttempts is when the runner stops retrying a failing run and marks it
+	// FAILED for an operator. A paid run must never vanish silently.
+	MaxAttempts int `mapstructure:"max-attempts"`
+	// StaleAfter reclaims RUNNING rows a crash orphaned: a claim older than
+	// this with no completion goes back to PENDING. The retry is safe — the
+	// run's idempotency key replays the stored report if the pull landed.
+	StaleAfter time.Duration `mapstructure:"stale-after"`
+	// BatchSize caps rows claimed per sweep so one tick cannot monopolize the
+	// vendor; the next tick picks up the rest.
+	BatchSize int `mapstructure:"batch-size"`
+}
+
+// Location resolves Timezone, falling back to IST (the market this product
+// serves) when the name doesn't load — a schedule that shifts by a few hours
+// is better than a boot failure over a tzdata gap.
+func (c ScheduledChecksConfig) Location() *time.Location {
+	if loc, err := time.LoadLocation(c.Timezone); err == nil && c.Timezone != "" {
+		return loc
+	}
+	return time.FixedZone("IST", 5*3600+1800)
 }
 
 // DigitapConfig holds credentials and endpoint settings for the Digitap Credit
@@ -362,6 +401,9 @@ type PANConfig struct {
 	// PAN-plus-name is guessable for a known person, so an uncapped retry loop
 	// is a brute-force oracle billed to us per call.
 	MaxVerificationAttempts int `mapstructure:"max-verification-attempts"`
+	// DocumentMaxSize caps a PAN card document upload (parsed via
+	// server.ParseSize, e.g. "10MB").
+	DocumentMaxSize string `mapstructure:"document-max-size"`
 }
 
 type OCRConfig struct {
@@ -636,6 +678,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("registration.otp.max-sends", 5)
 	v.SetDefault("registration.pan.name-match-distance", 2)
 	v.SetDefault("registration.pan.max-verification-attempts", 3)
+	v.SetDefault("registration.pan.document-max-size", "10MB")
 	v.SetDefault("registration.ocr.provider", "stub")
 	v.SetDefault("registration.ocr.min-confidence", 0.8)
 
@@ -644,6 +687,13 @@ func setDefaults(v *viper.Viper) {
 	// report handed to a user is never described as current when the bureau may
 	// have moved on. See CreditAnalyticsConfig.ReuseWindow.
 	v.SetDefault("credit-analytics.reuse-window", "168h")
+	// Scheduled score checks (myScorr Plus). Hourly sweep of a daily schedule:
+	// see ScheduledChecksConfig for why the poll is tighter than the semantics.
+	v.SetDefault("scheduled-checks.poll-interval", "1h")
+	v.SetDefault("scheduled-checks.timezone", "Asia/Kolkata")
+	v.SetDefault("scheduled-checks.max-attempts", 5)
+	v.SetDefault("scheduled-checks.stale-after", "15m")
+	v.SetDefault("scheduled-checks.batch-size", 25)
 	v.SetDefault("digitap.base-url", "https://api.digitap.ai/")
 	v.SetDefault("digitap.client-id", "")
 	v.SetDefault("digitap.client-secret", "")
@@ -720,8 +770,12 @@ func allKeys() []string {
 		"registration.otp.max-sends",
 		"registration.pan.name-match-distance",
 		"registration.pan.max-verification-attempts",
+		"registration.pan.document-max-size",
 		"registration.ocr.provider", "registration.ocr.min-confidence",
 		"credit-analytics.reuse-window",
+		"scheduled-checks.poll-interval", "scheduled-checks.timezone",
+		"scheduled-checks.max-attempts", "scheduled-checks.stale-after",
+		"scheduled-checks.batch-size",
 		"digitap.base-url", "digitap.client-id", "digitap.client-secret", "digitap.timeout",
 		"digitap.log-request-curl",
 		"digitap.prefill.base-url", "digitap.prefill.client-id",

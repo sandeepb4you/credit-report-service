@@ -85,10 +85,18 @@ func (c *Client) Bucket() string { return c.cfg.Bucket }
 // destination, because a relay a caller could aim at an arbitrary bucket is a
 // way to write credit reports somewhere unaudited.
 func (c *Client) Upload(ctx context.Context, key, filename string, body []byte) (string, error) {
+	return c.UploadAs(ctx, key, filename, "application/pdf", body)
+}
+
+// UploadAs is [Client.Upload] with an explicit content type, for objects that
+// are not report PDFs (e.g. uploaded KYC documents, which may be images).
+func (c *Client) UploadAs(ctx context.Context, key, filename, contentType string, body []byte) (string, error) {
 	if c.stubOnly {
 		return "", fmt.Errorf("s3store: no bucket configured")
 	}
-	contentType := "application/pdf"
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
 	// Content-Disposition so a presigned link downloads as a sensibly named file
 	// rather than rendering inline under a numeric key.
 	disposition := fmt.Sprintf("attachment; filename=%q", filename)

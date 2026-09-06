@@ -366,7 +366,7 @@ func TestCreditAnalytics_GetReport_BadID(t *testing.T) {
 // ---- kyc handler tests ----
 
 func TestKyc_SubmitPAN_Unauthenticated(t *testing.T) {
-	h := NewKycHandler(nil)
+	h := NewKycHandler(nil, 0)
 	app := newApp()
 	app.Post("/api/kyc/pan", h.SubmitPAN)
 
@@ -381,7 +381,7 @@ func TestKyc_SubmitPAN_Unauthenticated(t *testing.T) {
 }
 
 func TestKyc_SubmitPAN_EmptyPAN(t *testing.T) {
-	h := NewKycHandler(nil)
+	h := NewKycHandler(nil, 0)
 	app := newApp()
 	app.Use(func(c *fiber.Ctx) error {
 		c.Locals("accountID", int64(1))
@@ -402,7 +402,7 @@ func TestKyc_SubmitPAN_EmptyPAN(t *testing.T) {
 }
 
 func TestKyc_SubmitPAN_MissingBody(t *testing.T) {
-	h := NewKycHandler(nil)
+	h := NewKycHandler(nil, 0)
 	app := newApp()
 	app.Use(func(c *fiber.Ctx) error {
 		c.Locals("accountID", int64(1))
@@ -421,7 +421,7 @@ func TestKyc_SubmitPAN_MissingBody(t *testing.T) {
 }
 
 func TestKyc_VerifyPAN_Unauthenticated(t *testing.T) {
-	h := NewKycHandler(nil)
+	h := NewKycHandler(nil, 0)
 	app := newApp()
 	app.Post("/api/admin/kyc/pan/:accountId/verify", h.VerifyPAN)
 
@@ -436,7 +436,7 @@ func TestKyc_VerifyPAN_Unauthenticated(t *testing.T) {
 }
 
 func TestKyc_VerifyPAN_BadAccountID(t *testing.T) {
-	h := NewKycHandler(nil)
+	h := NewKycHandler(nil, 0)
 	app := newApp()
 	app.Use(func(c *fiber.Ctx) error {
 		// The handler records the caller as the reviewer, so it needs the id the

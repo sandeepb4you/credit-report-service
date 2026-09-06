@@ -70,6 +70,20 @@ type PaymentRequired struct{ Msg string }
 
 func (e *PaymentRequired) Error() string { return e.Msg }
 
+// QuotaConfirmRequired maps to HTTP 409: the action would spend a scheduled
+// check EARLY (its due date is still ahead) and the caller has not confirmed
+// that. Distinct from Conflict because it carries details the client's
+// confirmation dialog renders — how many runs remain, when the next was due,
+// and where the schedule would move — so the numbers the user confirms against
+// are the server's, never a stale client guess. The client re-sends with the
+// confirmation flag; nothing is spent by this response.
+type QuotaConfirmRequired struct {
+	Msg     string
+	Details map[string]string
+}
+
+func (e *QuotaConfirmRequired) Error() string { return e.Msg }
+
 // PayloadTooLarge maps to HTTP 413.
 type PayloadTooLarge struct{ Msg string }
 
@@ -99,6 +113,9 @@ func NewUnauthorized(msg string) error       { return &Unauthorized{Msg: msg} }
 func NewForbidden(msg string) error          { return &Forbidden{Msg: msg} }
 func NewPanFailure(msg string) error         { return &PanFailure{Msg: msg} }
 func NewPaymentRequired(msg string) error    { return &PaymentRequired{Msg: msg} }
+func NewQuotaConfirmRequired(msg string, d map[string]string) error {
+	return &QuotaConfirmRequired{Msg: msg, Details: d}
+}
 func NewPayloadTooLarge(msg string) error    { return &PayloadTooLarge{Msg: msg} }
 func NewServiceUnavailable(msg string) error { return &ServiceUnavailable{Msg: msg} }
 func NewBadGateway(msg string) error         { return &BadGateway{Msg: msg} }
@@ -136,6 +153,7 @@ func StatusFor(err error) (status int, title, msg string, details map[string]str
 		fb  *Forbidden
 		pf  *PanFailure
 		pr  *PaymentRequired
+		qc  *QuotaConfirmRequired
 		ptl *PayloadTooLarge
 		su  *ServiceUnavailable
 		bg  *BadGateway
@@ -160,6 +178,8 @@ func StatusFor(err error) (status int, title, msg string, details map[string]str
 		return 422, "Unprocessable Entity", pf.Msg, nil
 	case errors.As(err, &pr):
 		return 402, "Payment Required", pr.Msg, nil
+	case errors.As(err, &qc):
+		return 409, "Conflict", qc.Msg, qc.Details
 	case errors.As(err, &ptl):
 		return 413, "Payload Too Large", ptl.Msg, nil
 	case errors.As(err, &su):

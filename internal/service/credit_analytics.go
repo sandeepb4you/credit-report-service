@@ -77,6 +77,13 @@ type CreditAnalyticsService struct {
 	// paywall degrades to free bureau calls billed to us, and nothing on screen
 	// would say so. A constructor argument cannot be forgotten.
 	orders *repository.OrderRepo
+	// scheduled is the second funding source a pull can spend: a prepaid run
+	// from a myScorr Plus batch. Required for the same reason orders is — it is
+	// part of the paywall, not an enrichment.
+	scheduled *repository.ScheduledCheckRepo
+	// scheduleLoc is the business day boundary for "is this run due yet" and
+	// for anchoring the re-scheduled dates a manual spend produces.
+	scheduleLoc *time.Location
 	// reuseWindow answers a pull with a recent successful report instead of
 	// calling Digitap. Zero disables it. See config.CreditAnalyticsConfig.
 	reuseWindow time.Duration
@@ -116,10 +123,13 @@ func NewCreditAnalyticsService(
 	repo *repository.CreditAnalyticsRepo,
 	accounts *repository.AccountRepo,
 	orders *repository.OrderRepo,
+	scheduled *repository.ScheduledCheckRepo,
 	cfg config.CreditAnalyticsConfig,
+	scheduleLoc *time.Location,
 ) *CreditAnalyticsService {
 	return &CreditAnalyticsService{
 		client: client, repo: repo, accounts: accounts, orders: orders,
+		scheduled: scheduled, scheduleLoc: scheduleLoc,
 		reuseWindow: cfg.ReuseWindow,
 	}
 }
@@ -160,6 +170,15 @@ type CreditAnalyticsInput struct {
 	// fresh one on every retry has bought nothing, since the whole point is that
 	// a re-entered screen sends the same key the first entry did.
 	IdempotencyKey string `json:"idempotency_key"`
+
+	// UseScheduledQuota is the caller's confirmation that a scheduled (plan)
+	// check may be spent EARLY — before its due date — on this on-demand pull,
+	// which also re-anchors the remaining schedule from today. Without it, a
+	// pull whose only funding is a future scheduled run answers 409 with the
+	// numbers the confirmation dialog needs; nothing is spent. Irrelevant (and
+	// ignored) when an unspent one-time purchase exists or the run is already
+	// due: neither costs the user anything they weren't owed today.
+	UseScheduledQuota bool `json:"use_scheduled_quota"`
 }
 
 // ReportSummary is the trimmed list-item shape for the reports endpoint: the
@@ -548,6 +567,36 @@ type digitapPayload struct {
 // came from the bureau. An idempotency replay does NOT set it: that is the same
 // attempt arriving twice, and describing it as an older report would be wrong.
 func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, in CreditAnalyticsInput) (*models.CreditAnalyticsRequest, bool, error) {
+	return s.request(ctx, accountID, in, nil)
+}
+
+// RunScheduled executes one scheduled run the runner has ALREADY claimed
+// (PENDING -> RUNNING). It shares the whole Request path — profile/KYC gates,
+// idempotency, reuse, persistence, PDF relay — but the claimed row itself is
+// the funding, so the entitlement gate and the spend step are skipped; the
+// runner completes or releases the row from the outcome. The idempotency key
+// is derived from the row id, so a crash-and-reclaim retry replays the stored
+// report instead of billing a second pull.
+func (s *CreditAnalyticsService) RunScheduled(ctx context.Context, row *models.ScheduledScoreCheck) (*models.CreditAnalyticsRequest, error) {
+	in := CreditAnalyticsInput{
+		// No device made this request. Digitap requires the field; the loopback
+		// address is the honest value for a server-initiated refresh.
+		DeviceIP:       "127.0.0.1",
+		IdempotencyKey: fmt.Sprintf("sched-%d", row.ID),
+	}
+	report, _, err := s.request(ctx, row.AccountID, in, row)
+	return report, err
+}
+
+// pullFunding names which purse pays for a pull: an unspent one-time order
+// (row nil), a scheduled plan run to be spent on success (row set), or a run
+// the runner pre-claimed and will settle itself (preclaimed).
+type pullFunding struct {
+	row        *models.ScheduledScoreCheck
+	preclaimed bool
+}
+
+func (s *CreditAnalyticsService) request(ctx context.Context, accountID int64, in CreditAnalyticsInput, preclaimedRow *models.ScheduledScoreCheck) (*models.CreditAnalyticsRequest, bool, error) {
 	if details := in.validate(); len(details) > 0 {
 		return nil, false, apperr.NewValidationWith("invalid credit-analytics request", details)
 	}
@@ -590,22 +639,9 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 	// The paywall. Until this existed the endpoint was authenticated but free:
 	// the gate lived only in the app, so a token holder calling the API directly
 	// got bureau reports we pay for and never bought.
-	entitled, err := s.orders.HasUnspentEntitlement(ctx, accountID, models.ProductCreditAnalysis)
+	funding, err := s.resolveFunding(ctx, accountID, in, preclaimedRow)
 	if err != nil {
-		// Fail closed. An entitlement we cannot read is not an entitlement we may
-		// assume: the failure mode of guessing "yes" is unbounded free bureau
-		// calls, and of guessing "no" is one retry for a user who really did pay.
-		slog.Error("credit-analytics entitlement check failed",
-			"account_id", accountID, "error", err)
-		return nil, false, apperr.NewServiceUnavailable(
-			"We couldn't confirm your purchase. Please try again in a moment.")
-	}
-	if !entitled {
-		// No purchase, no refresh. Reuse is a saving on a check someone bought,
-		// never a way to obtain one for free.
-		slog.Info("credit-analytics refused: no unspent purchase", "account_id", accountID)
-		return nil, false, apperr.NewPaymentRequired(
-			"Your score check needs to be purchased before we can fetch your report.")
+		return nil, false, err
 	}
 
 	// The caller has bought a check. A bureau file barely moves inside the reuse
@@ -643,7 +679,7 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 				"account_id", accountID, "report_id", copyRow.ID,
 				"source_report_id", recent.ID,
 				"data_age", time.Since(recent.DataFetchedAt).Round(time.Minute).String())
-			s.spendEntitlement(ctx, accountID, copyRow.ID)
+			s.spendFunding(ctx, accountID, copyRow.ID, funding)
 			return copyRow, true, nil
 		}
 	}
@@ -724,7 +760,7 @@ func (s *CreditAnalyticsService) Request(ctx context.Context, accountID int64, i
 			"latency_ms", upstreamLatency,
 		)
 		// The vendor delivered, so the purchase is now spent — and only now.
-		s.spendEntitlement(ctx, accountID, row.ID)
+		s.spendFunding(ctx, accountID, row.ID, funding)
 
 		// The response carries result_pdf: a ~1-hour URL for the generated PDF.
 		// Hand it to the relay (download → encrypt → S3 → write-back) if wired.
@@ -903,13 +939,18 @@ func (s *CreditAnalyticsService) buildPayload(ctx context.Context, accountID int
 		missing["last_name"] = "account profile has no last name; complete your profile"
 	}
 	if len(missing) > 0 {
-		// Debug: these are routine client omissions, not faults. Keys only,
-		// never the values (mobile/name are PII).
-		slog.Debug("credit-analytics rejected: incomplete profile",
+		// Info so a rejected request is explainable from default-level logs
+		// without redeploying at debug. Keys only, never the values
+		// (mobile/name are PII).
+		slog.Info("credit-analytics rejected: incomplete profile",
 			"account_id", accountID,
 			"missing", keysOf(missing),
 		)
-		return nil, apperr.NewValidationWith("invalid credit-analytics request", missing)
+		// The message is what the app shows verbatim in its failure state, so
+		// it is written for the user; the details map keeps the per-field
+		// specifics for clients that render them.
+		return nil, apperr.NewValidationWith(
+			"Complete your profile (name and mobile number) before requesting a credit report", missing)
 	}
 
 	// PAN must already be on file AND verified. Verification is an admin action
@@ -917,17 +958,22 @@ func (s *CreditAnalyticsService) buildPayload(ctx context.Context, accountID int
 	// credit-analytics upstream.
 	kyc, err := s.accounts.FindKYCByAccount(ctx, accountID)
 	if err != nil {
-		return nil, apperr.NewValidationWith("invalid credit-analytics request",
+		slog.Info("credit-analytics rejected: no KYC record", "account_id", accountID)
+		return nil, apperr.NewValidationWith(
+			"Submit your PAN before requesting a credit report",
 			map[string]string{"pan": "no PAN on file; submit one via POST /api/kyc/pan"})
 	}
 	if strings.TrimSpace(kyc.PANNumber) == "" {
-		return nil, apperr.NewValidationWith("invalid credit-analytics request",
+		slog.Info("credit-analytics rejected: no PAN on file", "account_id", accountID)
+		return nil, apperr.NewValidationWith(
+			"Submit your PAN before requesting a credit report",
 			map[string]string{"pan": "no PAN on file; submit one via POST /api/kyc/pan"})
 	}
 	if !kyc.PANVerified {
-		slog.Debug("credit-analytics rejected: PAN not verified", "account_id", accountID)
-		return nil, apperr.NewValidationWith("invalid credit-analytics request",
-			map[string]string{"pan": "PAN not verified; an admin must verify it before requesting credit analytics"})
+		slog.Info("credit-analytics rejected: PAN not verified", "account_id", accountID)
+		return nil, apperr.NewValidationWith(
+			"Your PAN verification is still in progress. Your report will be available once it completes.",
+			map[string]string{"pan": "PAN not verified; verification is pending admin review"})
 	}
 
 	otp, err := generateOTP(otpDigits)
@@ -1020,6 +1066,157 @@ func (s *CreditAnalyticsService) spendEntitlement(ctx context.Context, accountID
 		slog.Warn("credit-analytics entitlement not spent: none left to claim",
 			"account_id", accountID, "report_id", reportID)
 	}
+}
+
+// resolveFunding decides which purse pays for this pull, in a fixed precedence:
+//
+//  1. A run the RUNNER pre-claimed — the funding decision was made at claim
+//     time; nothing to resolve and nothing to confirm.
+//  2. An unspent one-time order. Spent first because it never touches the
+//     schedule: a plan holder who also bought a Starter check keeps their
+//     cadence intact, and the one-time check has no expiry to lose.
+//  3. The earliest PENDING scheduled run. Free to take when already due (it
+//     was owed today anyway — this is also how the just-purchased first check
+//     flows through with no dialog); when the due date is still ahead it
+//     requires the caller's explicit UseScheduledQuota, otherwise the answer
+//     is a 409 carrying the numbers the confirmation dialog shows. Nothing is
+//     spent by that refusal.
+//
+// With no funding at all the answer stays the 402 the app already routes to
+// the paywall. Reads fail CLOSED for the same reason the old single-source
+// gate did: guessing "entitled" wrongly is unbounded free bureau calls.
+func (s *CreditAnalyticsService) resolveFunding(
+	ctx context.Context, accountID int64, in CreditAnalyticsInput,
+	preclaimedRow *models.ScheduledScoreCheck,
+) (pullFunding, error) {
+	if preclaimedRow != nil {
+		return pullFunding{row: preclaimedRow, preclaimed: true}, nil
+	}
+
+	entitled, err := s.orders.HasUnspentEntitlement(ctx, accountID, models.ProductCreditAnalysis)
+	if err != nil {
+		// Fail closed. An entitlement we cannot read is not an entitlement we may
+		// assume: the failure mode of guessing "yes" is unbounded free bureau
+		// calls, and of guessing "no" is one retry for a user who really did pay.
+		slog.Error("credit-analytics entitlement check failed",
+			"account_id", accountID, "error", err)
+		return pullFunding{}, apperr.NewServiceUnavailable(
+			"We couldn't confirm your purchase. Please try again in a moment.")
+	}
+	if entitled {
+		return pullFunding{}, nil
+	}
+
+	next, err := s.scheduled.NextPending(ctx, accountID)
+	if errors.Is(err, repository.ErrNotFound) {
+		// No purchase, no refresh. Reuse is a saving on a check someone bought,
+		// never a way to obtain one for free.
+		slog.Info("credit-analytics refused: no unspent purchase", "account_id", accountID)
+		return pullFunding{}, apperr.NewPaymentRequired(
+			"Your score check needs to be purchased before we can fetch your report.")
+	}
+	if err != nil {
+		slog.Error("credit-analytics scheduled-check lookup failed",
+			"account_id", accountID, "error", err)
+		return pullFunding{}, apperr.NewServiceUnavailable(
+			"We couldn't confirm your purchase. Please try again in a moment.")
+	}
+
+	today := businessToday(s.scheduleLoc)
+	if next.DueOn.After(today) && !in.UseScheduledQuota {
+		pending, cerr := s.scheduled.CountPending(ctx, accountID)
+		if cerr != nil {
+			pending = 0 // the dialog degrades to no count; the dates still stand
+		}
+		return pullFunding{}, apperr.NewQuotaConfirmRequired(
+			"This check is ahead of schedule. Confirm to use one of your plan's remaining checks now — your upcoming refreshes will restart from today.",
+			map[string]string{
+				"reason":       "scheduled_quota_confirm",
+				"pendingRuns":  strconv.Itoa(pending),
+				"nextDueOn":    next.DueOn.Format(dateOnly),
+				"newNextDueOn": today.AddDate(0, next.IntervalMonths, 0).Format(dateOnly),
+			})
+	}
+	return pullFunding{row: next}, nil
+}
+
+// dateOnly formats the day-granularity schedule fields (due/expiry dates).
+const dateOnly = "2006-01-02"
+
+// spendFunding settles whichever purse resolveFunding picked, once a report
+// has actually been delivered. Best-effort like spendEntitlement, and for the
+// same reason: the user has their report, and a bookkeeping failure must never
+// turn that into an error — it errs toward the user and is loud in the log.
+func (s *CreditAnalyticsService) spendFunding(ctx context.Context, accountID, reportID int64, f pullFunding) {
+	if f.preclaimed {
+		// The runner claimed the row before the pull and completes or releases
+		// it from the outcome — settling it here too would race that.
+		return
+	}
+	if f.row == nil {
+		s.spendEntitlement(ctx, accountID, reportID)
+		return
+	}
+	spent, err := s.scheduled.SpendNextPending(
+		ctx, accountID, reportID, models.ScheduledCheckByManual, businessToday(s.scheduleLoc))
+	if err != nil {
+		slog.Error("credit-analytics scheduled check not spent: update failed",
+			"account_id", accountID, "report_id", reportID, "error", err)
+		return
+	}
+	if !spent {
+		// The row the gate saw was claimed by someone else (most likely the
+		// runner sweeping it as due) between the two statements. The user still
+		// got their report; the schedule was settled by the winner.
+		slog.Warn("credit-analytics scheduled check not spent: none left to claim",
+			"account_id", accountID, "report_id", reportID)
+		return
+	}
+	slog.Info("credit-analytics scheduled check spent on a manual pull; schedule re-anchored from today",
+		"account_id", accountID, "report_id", reportID)
+}
+
+// ScheduledChecksView is the app-facing summary of a plan's schedule: the
+// headline numbers the Home screen shows, plus the full run list.
+type ScheduledChecksView struct {
+	// PlanCode is the plan the (current) batch belongs to, from the earliest
+	// pending run, or the latest run when none are pending. Empty = no plan.
+	PlanCode    string `json:"planCode,omitempty"`
+	PendingRuns int    `json:"pendingRuns"`
+	// NextDueOn / ExpiresOn are YYYY-MM-DD, absent when there is nothing pending.
+	NextDueOn string                       `json:"nextDueOn,omitempty"`
+	ExpiresOn string                       `json:"expiresOn,omitempty"`
+	Runs      []models.ScheduledScoreCheck `json:"runs"`
+}
+
+// ScheduledChecks returns the caller's schedule. An account with no plan gets
+// an empty view, not an error — "no schedule" is a normal state the app renders
+// as the one-time paywall.
+func (s *CreditAnalyticsService) ScheduledChecks(ctx context.Context, accountID int64) (*ScheduledChecksView, error) {
+	rows, err := s.scheduled.ListByAccount(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	view := &ScheduledChecksView{Runs: rows}
+	for i := range rows {
+		r := &rows[i]
+		if r.Status != models.ScheduledCheckPending {
+			continue
+		}
+		view.PendingRuns++
+		if view.NextDueOn == "" {
+			// rows are ordered by due_on, so the first pending is the next due.
+			view.NextDueOn = r.DueOn.Format(dateOnly)
+			view.PlanCode = r.ProductCode
+			if r.ExpiresOn != nil {
+				view.ExpiresOn = r.ExpiresOn.Format(dateOnly)
+			}
+		}
+	}
+	if view.PlanCode == "" && len(rows) > 0 {
+		view.PlanCode = rows[len(rows)-1].ProductCode
+	}
+	return view, nil
 }
 
 // reusableReport returns the account's most recent successful report when it is
