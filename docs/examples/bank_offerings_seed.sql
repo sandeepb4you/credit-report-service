@@ -1,5 +1,6 @@
 -- ---------------------------------------------------------------------------
--- Sample bank offerings for the score-builder toolkit (Journey 05·C, S28).
+-- Sample bank offerings for the score-builder toolkit (Journey 05·C, S28) and
+-- the unlocked Home's Explore tiles (design/onboarding/11.html).
 --
 -- These power the hero card on the low-score journey: an FD-secured credit
 -- card with a real bank name, an apply link, and an estimated point impact.
@@ -50,7 +51,18 @@ VALUES
 
     -- Inactive — must be ignored by the score-builder.
     ('Old Product (inactive)',        'FD_CARD', 10000, 6.500,   0, 650,  40, 80,
-     'https://apply.example.com/old', 'FD + secured-card referral', FALSE);
+     'https://apply.example.com/old', 'FD + secured-card referral', FALSE),
+
+    -- Bank accounts (migration 0026) for the unlocked Home's "Bank Accounts"
+    -- Explore tile (design/onboarding/11.html). Not credit products: the FD and
+    -- estimated-points columns stay at zero, and the band is everyone. The tile
+    -- prints how many of these contain the user's score ("2 accounts available").
+    ('Kotak 811 Zero Balance Savings', 'BANK_ACCOUNT', 0, 0, 0, 900, 0, 0,
+     'https://www.kotak.com/en/personal-banking/accounts/savings-account/kotak811.html',
+     'Account-opening referral', TRUE),
+    ('IDFC FIRST Savings Account',     'BANK_ACCOUNT', 0, 0, 0, 900, 0, 0,
+     'https://www.idfcfirstbank.com/personal-banking/accounts/savings-account',
+     'Account-opening referral', TRUE);
 
 COMMIT;
 

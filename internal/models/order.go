@@ -43,6 +43,26 @@ type Product struct {
 	IntervalMonths *int `json:"intervalMonths,omitempty" db:"interval_months"`
 	ValidityDays   *int `json:"validityDays,omitempty" db:"validity_days"`
 
+	// Presentation for the plans screen (design/onboarding/09.html), kept in the
+	// catalog so an operator can tune the card without an app release. Badge is
+	// the short pill above the name ("★ MOST POPULAR"); Tagline the line under
+	// it; SortOrder the position, ascending — the first product is the featured
+	// card. Both strings nil when there is nothing to draw.
+	//
+	// What is NOT stored is anything derivable: per-refresh price, the struck
+	// "list" price (one-time × checks), the saving, the % off. Storing those
+	// would let a price change leave a stale saving on screen.
+	Badge     *string `json:"badge,omitempty"   db:"badge"`
+	Tagline   *string `json:"tagline,omitempty" db:"tagline"`
+	SortOrder int     `json:"sortOrder"         db:"sort_order"`
+
+	// CouponAvailable is derived at read time: does any live, unrevoked discount
+	// coupon apply to this product (product_code matching, or NULL = any)? It is
+	// how the app decides whether to show a coupon box at all — today only the
+	// one-time check has one, and a box that rejects every code is a worse
+	// experience than no box. Not a column; see repository.productCols.
+	CouponAvailable bool `json:"couponAvailable" db:"coupon_available"`
+
 	Currency  string    `json:"currency"  db:"currency"`
 	Active    bool      `json:"active"    db:"active"`
 	CreatedAt time.Time `json:"createdAt" db:"created_at"`

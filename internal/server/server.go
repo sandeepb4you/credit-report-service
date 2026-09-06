@@ -207,6 +207,10 @@ func New(
 	// What-if simulator: any signed-in user (S29). Reads the caller's own
 	// report, so RequireAuth is sufficient.
 	ca.Get("/score-simulator", scoreBuilder.Simulate)
+	// Explore tiles on the unlocked Home (design/onboarding/11.html): per
+	// category, how many curated offerings target the caller's score. Same
+	// scope as the simulator — the caller's own latest report.
+	ca.Get("/explore-offers", scoreBuilder.ExploreOffers)
 
 	// ---- Bank statement analysis (PDF → salary/EMI/spending) -----------
 	//

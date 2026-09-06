@@ -2,19 +2,24 @@ package models
 
 import "time"
 
-// Product types a score-builder offering can be. Stored uppercase; the
-// bank_offerings.product_type CHECK constraint mirrors this set. FD_CARD is the
-// hero of the low-score toolkit (S28); SECURED_LOAN is reserved for future
-// secured-installment products.
+// Product types an offering can be. Stored uppercase; the
+// bank_offerings.product_type CHECK constraint mirrors this set (migration 0026
+// widened it). FD_CARD is the hero of the low-score toolkit (S28) and what the
+// unlocked Home's "Credit Cards" tile counts; SECURED_LOAN is reserved for
+// future secured-installment products; BANK_ACCOUNT is a savings/current
+// account for the "Bank Accounts" tile (design/onboarding/11.html) — the FD and
+// estimated-points columns stay at zero on those rows, since an account is not
+// a credit product and moves no score.
 const (
 	OfferingTypeFDCard      = "FD_CARD"
 	OfferingTypeSecuredLoan = "SECURED_LOAN"
+	OfferingTypeBankAccount = "BANK_ACCOUNT"
 )
 
-// ValidOfferingType reports whether s is one of the score-builder product types.
+// ValidOfferingType reports whether s is one of the offering product types.
 func ValidOfferingType(s string) bool {
 	switch s {
-	case OfferingTypeFDCard, OfferingTypeSecuredLoan:
+	case OfferingTypeFDCard, OfferingTypeSecuredLoan, OfferingTypeBankAccount:
 		return true
 	default:
 		return false

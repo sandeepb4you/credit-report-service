@@ -260,3 +260,60 @@ func TestOfferingInput_Validate(t *testing.T) {
 		t.Error("blank applyUrl should be flagged")
 	}
 }
+
+// ---- Explore offers (11.html): pill derivation, no DB needed ---------------
+//
+// The Explore tile's pill is derived from a match count, and the rule matters
+// more than it looks: a category with no curated product must draw NO pill —
+// not a "low fit" — because the absence of a product in our catalog says
+// nothing about the user's creditworthiness.
+
+func TestExploreCategory_NoMatchDrawsNoPill(t *testing.T) {
+	got := exploreCategory(ExploreCategoryBankAccounts, 0, "Great fit for your score")
+	if got.Matched != 0 {
+		t.Errorf("matched = %d, want 0", got.Matched)
+	}
+	if got.Fit != "" || got.FitLabel != "" {
+		t.Errorf("zero matches must carry no pill, got fit=%q label=%q", got.Fit, got.FitLabel)
+	}
+	if got.Category != ExploreCategoryBankAccounts {
+		t.Errorf("category = %q", got.Category)
+	}
+}
+
+func TestExploreCategory_MatchIsHighFit(t *testing.T) {
+	got := exploreCategory(ExploreCategoryCreditCards, 2, "Great fit for your score")
+	if got.Matched != 2 {
+		t.Errorf("matched = %d, want 2", got.Matched)
+	}
+	// Band-gated offerings are the admin's assertion that the product suits this
+	// score, so a match is a high fit by construction — never a percentage.
+	if got.Fit != ExploreFitHigh {
+		t.Errorf("fit = %q, want %q", got.Fit, ExploreFitHigh)
+	}
+	if got.FitLabel != "Great fit for your score" {
+		t.Errorf("fitLabel = %q", got.FitLabel)
+	}
+}
+
+// Every Explore category must resolve to at least one offering type the
+// catalog's CHECK constraint accepts — a category pointing at a type nobody can
+// insert would be a tile that can never fill.
+func TestExploreCategories_TypesAreValidOfferingTypes(t *testing.T) {
+	if len(exploreCategories) == 0 {
+		t.Fatal("no Explore categories defined")
+	}
+	for _, c := range exploreCategories {
+		if len(c.types) == 0 {
+			t.Errorf("%s: no offering types", c.category)
+		}
+		for _, ty := range c.types {
+			if !validOfferingType(ty) {
+				t.Errorf("%s: %q is not a valid offering type", c.category, ty)
+			}
+		}
+		if c.fitLabel == "" {
+			t.Errorf("%s: empty fit label", c.category)
+		}
+	}
+}

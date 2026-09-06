@@ -51,7 +51,7 @@ func (in *OfferingInput) validate() map[string]string {
 		d["name"] = "is required"
 	}
 	if !models.ValidOfferingType(in.ProductType) {
-		d["productType"] = "must be one of FD_CARD, SECURED_LOAN"
+		d["productType"] = "must be one of FD_CARD, SECURED_LOAN, BANK_ACCOUNT"
 	}
 	if in.InterestRatePercent < 0 || in.InterestRatePercent > 100 {
 		d["interestRatePercent"] = "must be between 0 and 100"
@@ -156,7 +156,7 @@ func (s *ScoreBuilderService) ListOfferings(ctx context.Context, productType *st
 		pt := strings.ToUpper(strings.TrimSpace(*productType))
 		if !models.ValidOfferingType(pt) {
 			return nil, apperr.NewValidationWith("Validation failed",
-				map[string]string{"productType": "must be one of FD_CARD, SECURED_LOAN"})
+				map[string]string{"productType": "must be one of FD_CARD, SECURED_LOAN, BANK_ACCOUNT"})
 		}
 		productType = &pt
 	}
@@ -174,6 +174,109 @@ func (s *ScoreBuilderService) OfferingsForScore(ctx context.Context, score int) 
 		return nil, nil
 	}
 	return s.offerings.ListActiveForScore(ctx, models.OfferingTypeFDCard, score)
+}
+
+// ---- Explore offers (design/onboarding/11.html) -----------------------------
+
+// Explore categories: the tiles on the unlocked Home, not product types. A
+// category is what the user is browsing for, and it maps onto whichever
+// offering types can satisfy it. Personal and business loans are deliberately
+// absent — those tiles are out of scope for now and draw no offer line.
+const (
+	ExploreCategoryCreditCards  = "CREDIT_CARDS"
+	ExploreCategoryBankAccounts = "BANK_ACCOUNTS"
+)
+
+// Fit levels for the tile's pill, in the design's colour language: high is
+// green, medium orange, low red.
+const (
+	ExploreFitHigh   = "high"
+	ExploreFitMedium = "medium"
+	ExploreFitLow    = "low"
+)
+
+// exploreCategories maps each Explore category onto the offering types that
+// count towards it, with the label its pill carries on a match. The label is
+// server copy on purpose: the design's wording ("Great fit for your score") is
+// what the tile prints, and it should be changeable without an app release.
+var exploreCategories = []struct {
+	category string
+	types    []string
+	fitLabel string
+}{
+	{ExploreCategoryCreditCards, []string{models.OfferingTypeFDCard}, "Great fit for your score"},
+	{ExploreCategoryBankAccounts, []string{models.OfferingTypeBankAccount}, "Great fit for your score"},
+}
+
+// validOfferingType is models.ValidOfferingType, aliased so the table above can
+// be checked against the catalog's CHECK constraint in a unit test.
+var validOfferingType = models.ValidOfferingType
+
+// ExploreOffers is the response for GET /credit-analytics/explore-offers: per
+// Explore tile, how many curated offerings target the caller's current score.
+type ExploreOffers struct {
+	// Score the matching was done against — the latest report's. Null when the
+	// newest report carries no score, in which case nothing can match.
+	Score      *int64                 `json:"score"`
+	Categories []ExploreOfferCategory `json:"categories"`
+}
+
+// ExploreOfferCategory is one tile's line. Fit is the pill — high, medium or
+// low — or empty when nothing matched and no pill should be drawn.
+//
+// Every match today is "high": an offering is surfaced only when an admin aimed
+// its score band at this score, so the fit is the admin's assertion about
+// their own product, not a model's estimate of the user. The other two levels
+// exist so a category with a lender's real approval-likelihood behind it (loans,
+// later) can render the design's orange and red without an app release. Nothing
+// here computes a percentage, and nothing should until a lender's own
+// decisioning stands behind the number — a made-up "70% approval match" is a
+// model estimate presented as a lender decision, which the design rules forbid.
+type ExploreOfferCategory struct {
+	Category string `json:"category"`
+	Matched  int    `json:"matched"`
+	Fit      string `json:"fit,omitempty"`
+	FitLabel string `json:"fitLabel,omitempty"`
+}
+
+// ExploreOffers counts, per Explore category, the active offerings whose score
+// band contains the caller's latest score. 404 when the account has no report:
+// the unlocked Home is the only caller, and it exists only once one does.
+func (s *ScoreBuilderService) ExploreOffers(ctx context.Context, accountID int64) (*ExploreOffers, error) {
+	row, err := s.analytics.FindLatestByAccount(ctx, accountID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, apperr.NewNotFound("No credit report found")
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := &ExploreOffers{Score: row.CreditScore, Categories: []ExploreOfferCategory{}}
+	for _, c := range exploreCategories {
+		matched := 0
+		if row.CreditScore != nil {
+			for _, t := range c.types {
+				os, err := s.offerings.ListActiveForScore(ctx, t, int(*row.CreditScore))
+				if err != nil {
+					return nil, err
+				}
+				matched += len(os)
+			}
+		}
+		out.Categories = append(out.Categories, exploreCategory(c.category, matched, c.fitLabel))
+	}
+	return out, nil
+}
+
+// exploreCategory derives one tile's line from a match count. Zero matches is a
+// tile with no pill, not a "low" fit: the absence of a curated product in our
+// catalog says nothing about the user.
+func exploreCategory(category string, matched int, fitLabel string) ExploreOfferCategory {
+	c := ExploreOfferCategory{Category: category, Matched: matched}
+	if matched > 0 {
+		c.Fit = ExploreFitHigh
+		c.FitLabel = fitLabel
+	}
+	return c
 }
 
 // ---- What-if simulator (S29) -----------------------------------------------

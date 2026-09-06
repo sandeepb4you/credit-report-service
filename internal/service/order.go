@@ -109,16 +109,40 @@ func (s *OrderService) ListAllPlans(ctx context.Context) ([]models.Product, erro
 // amount they were created with — orders snapshot their own price — so this can
 // never alter what someone has already been charged or is midway through paying.
 func (s *OrderService) UpdatePlan(
-	ctx context.Context, code string, amount *float64, active *bool,
+	ctx context.Context, code string, edit repository.ProductEdit,
 ) (*models.Product, error) {
 	code = strings.ToUpper(strings.TrimSpace(code))
 	if code == "" {
 		return nil, apperr.NewValidationWith("Validation failed",
 			map[string]string{"code": "code is required"})
 	}
-	if amount == nil && active == nil {
+	amount, active := edit.Amount, edit.Active
+	if amount == nil && active == nil && edit.Description == nil &&
+		edit.Badge == nil && edit.Tagline == nil && edit.SortOrder == nil {
 		return nil, apperr.NewValidationWith("Validation failed",
-			map[string]string{"amount": "provide amount, active, or both"})
+			map[string]string{"amount": "provide at least one field to change"})
+	}
+	// Presentation copy is short by design — it is a pill and a single line on a
+	// phone card. Bounds here, not in the column, so the message names the field.
+	if edit.Badge != nil {
+		b := strings.TrimSpace(*edit.Badge)
+		if len(b) > 32 {
+			return nil, apperr.NewValidationWith("Validation failed",
+				map[string]string{"badge": "at most 32 characters"})
+		}
+		edit.Badge = &b
+	}
+	if edit.Tagline != nil {
+		t := strings.TrimSpace(*edit.Tagline)
+		if len(t) > 80 {
+			return nil, apperr.NewValidationWith("Validation failed",
+				map[string]string{"tagline": "at most 80 characters"})
+		}
+		edit.Tagline = &t
+	}
+	if edit.SortOrder != nil && (*edit.SortOrder < 0 || *edit.SortOrder > 10000) {
+		return nil, apperr.NewValidationWith("Validation failed",
+			map[string]string{"sortOrder": "must be between 0 and 10000"})
 	}
 	if amount != nil {
 		// A negative price would be a refund the gateway cannot express, and NaN
@@ -128,7 +152,7 @@ func (s *OrderService) UpdatePlan(
 				map[string]string{"amount": "must be a non-negative number"})
 		}
 	}
-	p, err := s.orders.UpdateProduct(ctx, code, amount, active)
+	p, err := s.orders.UpdateProduct(ctx, code, edit)
 	if errors.Is(err, repository.ErrNotFound) {
 		return nil, apperr.NewNotFound("Plan not found")
 	}

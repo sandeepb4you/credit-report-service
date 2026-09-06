@@ -24,13 +24,25 @@ func (r *OrderRepo) BeginTx(ctx context.Context) (pgx.Tx, error) { return r.pool
 
 // ---- products ------------------------------------------------------------
 
-const productCols = `code, name, amount, description, checks_included, interval_months,
-    validity_days, currency, active, created_at, updated_at`
+// productCols reads from products AS p. coupon_available is derived rather than
+// stored: a coupon's product_code is the fact, and a stored flag would drift
+// from it the moment a coupon was revoked or a new one issued.
+const productCols = `p.code, p.name, p.amount, p.description, p.checks_included, p.interval_months,
+    p.validity_days, p.currency, p.active, p.created_at, p.updated_at,
+    p.badge, p.tagline, p.sort_order,
+    EXISTS (
+        SELECT 1 FROM coupons c
+         WHERE c.kind = 'discount'
+           AND c.revoked_at IS NULL
+           AND (c.valid_until IS NULL OR c.valid_until > now())
+           AND (c.max_redemptions IS NULL OR c.redemption_count < c.max_redemptions)
+           AND (c.product_code IS NULL OR c.product_code = p.code)
+    ) AS coupon_available`
 
 func (r *OrderRepo) ListActiveProducts(ctx context.Context) ([]models.Product, error) {
 	ps := []models.Product{}
 	err := pgxscan.Select(ctx, r.pool, &ps,
-		`SELECT `+productCols+` FROM products WHERE active ORDER BY code`)
+		`SELECT `+productCols+` FROM products p WHERE p.active ORDER BY p.sort_order, p.code`)
 	return ps, err
 }
 
@@ -41,40 +53,56 @@ func (r *OrderRepo) ListActiveProducts(ctx context.Context) ([]models.Product, e
 func (r *OrderRepo) ListAllProducts(ctx context.Context) ([]models.Product, error) {
 	ps := []models.Product{}
 	err := pgxscan.Select(ctx, r.pool, &ps,
-		`SELECT `+productCols+` FROM products ORDER BY code`)
+		`SELECT `+productCols+` FROM products p ORDER BY p.sort_order, p.code`)
 	return ps, err
 }
 
-// UpdateProduct changes a plan's price and availability.
+// ProductEdit is what an admin may change on a plan. Every field is a pointer
+// so "not supplied" is distinguishable from "set to empty/zero": omitting the
+// badge leaves it alone, sending "" clears it.
 //
-// Only these two fields, and only for a code that already exists: name and
-// description are customer-facing copy that belongs with the rest of the product
-// content, and creating a plan means adding a product_code that orders and
-// coupons can reference, which is a migration rather than a form.
+// Name is deliberately not here, and neither is creating a plan: a product_code
+// is something orders and coupons reference, so it arrives by migration.
+type ProductEdit struct {
+	Amount      *float64
+	Active      *bool
+	Description *string
+	Badge       *string
+	Tagline     *string
+	SortOrder   *int
+}
+
+// UpdateProduct applies a ProductEdit, COALESCE-ing so a caller changes only
+// what it sends and never read-modify-writes against another admin.
 //
-// COALESCE so a caller can change one without restating the other, and without
-// the handler having to read-modify-write and race another admin.
-func (r *OrderRepo) UpdateProduct(
-	ctx context.Context, code string, amount *float64, active *bool,
-) (*models.Product, error) {
-	var p models.Product
-	err := pgxscan.Get(ctx, r.pool, &p,
+// Two statements rather than UPDATE … RETURNING: productCols carries a
+// correlated EXISTS over coupons, which RETURNING cannot evaluate. The re-read
+// is by primary key, inside the same call.
+func (r *OrderRepo) UpdateProduct(ctx context.Context, code string, e ProductEdit) (*models.Product, error) {
+	tag, err := r.pool.Exec(ctx,
 		`UPDATE products SET
-		     amount = COALESCE($2, amount),
-		     active = COALESCE($3, active),
-		     updated_at = now()
-		 WHERE code = $1
-		 RETURNING `+productCols, code, amount, active)
-	if errors.Is(err, pgx.ErrNoRows) {
+		     amount      = COALESCE($2, amount),
+		     active      = COALESCE($3, active),
+		     description = COALESCE($4, description),
+		     badge       = CASE WHEN $5::text IS NULL THEN badge   WHEN $5 = '' THEN NULL ELSE $5 END,
+		     tagline     = CASE WHEN $6::text IS NULL THEN tagline WHEN $6 = '' THEN NULL ELSE $6 END,
+		     sort_order  = COALESCE($7, sort_order),
+		     updated_at  = now()
+		 WHERE code = $1`,
+		code, e.Amount, e.Active, e.Description, e.Badge, e.Tagline, e.SortOrder)
+	if err != nil {
+		return nil, classifyPgErr(err)
+	}
+	if tag.RowsAffected() == 0 {
 		return nil, ErrNotFound
 	}
-	return &p, classifyPgErr(err)
+	return r.FindProduct(ctx, code)
 }
 
 func (r *OrderRepo) FindProduct(ctx context.Context, code string) (*models.Product, error) {
 	var p models.Product
 	err := pgxscan.Get(ctx, r.pool, &p,
-		`SELECT `+productCols+` FROM products WHERE code = $1`, code)
+		`SELECT `+productCols+` FROM products p WHERE p.code = $1`, code)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}

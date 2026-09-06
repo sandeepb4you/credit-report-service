@@ -8,6 +8,7 @@ import (
 
 	"credit-report-service/internal/apperr"
 	_ "credit-report-service/internal/models" // referenced by swag annotations (models.Product, models.Order)
+	"credit-report-service/internal/repository"
 	"credit-report-service/internal/server/middleware"
 	"credit-report-service/internal/service"
 )
@@ -74,6 +75,13 @@ func (h *OrderHandler) AdminListPlans(c *fiber.Ctx) error {
 type updatePlanReq struct {
 	Amount *float64 `json:"amount" example:"299"`
 	Active *bool    `json:"active" example:"true"`
+	// Card copy for the plans screen (design/onboarding/09.html). Description is
+	// the newline-separated feature checklist. Badge and Tagline accept "" to
+	// clear. All optional; omitted fields are left alone.
+	Description *string `json:"description"`
+	Badge       *string `json:"badge"     example:"★ MOST POPULAR"`
+	Tagline     *string `json:"tagline"   example:"Refreshed every month, without fail"`
+	SortOrder   *int    `json:"sortOrder" example:"10"`
 }
 
 // AdminUpdatePlan godoc
@@ -96,7 +104,10 @@ func (h *OrderHandler) AdminUpdatePlan(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return apperr.NewValidation("invalid JSON body")
 	}
-	plan, err := h.svc.UpdatePlan(c.Context(), c.Params("code"), req.Amount, req.Active)
+	plan, err := h.svc.UpdatePlan(c.Context(), c.Params("code"), repository.ProductEdit{
+		Amount: req.Amount, Active: req.Active, Description: req.Description,
+		Badge: req.Badge, Tagline: req.Tagline, SortOrder: req.SortOrder,
+	})
 	if err != nil {
 		return err
 	}

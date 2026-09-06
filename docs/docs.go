@@ -2355,6 +2355,171 @@ const docTemplate = `{
                 }
             }
         },
+        "/auth/signup/complete": {
+            "post": {
+                "description": "Redeems the single-use ` + "`" + `signupToken` + "`" + ` from POST /auth/signup/verify, creates the account ACTIVE with the chosen password, and returns a session. The address was already proven, so there is nothing left for POST /auth/verify-email to activate. The token is spent whether or not the caller keeps the response.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Finish an email signup",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Stable per-device UUID",
+                        "name": "X-Device-Id",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Human-readable device name shown in the device list",
+                        "name": "X-Device-Name",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "ios | android | web",
+                        "name": "X-Device-Platform",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "JSON device description",
+                        "name": "X-Device-Info",
+                        "in": "header"
+                    },
+                    {
+                        "description": "Signup token + password + optional referral code",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.signupCompleteReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_service.AuthResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed (password too short/long, unknown referral code)",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Signup token is unknown, expired or already used",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Email was registered while this signup was in progress",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/signup/start": {
+            "post": {
+                "description": "Emails a one-time code to an address so it can be proven before a password is chosen. Creates nothing. Returns the same 200 for an address that already has an account, so the endpoint cannot be used to discover which emails are registered — the mirror of POST /auth/password/forgot, which lies in the opposite direction for the same reason. Call again to resend, subject to the usual cooldown / send limits.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Start an email signup",
+                "parameters": [
+                    {
+                        "description": "Email to register",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.signupStartReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{\\\"message\\\": \\\"If that email can be registered, a code is on its way\\\"}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Resend cooldown / send limit reached",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/signup/verify": {
+            "post": {
+                "description": "Checks the code emailed by POST /auth/signup/start and returns a single-use ` + "`" + `signupToken` + "`" + `, which POST /auth/signup/complete redeems to create the account. The code is consumed here — a wrong code counts against the same attempt limit as every other OTP.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Verify an email-signup code",
+                "parameters": [
+                    {
+                        "description": "Email + OTP",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.signupVerifyReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_service.SignupGrant"
+                        }
+                    },
+                    "400": {
+                        "description": "Wrong / expired / locked OTP",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/verify-email": {
             "post": {
                 "description": "Checks the signup OTP; on success verifies the identity, activates the account, and opens a session for the calling device. Token delivery follows the same rules as POST /auth/login.",
@@ -3020,6 +3185,68 @@ const docTemplate = `{
                 }
             }
         },
+        "/credit-analytics/explore-offers": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Projects the caller's credit score under a chosen set of actions. Builds a toggle-action set from the report's actual signals (positive levers the file has room to improve on, plus two universal negative actions), and sums the selected deltas onto the current score. By default every positive action is selected; pass ` + "`" + `actions` + "`" + ` (a comma-separated list of action keys) to override the selection. By default it uses the caller's most recent report; pass reportId to simulate against a specific one (must be your own). Deltas are estimates from your file, not guarantees.\nFor each Explore category (credit cards, bank accounts), how many admin-curated offerings target the caller's latest credit score, with the fit pill to draw. Matching is the offering's own score band, so every match is a high fit; nothing here estimates approval odds. 404 when the account has no credit report yet.",
+                "produces": [
+                    "application/json",
+                    "application/json"
+                ],
+                "tags": [
+                    "score-builder",
+                    "credit-analytics"
+                ],
+                "summary": "Matched offers per Explore tile (unlocked Home)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Simulate against this report instead of the latest (must be your own)",
+                        "name": "reportId",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated action keys to select (default: all positive actions)",
+                        "name": "actions",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_service.ExploreOffers"
+                        }
+                    },
+                    "400": {
+                        "description": "reportId must be an integer",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No credit report found",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/credit-analytics/latest-insights": {
             "get": {
                 "security": [
@@ -3458,16 +3685,21 @@ const docTemplate = `{
                 "security": [
                     {
                         "BearerAuth": []
+                    },
+                    {
+                        "BearerAuth": []
                     }
                 ],
-                "description": "Projects the caller's credit score under a chosen set of actions. Builds a toggle-action set from the report's actual signals (positive levers the file has room to improve on, plus two universal negative actions), and sums the selected deltas onto the current score. By default every positive action is selected; pass ` + "`" + `actions` + "`" + ` (a comma-separated list of action keys) to override the selection. By default it uses the caller's most recent report; pass reportId to simulate against a specific one (must be your own). Deltas are estimates from your file, not guarantees.",
+                "description": "Projects the caller's credit score under a chosen set of actions. Builds a toggle-action set from the report's actual signals (positive levers the file has room to improve on, plus two universal negative actions), and sums the selected deltas onto the current score. By default every positive action is selected; pass ` + "`" + `actions` + "`" + ` (a comma-separated list of action keys) to override the selection. By default it uses the caller's most recent report; pass reportId to simulate against a specific one (must be your own). Deltas are estimates from your file, not guarantees.\nFor each Explore category (credit cards, bank accounts), how many admin-curated offerings target the caller's latest credit score, with the fit pill to draw. Matching is the offering's own score band, so every match is a high fit; nothing here estimates approval odds. 404 when the account has no credit report yet.",
                 "produces": [
+                    "application/json",
                     "application/json"
                 ],
                 "tags": [
-                    "score-builder"
+                    "score-builder",
+                    "credit-analytics"
                 ],
-                "summary": "Score what-if simulator",
+                "summary": "Matched offers per Explore tile (unlocked Home)",
                 "parameters": [
                     {
                         "type": "integer",
@@ -3486,7 +3718,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/credit-report-service_internal_service.Simulation"
+                            "$ref": "#/definitions/credit-report-service_internal_service.ExploreOffers"
                         }
                     },
                     "400": {
@@ -3502,7 +3734,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "No credit report found / report not found",
+                        "description": "No credit report found",
                         "schema": {
                             "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
@@ -4809,12 +5041,20 @@ const docTemplate = `{
                 "amount": {
                     "type": "number"
                 },
+                "badge": {
+                    "description": "Presentation for the plans screen (design/onboarding/09.html), kept in the\ncatalog so an operator can tune the card without an app release. Badge is\nthe short pill above the name (\"★ MOST POPULAR\"); Tagline the line under\nit; SortOrder the position, ascending — the first product is the featured\ncard. Both strings nil when there is nothing to draw.\n\nWhat is NOT stored is anything derivable: per-refresh price, the struck\n\"list\" price (one-time × checks), the saving, the % off. Storing those\nwould let a price change leave a stale saving on screen.",
+                    "type": "string"
+                },
                 "checksIncluded": {
                     "description": "ChecksIncluded is how many score checks one purchase buys (1 for one-time\nproducts). IntervalMonths is the cadence between them and nil for one-time\nproducts — it is what makes fulfilment mint a scheduled batch. ValidityDays\nbounds how long unrun checks stay runnable (nil = forever). These are NOT\nsubscription fields: payment is one Cashfree order, no mandate, no renewal.",
                     "type": "integer"
                 },
                 "code": {
                     "type": "string"
+                },
+                "couponAvailable": {
+                    "description": "CouponAvailable is derived at read time: does any live, unrevoked discount\ncoupon apply to this product (product_code matching, or NULL = any)? It is\nhow the app decides whether to show a coupon box at all — today only the\none-time check has one, and a box that rejects every code is a worse\nexperience than no box. Not a column; see repository.productCols.",
+                    "type": "boolean"
                 },
                 "createdAt": {
                     "type": "string"
@@ -4830,6 +5070,12 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "name": {
+                    "type": "string"
+                },
+                "sortOrder": {
+                    "type": "integer"
+                },
+                "tagline": {
                     "type": "string"
                 },
                 "updatedAt": {
@@ -5125,6 +5371,38 @@ const docTemplate = `{
                 },
                 "requestId": {
                     "type": "string"
+                }
+            }
+        },
+        "credit-report-service_internal_service.ExploreOfferCategory": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string"
+                },
+                "fit": {
+                    "type": "string"
+                },
+                "fitLabel": {
+                    "type": "string"
+                },
+                "matched": {
+                    "type": "integer"
+                }
+            }
+        },
+        "credit-report-service_internal_service.ExploreOffers": {
+            "type": "object",
+            "properties": {
+                "categories": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/credit-report-service_internal_service.ExploreOfferCategory"
+                    }
+                },
+                "score": {
+                    "description": "Score the matching was done against — the latest report's. Null when the\nnewest report carries no score, in which case nothing can match.",
+                    "type": "integer"
                 }
             }
         },
@@ -5542,6 +5820,17 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "signedInAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "credit-report-service_internal_service.SignupGrant": {
+            "type": "object",
+            "properties": {
+                "expiresAt": {
+                    "type": "string"
+                },
+                "signupToken": {
                     "type": "string"
                 }
             }
@@ -6188,6 +6477,24 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_handler.signupCompleteReq": {
+            "type": "object",
+            "properties": {
+                "password": {
+                    "type": "string",
+                    "example": "hunter2password"
+                },
+                "referralCode": {
+                    "description": "ReferralCode attributes the new account to whoever owns the code. An\nunknown code fails the call rather than being ignored.",
+                    "type": "string",
+                    "example": "K7QM4XZ"
+                },
+                "signupToken": {
+                    "type": "string",
+                    "example": "sgt_8Kd2..."
+                }
+            }
+        },
         "internal_handler.signupReq": {
             "type": "object",
             "properties": {
@@ -6203,6 +6510,28 @@ const docTemplate = `{
                     "description": "ReferralCode is optional and attributes the new account to whoever owns\nit. An invalid code fails the signup rather than being ignored.",
                     "type": "string",
                     "example": "REF-7K2QM4XZ"
+                }
+            }
+        },
+        "internal_handler.signupStartReq": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "example": "user@example.com"
+                }
+            }
+        },
+        "internal_handler.signupVerifyReq": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "example": "user@example.com"
+                },
+                "otp": {
+                    "type": "string",
+                    "example": "1234"
                 }
             }
         },
@@ -6230,6 +6559,22 @@ const docTemplate = `{
                 "amount": {
                     "type": "number",
                     "example": 299
+                },
+                "badge": {
+                    "type": "string",
+                    "example": "★ MOST POPULAR"
+                },
+                "description": {
+                    "description": "Card copy for the plans screen (design/onboarding/09.html). Description is\nthe newline-separated feature checklist. Badge and Tagline accept \"\" to\nclear. All optional; omitted fields are left alone.",
+                    "type": "string"
+                },
+                "sortOrder": {
+                    "type": "integer",
+                    "example": 10
+                },
+                "tagline": {
+                    "type": "string",
+                    "example": "Refreshed every month, without fail"
                 }
             }
         },

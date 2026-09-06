@@ -12,8 +12,9 @@ import (
 	"credit-report-service/internal/service"
 )
 
-// ScoreBuilderHandler serves the admin bank-offering CRUD and the user-facing
-// what-if simulator endpoint.
+// ScoreBuilderHandler serves the admin bank-offering CRUD and the two
+// user-facing reads off the same catalog: the what-if simulator and the
+// unlocked Home's Explore offer counts.
 type ScoreBuilderHandler struct {
 	svc *service.ScoreBuilderService
 }
@@ -211,6 +212,29 @@ func (h *ScoreBuilderHandler) DeleteOffering(c *fiber.Ctx) error {
 // @Failure      401  {object}  apperr.ErrorBody  "Not authenticated"
 // @Failure      404  {object}  apperr.ErrorBody  "No credit report found / report not found"
 // @Router       /credit-analytics/score-simulator [get]
+// ExploreOffers godoc
+//
+// @Summary      Matched offers per Explore tile (unlocked Home)
+// @Description  For each Explore category (credit cards, bank accounts), how many admin-curated offerings target the caller's latest credit score, with the fit pill to draw. Matching is the offering's own score band, so every match is a high fit; nothing here estimates approval odds. 404 when the account has no credit report yet.
+// @Tags         credit-analytics
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  service.ExploreOffers
+// @Failure      401  {object}  apperr.ErrorBody  "Not authenticated"
+// @Failure      404  {object}  apperr.ErrorBody  "No credit report found"
+// @Router       /credit-analytics/explore-offers [get]
+func (h *ScoreBuilderHandler) ExploreOffers(c *fiber.Ctx) error {
+	accountID, ok := middleware.AccountID(c)
+	if !ok {
+		return apperr.NewUnauthorized("Not authenticated")
+	}
+	out, err := h.svc.ExploreOffers(c.Context(), accountID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(out)
+}
+
 func (h *ScoreBuilderHandler) Simulate(c *fiber.Ctx) error {
 	accountID, ok := middleware.AccountID(c)
 	if !ok {
