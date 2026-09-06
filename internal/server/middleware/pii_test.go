@@ -139,12 +139,12 @@ func TestTruncateBytes(t *testing.T) {
 	}
 }
 
-func TestMaskedBody_OmitsWhitespaceOnly(t *testing.T) {
-	if got := maskedBody([]byte("   \n\t ")); got != nil {
-		t.Errorf("maskedBody on whitespace = %v, want nil", got)
+func TestLoggableBody_OmitsWhitespaceOnly(t *testing.T) {
+	if got := loggableBody("application/json", []byte("   \n\t ")); got != nil {
+		t.Errorf("loggableBody on whitespace = %v, want nil", got)
 	}
-	if got := maskedBody(nil); got != nil {
-		t.Errorf("maskedBody(nil) = %v, want nil", got)
+	if got := loggableBody("application/json", nil); got != nil {
+		t.Errorf("loggableBody(nil) = %v, want nil", got)
 	}
 }
 

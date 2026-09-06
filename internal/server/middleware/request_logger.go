@@ -1,7 +1,12 @@
 package middleware
 
 import (
+	"bytes"
+	"io"
 	"log/slog"
+	"mime"
+	"mime/multipart"
+	"strconv"
 	"strings"
 	"time"
 
@@ -83,16 +88,20 @@ func RequestLogger() fiber.Handler {
 		}
 		// Capture and mask the request body. Only meaningful for methods that
 		// carry one; Fiber buffers it so it's safe to read post-Next().
-		if reqBody := maskedBody(c.Body()); len(reqBody) > 0 {
+		if reqBody := loggableBody(c.Get(fiber.HeaderContentType), c.Body()); len(reqBody) > 0 {
 			attrs = append(attrs, "req_body", reqBody)
 		}
 		// Capture and mask the response body written by the handler.
-		if respBody := maskedBody(c.Response().Body()); len(respBody) > 0 {
+		if respBody := loggableBody(
+			string(c.Response().Header.ContentType()), c.Response().Body()); len(respBody) > 0 {
 			attrs = append(attrs, "resp_body", respBody)
 		}
 
 		msg := "http request"
-		switch code := c.Response().StatusCode(); {
+		// Level from the SAME resolved status logged above — the raw response code
+		// is still the pre-error-handler 200 whenever the handler returned an
+		// apperr, which had every handled error logging at Info.
+		switch code := status; {
 		case code >= 500:
 			slog.Error(msg, attrs...)
 		case code >= 400:
@@ -104,15 +113,81 @@ func RequestLogger() fiber.Handler {
 	}
 }
 
-// maskedBody masks PII in a body and truncates it for logging. Returns the
-// redacted, truncated bytes; returns nil (so the caller can omit the field) when
-// the input is empty or whitespace-only.
-func maskedBody(body []byte) []byte {
+// loggableBody masks and truncates a body for the log, with one exemption:
+// FILE DATA. A file's bytes cannot be redacted, only omitted — logging a JPEG
+// "masked" is still logging the JPEG — so a multipart body is re-rendered as
+// its form fields with each file part reduced to its size, and a body that IS
+// a file (the relayed card image / report PDF on the download endpoints) is
+// reduced to "[type, N bytes]". Everything that is a field stays logged and
+// goes through the same masking as any other body: sensitive names by key,
+// PAN/email/phone shapes as backstop.
+func loggableBody(contentType string, body []byte) []byte {
 	if len(strings.TrimSpace(string(body))) == 0 {
 		return nil
 	}
-	masked := maskJSON(body)
-	return truncateBytes(masked, maxBodyLogBytes)
+	ct := strings.ToLower(strings.TrimSpace(strings.SplitN(contentType, ";", 2)[0]))
+	switch {
+	case strings.HasPrefix(ct, "multipart/"):
+		return truncateBytes(summarizeMultipart(contentType, body), maxBodyLogBytes)
+	case ct == "" || ct == "application/json" || strings.HasPrefix(ct, "text/") ||
+		strings.HasSuffix(ct, "+json"):
+		// Empty stays loggable: every API body carries a content type, so blank
+		// means a bare client we still want visibility on — and maskJSON's
+		// shape-based scrubbing still applies.
+		return truncateBytes(maskJSON(body), maxBodyLogBytes)
+	default:
+		// Not a container of fields at all — image/*, application/pdf,
+		// octet-stream. The whole body is the file.
+		return []byte("[" + ct + ", " + strconv.Itoa(len(body)) + " bytes]")
+	}
+}
+
+// summarizeMultipart renders a multipart body as "name=value" fields, replacing
+// each file part's content with its size. Field values are masked by the same
+// rules as JSON fields (sensitive key names, then value shapes), so nothing is
+// skipped that could have been logged — only the bytes that could not.
+// A body that cannot be parsed falls back to a whole-body size marker rather
+// than to the raw bytes: the parse failing is not a reason to leak the file.
+func summarizeMultipart(contentType string, body []byte) []byte {
+	fallback := []byte("[multipart, " + strconv.Itoa(len(body)) + " bytes]")
+	_, params, err := mime.ParseMediaType(contentType)
+	if err != nil || params["boundary"] == "" {
+		return fallback
+	}
+	mr := multipart.NewReader(bytes.NewReader(body), params["boundary"])
+	var out strings.Builder
+	out.WriteString("multipart{")
+	for first := true; ; first = false {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fallback
+		}
+		if !first {
+			out.WriteString(", ")
+		}
+		if part.FileName() != "" {
+			// The file: size only. Its NAME is omitted too, deliberately — the
+			// masking policy already treats stored filenames as PII
+			// (documentFileName is a sensitive key), and users name files after
+			// themselves.
+			n, _ := io.Copy(io.Discard, part)
+			out.WriteString(part.FormName() + "=[file, " + strconv.FormatInt(n, 10) + " bytes]")
+			continue
+		}
+		value, _ := io.ReadAll(io.LimitReader(part, 256))
+		if isSensitiveKey(part.FormName()) {
+			out.WriteString(part.FormName() + "=" + maskValue)
+		} else {
+			// maskShapes catches a sensitive VALUE under an innocent name, the
+			// same backstop maskRaw applies to unparseable bodies.
+			out.WriteString(part.FormName() + "=" + maskShapes(string(value)))
+		}
+	}
+	out.WriteString("}")
+	return []byte(out.String())
 }
 
 // isNoisy reports whether a path should be skipped by the request logger.
