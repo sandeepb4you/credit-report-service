@@ -3,9 +3,11 @@ package server
 
 import (
 	"html/template"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gofiber/swagger"
 
 	"credit-report-service/internal/apperr"
@@ -14,6 +16,18 @@ import (
 	"credit-report-service/internal/models"
 	"credit-report-service/internal/server/middleware"
 	"credit-report-service/internal/service"
+)
+
+// Rate limit for POST /auth/otp/phone/status, the one public route that
+// distinguishes a registered identifier from an unknown one. Sized for the
+// screen that uses it: the app spends one call each time a ten-digit number is
+// completed, so a user correcting a typo a few times stays well inside the
+// window, while a script enumerating numbers from one address is held to a
+// crawl. Constants rather than config — this is a guard rail, not a knob, and a
+// deployment that can raise it will.
+const (
+	phoneStatusMaxPerIP = 20
+	phoneStatusWindow   = time.Minute
 )
 
 // New assembles the Fiber app. It is configured with the central error handler
@@ -118,6 +132,24 @@ func New(
 	// Phone sign-in: send an SMS OTP, verify it for a session (find-or-create).
 	a.Post("/otp/phone/send", auth.SendPhoneOTP)
 	a.Post("/otp/phone/verify", auth.VerifyPhoneOTP)
+	// Whether a number already has an account, so the sign-in screen can drop
+	// the consent box and the referral field for a returning user
+	// (design/onboarding/02.html). The one public route that answers
+	// differently for a known and an unknown identifier — see
+	// service.PhoneRegistered — hence the only per-IP rate limit in the
+	// service. The cap is set for a human typing numbers into one screen, not
+	// for a script walking the numbering plan; a real user spends one call per
+	// completed number.
+	a.Post("/otp/phone/status", limiter.New(limiter.Config{
+		Max:        phoneStatusMaxPerIP,
+		Expiration: phoneStatusWindow,
+		LimitReached: func(c *fiber.Ctx) error {
+			// fiber.Error passes through apperr.ErrorHandler, so this gets the
+			// same JSON envelope as every other failure.
+			return fiber.NewError(fiber.StatusTooManyRequests,
+				"Too many lookups from this device; try again shortly")
+		},
+	}), auth.PhoneStatus)
 	a.Post("/login", auth.Login)
 	a.Post("/google", auth.GoogleLogin)
 	// Forgot-password: email a code, exchange the code for a single-use reset

@@ -1751,6 +1751,52 @@ const docTemplate = `{
                 }
             }
         },
+        "/auth/otp/phone/status": {
+            "post": {
+                "description": "Reports whether an Indian mobile number (bare 10 digits or +91-prefixed) is registered, so the sign-in screen can drop the consent box and the referral field for a returning user — both are addressed to someone signing up. Returns nothing else about the account. Unlike every other public auth route this one distinguishes a known identifier from an unknown one, so it is rate-limited per IP; callers should treat a failure as \"unknown\" and ask for consent anyway.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Check whether a mobile number already has an account",
+                "parameters": [
+                    {
+                        "description": "Mobile number",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.phoneStatusReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.phoneStatusResp"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "429": {
+                        "description": "Too many lookups from this address",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/otp/phone/verify": {
             "post": {
                 "description": "Checks the code sent by POST /auth/otp/phone/send and opens a session for the calling device. A first-time number gets an account created on the spot (profile incomplete); an existing number signs into its account. Returns the same session payload as email login. An optional ` + "`" + `referralCode` + "`" + ` attributes a newly created account to that code's owner; it is ignored when the number already has an account, and an unknown or revoked code is a 400 that leaves the OTP usable.",
@@ -6363,6 +6409,25 @@ const docTemplate = `{
                 "phone": {
                     "type": "string",
                     "example": "+919876543210"
+                }
+            }
+        },
+        "internal_handler.phoneStatusReq": {
+            "type": "object",
+            "properties": {
+                "phone": {
+                    "type": "string",
+                    "example": "+919876543210"
+                }
+            }
+        },
+        "internal_handler.phoneStatusResp": {
+            "type": "object",
+            "properties": {
+                "registered": {
+                    "description": "Registered is the whole answer. Nothing else about the account is\nreported — see service.PhoneRegistered for why this route is the one\nplace the API admits that a number is known to it, and what that costs.",
+                    "type": "boolean",
+                    "example": true
                 }
             }
         },

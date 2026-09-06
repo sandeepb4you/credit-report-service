@@ -23,6 +23,49 @@ import (
 	"credit-report-service/internal/sms"
 )
 
+// PhoneRegistered reports whether a mobile number already has an account.
+//
+// It exists for one screen. design/onboarding/02.html asks the sign-in screen
+// to drop the consent box and the referral field for a returning user, because
+// both are addressed to someone registering: consent was given at signup, and a
+// referral attributes a *new* account, so for a returning user the field is a
+// box that cannot do anything. The screen has no way to make that call without
+// an answer from here.
+//
+// **This is a customer-enumeration oracle, and it is the only one in the
+// service.** Every other public auth route answers identically for a known and
+// an unknown identifier for exactly that reason — /auth/otp/phone/send and
+// /verify, /auth/signup/start, /auth/password/forgot all refuse to sort a list
+// of contacts into registered and not. This route cannot: the UI difference it
+// drives *is* the disclosure, so burying the answer in the response body would
+// buy nothing. Two things narrow it instead:
+//
+//   - It is mounted behind a per-IP rate limit (internal/server/server.go), so
+//     walking the numbering plan is slow rather than free.
+//   - A bool is the entire answer. No name, no status, no account id, nothing
+//     that turns "this number banks with us" into a profile.
+//
+// A malformed number is a 400 rather than a false, so the caller can tell "not
+// a mobile number" from "not one of ours" — the app needs the distinction and
+// it discloses nothing, the shape of the number being the caller's own input.
+func (s *AuthService) PhoneRegistered(ctx context.Context, phone string) (bool, error) {
+	normalized, err := normalizePhone(phone)
+	if err != nil {
+		return false, err
+	}
+	// Deliberately the same lookup VerifyPhoneOTP branches find-or-create on:
+	// if these two disagreed, the screen would hide the consent box for a
+	// number that verification then registers as new, and the signup would
+	// happen with no consent recorded at all.
+	if _, err := s.accounts.FindByPhone(ctx, normalized); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 // SendPhoneOTP mints (or refreshes) a login challenge for the number and
 // "delivers" it. Unknown numbers are allowed — verification is what creates
 // the account — so unlike email signup there is nothing to pre-check beyond

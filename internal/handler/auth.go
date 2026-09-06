@@ -315,6 +315,51 @@ func (h *AuthHandler) SendPhoneOTP(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "Verification code sent"})
 }
 
+// ---- POST /api/auth/otp/phone/status --------------------------------------
+//
+// Mounted with the sign-in pair rather than under /auth/phone/*, which is the
+// authenticated "register this number onto my account" pair. The two groups are
+// easy to confuse and only this one is public.
+//
+// A POST for a read, so the number travels in a body: the request logger's PII
+// scrubbing masks a "phone" field, and a query string would put the number in
+// access logs, proxy logs and browser history where nothing masks anything.
+
+type phoneStatusReq struct {
+	Phone string `json:"phone" example:"+919876543210"`
+}
+
+type phoneStatusResp struct {
+	// Registered is the whole answer. Nothing else about the account is
+	// reported — see service.PhoneRegistered for why this route is the one
+	// place the API admits that a number is known to it, and what that costs.
+	Registered bool `json:"registered" example:"true"`
+}
+
+// PhoneStatus godoc
+//
+// @Summary      Check whether a mobile number already has an account
+// @Description  Reports whether an Indian mobile number (bare 10 digits or +91-prefixed) is registered, so the sign-in screen can drop the consent box and the referral field for a returning user — both are addressed to someone signing up. Returns nothing else about the account. Unlike every other public auth route this one distinguishes a known identifier from an unknown one, so it is rate-limited per IP; callers should treat a failure as "unknown" and ask for consent anyway.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        request  body      phoneStatusReq   true  "Mobile number"
+// @Success      200      {object}  phoneStatusResp
+// @Failure      400      {object}  apperr.ErrorBody  "Validation failed"
+// @Failure      429      {object}  apperr.ErrorBody  "Too many lookups from this address"
+// @Router       /auth/otp/phone/status [post]
+func (h *AuthHandler) PhoneStatus(c *fiber.Ctx) error {
+	var req phoneStatusReq
+	if err := c.BodyParser(&req); err != nil {
+		return apperr.NewValidation("invalid JSON body")
+	}
+	registered, err := h.svc.PhoneRegistered(c.Context(), strings.TrimSpace(req.Phone))
+	if err != nil {
+		return err
+	}
+	return c.JSON(phoneStatusResp{Registered: registered})
+}
+
 // ---- POST /api/auth/otp/phone/verify ---------------------------------------
 
 type phoneOtpVerifyReq struct {
