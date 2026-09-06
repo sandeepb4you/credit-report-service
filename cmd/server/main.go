@@ -85,6 +85,7 @@ func main() {
 	couponRepo := repository.NewCouponRepo(pool)
 	loanRepo := repository.NewLoanProviderRepo(pool)
 	bankOfferingRepo := repository.NewBankOfferingRepo(pool)
+	scheduledRepo := repository.NewScheduledCheckRepo(pool)
 
 	// Upstream clients.
 	digitapClient := digitap.New(digitap.Config{
@@ -175,7 +176,9 @@ func main() {
 	couponSvc := service.NewCouponService(couponRepo, orderRepo)
 	authSvc := service.NewAuthService(
 		accountRepo, otpSvc, mailSvc, smsSender, tokenSvc, sessionSvc, couponSvc, cfg.Auth)
-	analyticsSvc := service.NewCreditAnalyticsService(digitapClient, analyticsRepo, accountRepo, orderRepo, cfg.CreditAnalytics)
+	scheduleLoc := cfg.ScheduledChecks.Location()
+	analyticsSvc := service.NewCreditAnalyticsService(digitapClient, analyticsRepo, accountRepo,
+		orderRepo, scheduledRepo, cfg.CreditAnalytics, scheduleLoc)
 	if cfg.Demo.Enabled {
 		slog.Warn("DEMO MODE ENABLED: submitted PANs are auto-verified without the external KYC provider; do not use in production")
 	}
@@ -185,7 +188,8 @@ func main() {
 		cfg.Registration.PAN,
 		cfg.Demo.Enabled,
 	)
-	orderSvc := service.NewOrderService(orderRepo, accountRepo, couponSvc, gateway, cfg.Cashfree)
+	orderSvc := service.NewOrderService(orderRepo, accountRepo, couponSvc, gateway, cfg.Cashfree,
+		scheduledRepo, scheduleLoc)
 	loanSwitchSvc := service.NewLoanSwitchService(loanRepo, analyticsRepo)
 	// Enrich analytics insights with interest-reduction opportunities so a single
 	// analytics call surfaces both levers: raise the score and cut interest.
@@ -217,6 +221,11 @@ func main() {
 	pdfUploader := service.NewReportUploader(pdfStore, analyticsRepo, accountRepo, 16)
 	analyticsSvc.SetPDFUploader(pdfUploader)
 	pdfUploader.Start(rootCtx)
+	// The scheduled-checks runner: executes the prepaid runs a myScorr Plus
+	// purchase minted, daily semantics on an hourly sweep. The first sweep
+	// fires at boot, so runs missed while the process was down start now.
+	scheduledRunner := service.NewScheduledCheckRunner(scheduledRepo, analyticsSvc, cfg.ScheduledChecks)
+	scheduledRunner.Start(rootCtx)
 	// The read side of the same store, plus the mailer, for the download and
 	// email-delivery endpoints.
 	analyticsSvc.SetReportPDFStore(pdfStore)
@@ -347,6 +356,9 @@ func main() {
 	// abandon a half-uploaded PDF. Best-effort: if shutdown outlasts the relay,
 	// the row just keeps a null result_pdf_url.
 	pdfUploader.Stop()
+	// Let an in-flight scheduled-check sweep wind down; claims it didn't reach
+	// go stale and the next boot's reclaim returns them to PENDING.
+	scheduledRunner.Stop()
 	shutdownCtx, cancelShut := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelShut()
 	if err := app.ShutdownWithContext(shutdownCtx); err != nil {

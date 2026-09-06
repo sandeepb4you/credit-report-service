@@ -186,6 +186,9 @@ func New(
 	// ---- Credit analytics (Digitap proxy) -------------------------------
 	ca := api.Group("/credit-analytics", requireAuth)
 	ca.Post("/request", analytics.Request)
+	// The prepaid runs a myScorr Plus purchase minted: what the app's plan view
+	// and the quota-confirmation dialog render.
+	ca.Get("/scheduled-checks", analytics.ScheduledChecks)
 	ca.Get("/reports", analytics.ListReports)
 	ca.Get("/reports/:id<int>", analytics.GetReport)
 	ca.Get("/reports/:id<int>/raw", analytics.GetReportRaw)

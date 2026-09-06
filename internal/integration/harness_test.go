@@ -49,6 +49,7 @@ import (
 	"credit-report-service/internal/digitap"
 	"credit-report-service/internal/handler"
 	"credit-report-service/internal/models"
+	"credit-report-service/internal/payments"
 	"credit-report-service/internal/repository"
 	"credit-report-service/internal/server"
 	"credit-report-service/internal/service"
@@ -245,16 +246,26 @@ func buildApp(cfg *config.Config, pool *pgxpool.Pool) *fiber.App {
 	// Credit analytics is wired because the app's Home screen depends on how this
 	// endpoint answers for a report that carries no score — see the no-score test.
 	// The Digitap client is the offline stub; nothing here calls upstream.
+	scheduledRepo := repository.NewScheduledCheckRepo(pool)
 	analyticsSvc := service.NewCreditAnalyticsService(
 		digitap.New(digitap.Config{}),
 		repository.NewCreditAnalyticsRepo(pool),
 		accountRepo,
 		orderRepo,
+		scheduledRepo,
 		cfg.CreditAnalytics,
+		cfg.ScheduledChecks.Location(),
 	)
 
 	referralH := handler.NewAdminReferralHandler(
 		service.NewReferralService(repository.NewReferralRepo(pool), accountRepo))
+
+	// Orders are wired with the stub gateway (fabricated sessions, every webhook
+	// signature verifies) so the plan-purchase tests can walk the REAL
+	// buy → webhook → fulfilment → scheduled-checks mint path.
+	orderSvc := service.NewOrderService(orderRepo, accountRepo, couponSvc,
+		payments.NewStubGateway("sandbox"), cfg.Cashfree,
+		scheduledRepo, cfg.ScheduledChecks.Location())
 
 	return server.New(
 		cfg,
@@ -263,7 +274,7 @@ func buildApp(cfg *config.Config, pool *pgxpool.Pool) *fiber.App {
 		handler.NewCreditAnalyticsHandler(analyticsSvc),
 		// 10MB doc cap, mirroring the registration.pan.document-max-size default.
 		handler.NewKycHandler(kycSvc, 10_000_000),
-		nil, // orders
+		handler.NewOrderHandler(orderSvc),
 		handler.NewCouponHandler(couponSvc),
 		nil, // loans
 		nil, // score builder

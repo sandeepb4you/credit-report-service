@@ -527,6 +527,14 @@ definitions:
         type: boolean
       amount:
         type: number
+      checksIncluded:
+        description: |-
+          ChecksIncluded is how many score checks one purchase buys (1 for one-time
+          products). IntervalMonths is the cadence between them and nil for one-time
+          products — it is what makes fulfilment mint a scheduled batch. ValidityDays
+          bounds how long unrun checks stay runnable (nil = forever). These are NOT
+          subscription fields: payment is one Cashfree order, no mandate, no renewal.
+        type: integer
       code:
         type: string
       createdAt:
@@ -538,10 +546,14 @@ definitions:
           Description is customer-facing copy: newline-separated feature lines that
           clients render as a checklist on the plans screen.
         type: string
+      intervalMonths:
+        type: integer
       name:
         type: string
       updatedAt:
         type: string
+      validityDays:
+        type: integer
     type: object
   credit-report-service_internal_models.Profile:
     properties:
@@ -646,6 +658,33 @@ definitions:
         example: 12
         type: integer
     type: object
+  credit-report-service_internal_models.ScheduledScoreCheck:
+    properties:
+      completedBy:
+        type: string
+      dueOn:
+        description: |-
+          DueOn is the day this run is owed — day granularity on purpose; the
+          runner executes it whatever time of that day its sweep lands. Scanned
+          from a DATE column, so only the date part is meaningful.
+        type: string
+      executedAt:
+        type: string
+      expiresOn:
+        type: string
+      id:
+        type: integer
+      intervalMonths:
+        type: integer
+      productCode:
+        type: string
+      reportId:
+        type: integer
+      sequenceNo:
+        type: integer
+      status:
+        type: string
+    type: object
   credit-report-service_internal_service.AuthResult:
     properties:
       account:
@@ -717,6 +756,16 @@ definitions:
           fresh one on every retry has bought nothing, since the whole point is that
           a re-entered screen sends the same key the first entry did.
         type: string
+      use_scheduled_quota:
+        description: |-
+          UseScheduledQuota is the caller's confirmation that a scheduled (plan)
+          check may be spent EARLY — before its due date — on this on-demand pull,
+          which also re-anchors the remaining schedule from today. Without it, a
+          pull whose only funding is a future scheduled run answers 409 with the
+          numbers the confirmation dialog needs; nothing is spent. Irrelevant (and
+          ignored) when an unspent one-time purchase exists or the run is already
+          due: neither costs the user anything they weren't owed today.
+        type: boolean
     type: object
   credit-report-service_internal_service.DigitapInitiateResponse:
     properties:
@@ -952,6 +1001,26 @@ definitions:
         type: integer
       id:
         type: integer
+    type: object
+  credit-report-service_internal_service.ScheduledChecksView:
+    properties:
+      expiresOn:
+        type: string
+      nextDueOn:
+        description: NextDueOn / ExpiresOn are YYYY-MM-DD, absent when there is nothing
+          pending.
+        type: string
+      pendingRuns:
+        type: integer
+      planCode:
+        description: |-
+          PlanCode is the plan the (current) batch belongs to, from the earliest
+          pending run, or the latest run when none are pending. Empty = no plan.
+        type: string
+      runs:
+        items:
+          $ref: '#/definitions/credit-report-service_internal_models.ScheduledScoreCheck'
+        type: array
     type: object
   credit-report-service_internal_service.ScoreBuilder:
     properties:
@@ -1958,6 +2027,49 @@ paths:
       security:
       - BearerAuth: []
       summary: Get a download link for an account's uploaded PAN document (admin only)
+      tags:
+      - kyc
+  /admin/kyc/pan/{accountId}/document/file:
+    get:
+      description: Streams the named account's uploaded card with its stored content
+        type, so the review console renders it inline; the presigned-link sibling
+        remains for downloading. Needs the 'kyc:verify' permission.
+      parameters:
+      - description: Account id whose document to fetch
+        in: path
+        name: accountId
+        required: true
+        type: integer
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: The document bytes (image or PDF)
+          schema:
+            type: file
+        "400":
+          description: accountId must be an integer
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "403":
+          description: Missing the 'kyc:verify' permission
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "404":
+          description: No PAN on file, or no document uploaded
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "503":
+          description: Document storage is not configured
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Fetch an account's uploaded PAN card document (admin only)
       tags:
       - kyc
   /admin/kyc/pan/{accountId}/reject:
@@ -3881,8 +3993,16 @@ paths:
           schema:
             $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
         "402":
-          description: No unspent score-check purchase on the account — send the user
-            to the paywall
+          description: No unspent score-check purchase or scheduled plan run on the
+            account — send the user to the paywall
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+        "409":
+          description: The only funding is a scheduled plan run whose due date is
+            still ahead and use_scheduled_quota was not sent. details carries reason=scheduled_quota_confirm,
+            pendingRuns, nextDueOn and newNextDueOn (YYYY-MM-DD) for the confirmation
+            dialog; re-send with use_scheduled_quota=true to spend it and re-anchor
+            the schedule from today
           schema:
             $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
         "422":
@@ -3900,6 +4020,30 @@ paths:
       security:
       - BearerAuth: []
       summary: Request a credit analysis from Digitap
+      tags:
+      - credit-analytics
+  /credit-analytics/scheduled-checks:
+    get:
+      description: 'Returns the prepaid report runs the account''s plan purchase minted:
+        pending count, next due date, expiry, and the full run list (PENDING/RUNNING/DONE/FAILED/EXPIRED).
+        An account with no plan gets pendingRuns 0 and an empty runs list — the normal
+        one-time-purchase state, not an error. The app prices its "use a plan check
+        now?" confirmation from this, but the server re-checks on the pull itself
+        (the 409 on /request), so this endpoint is display, never authority.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_service.ScheduledChecksView'
+        "401":
+          description: Not authenticated
+          schema:
+            $ref: '#/definitions/credit-report-service_internal_apperr.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: The caller's scheduled score checks (myScorr Plus plan runs)
       tags:
       - credit-analytics
   /credit-analytics/score-simulator:

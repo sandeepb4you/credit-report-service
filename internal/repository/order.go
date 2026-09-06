@@ -24,7 +24,8 @@ func (r *OrderRepo) BeginTx(ctx context.Context) (pgx.Tx, error) { return r.pool
 
 // ---- products ------------------------------------------------------------
 
-const productCols = `code, name, amount, description, currency, active, created_at, updated_at`
+const productCols = `code, name, amount, description, checks_included, interval_months,
+    validity_days, currency, active, created_at, updated_at`
 
 func (r *OrderRepo) ListActiveProducts(ctx context.Context) ([]models.Product, error) {
 	ps := []models.Product{}

@@ -575,6 +575,70 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/kyc/pan/{accountId}/document/file": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Streams the named account's uploaded card with its stored content type, so the review console renders it inline; the presigned-link sibling remains for downloading. Needs the 'kyc:verify' permission.",
+                "produces": [
+                    "application/octet-stream"
+                ],
+                "tags": [
+                    "kyc"
+                ],
+                "summary": "Fetch an account's uploaded PAN card document (admin only)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Account id whose document to fetch",
+                        "name": "accountId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The document bytes (image or PDF)",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "400": {
+                        "description": "accountId must be an integer",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing the 'kyc:verify' permission",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "No PAN on file, or no document uploaded",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "503": {
+                        "description": "Document storage is not configured",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/admin/kyc/pan/{accountId}/reject": {
             "post": {
                 "security": [
@@ -3326,7 +3390,13 @@ const docTemplate = `{
                         }
                     },
                     "402": {
-                        "description": "No unspent score-check purchase on the account — send the user to the paywall",
+                        "description": "No unspent score-check purchase or scheduled plan run on the account — send the user to the paywall",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "The only funding is a scheduled plan run whose due date is still ahead and use_scheduled_quota was not sent. details carries reason=scheduled_quota_confirm, pendingRuns, nextDueOn and newNextDueOn (YYYY-MM-DD) for the confirmation dialog; re-send with use_scheduled_quota=true to spend it and re-anchor the schedule from today",
                         "schema": {
                             "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
@@ -3345,6 +3415,37 @@ const docTemplate = `{
                     },
                     "503": {
                         "description": "Digitap rejected our client credentials (server misconfiguration)",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/credit-analytics/scheduled-checks": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the prepaid report runs the account's plan purchase minted: pending count, next due date, expiry, and the full run list (PENDING/RUNNING/DONE/FAILED/EXPIRED). An account with no plan gets pendingRuns 0 and an empty runs list — the normal one-time-purchase state, not an error. The app prices its \"use a plan check now?\" confirmation from this, but the server re-checks on the pull itself (the 409 on /request), so this endpoint is display, never authority.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "credit-analytics"
+                ],
+                "summary": "The caller's scheduled score checks (myScorr Plus plan runs)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_service.ScheduledChecksView"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
                         "schema": {
                             "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
                         }
@@ -4708,6 +4809,10 @@ const docTemplate = `{
                 "amount": {
                     "type": "number"
                 },
+                "checksIncluded": {
+                    "description": "ChecksIncluded is how many score checks one purchase buys (1 for one-time\nproducts). IntervalMonths is the cadence between them and nil for one-time\nproducts — it is what makes fulfilment mint a scheduled batch. ValidityDays\nbounds how long unrun checks stay runnable (nil = forever). These are NOT\nsubscription fields: payment is one Cashfree order, no mandate, no renewal.",
+                    "type": "integer"
+                },
                 "code": {
                     "type": "string"
                 },
@@ -4721,11 +4826,17 @@ const docTemplate = `{
                     "description": "Description is customer-facing copy: newline-separated feature lines that\nclients render as a checklist on the plans screen.",
                     "type": "string"
                 },
+                "intervalMonths": {
+                    "type": "integer"
+                },
                 "name": {
                     "type": "string"
                 },
                 "updatedAt": {
                     "type": "string"
+                },
+                "validityDays": {
+                    "type": "integer"
                 }
             }
         },
@@ -4866,6 +4977,42 @@ const docTemplate = `{
                 }
             }
         },
+        "credit-report-service_internal_models.ScheduledScoreCheck": {
+            "type": "object",
+            "properties": {
+                "completedBy": {
+                    "type": "string"
+                },
+                "dueOn": {
+                    "description": "DueOn is the day this run is owed — day granularity on purpose; the\nrunner executes it whatever time of that day its sweep lands. Scanned\nfrom a DATE column, so only the date part is meaningful.",
+                    "type": "string"
+                },
+                "executedAt": {
+                    "type": "string"
+                },
+                "expiresOn": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "intervalMonths": {
+                    "type": "integer"
+                },
+                "productCode": {
+                    "type": "string"
+                },
+                "reportId": {
+                    "type": "integer"
+                },
+                "sequenceNo": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
         "credit-report-service_internal_service.AuthResult": {
             "type": "object",
             "properties": {
@@ -4957,6 +5104,10 @@ const docTemplate = `{
                 "idempotency_key": {
                     "description": "IdempotencyKey makes the pull safe to repeat. Optional — omitting it keeps\nthe old behaviour where every call is a new billed request — but the app\nalways sends one, because this endpoint costs the user money twice over: a\nDigitap call we are billed for, and one of their paid orders spent.\n\nThe key must identify the ATTEMPT, not the request: a client that mints a\nfresh one on every retry has bought nothing, since the whole point is that\na re-entered screen sends the same key the first entry did.",
                     "type": "string"
+                },
+                "use_scheduled_quota": {
+                    "description": "UseScheduledQuota is the caller's confirmation that a scheduled (plan)\ncheck may be spent EARLY — before its due date — on this on-demand pull,\nwhich also re-anchors the remaining schedule from today. Without it, a\npull whose only funding is a future scheduled run answers 409 with the\nnumbers the confirmation dialog needs; nothing is spent. Irrelevant (and\nignored) when an unspent one-time purchase exists or the run is already\ndue: neither costs the user anything they weren't owed today.",
+                    "type": "boolean"
                 }
             }
         },
@@ -5263,6 +5414,31 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "integer"
+                }
+            }
+        },
+        "credit-report-service_internal_service.ScheduledChecksView": {
+            "type": "object",
+            "properties": {
+                "expiresOn": {
+                    "type": "string"
+                },
+                "nextDueOn": {
+                    "description": "NextDueOn / ExpiresOn are YYYY-MM-DD, absent when there is nothing pending.",
+                    "type": "string"
+                },
+                "pendingRuns": {
+                    "type": "integer"
+                },
+                "planCode": {
+                    "description": "PlanCode is the plan the (current) batch belongs to, from the earliest\npending run, or the latest run when none are pending. Empty = no plan.",
+                    "type": "string"
+                },
+                "runs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/credit-report-service_internal_models.ScheduledScoreCheck"
+                    }
                 }
             }
         },
