@@ -154,6 +154,138 @@ func (h *AuthHandler) ResendOTP(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "Verification code re-sent"})
 }
 
+// ---- POST /api/auth/signup/start ------------------------------------------
+
+// signupStartMsg is returned whether or not the address already has an account.
+// The exact mirror of forgotPasswordMsg below, and load-bearing for the same
+// reason: an honest answer from either endpoint would let an anonymous caller
+// sort a list of addresses into registered and not.
+const signupStartMsg = "If that email can be registered, a code is on its way"
+
+// The three-step email signup: prove the address, then choose a password. The
+// older POST /auth/signup (password first, PENDING account, then verify-email)
+// is still mounted and unchanged; these are additive. See service/signup_email.go.
+
+type signupStartReq struct {
+	Email string `json:"email" example:"user@example.com"`
+}
+
+// StartEmailSignup godoc
+//
+// @Summary      Start an email signup
+// @Description  Emails a one-time code to an address so it can be proven before a password is chosen. Creates nothing. Returns the same 200 for an address that already has an account, so the endpoint cannot be used to discover which emails are registered — the mirror of POST /auth/password/forgot, which lies in the opposite direction for the same reason. Call again to resend, subject to the usual cooldown / send limits.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        request  body      signupStartReq  true  "Email to register"
+// @Success      200      {object}  map[string]string  "{\"message\": \"If that email can be registered, a code is on its way\"}"
+// @Failure      400      {object}  apperr.ErrorBody  "Validation failed"
+// @Failure      409      {object}  apperr.ErrorBody  "Resend cooldown / send limit reached"
+// @Router       /auth/signup/start [post]
+func (h *AuthHandler) StartEmailSignup(c *fiber.Ctx) error {
+	var req signupStartReq
+	if err := c.BodyParser(&req); err != nil {
+		return apperr.NewValidation("invalid JSON body")
+	}
+	req.Email = strings.TrimSpace(req.Email)
+	if !looksLikeEmail(req.Email) {
+		return apperr.NewValidationWith("Validation failed",
+			map[string]string{"email": "email must be valid"})
+	}
+	if err := h.svc.StartEmailSignup(c.Context(), req.Email); err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"message": signupStartMsg})
+}
+
+// ---- POST /api/auth/signup/verify -----------------------------------------
+
+type signupVerifyReq struct {
+	Email string `json:"email" example:"user@example.com"`
+	OTP   string `json:"otp"   example:"1234"`
+}
+
+// VerifySignupOTP godoc
+//
+// @Summary      Verify an email-signup code
+// @Description  Checks the code emailed by POST /auth/signup/start and returns a single-use `signupToken`, which POST /auth/signup/complete redeems to create the account. The code is consumed here — a wrong code counts against the same attempt limit as every other OTP.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        request  body      signupVerifyReq  true  "Email + OTP"
+// @Success      200      {object}  service.SignupGrant
+// @Failure      400      {object}  apperr.ErrorBody  "Wrong / expired / locked OTP"
+// @Router       /auth/signup/verify [post]
+func (h *AuthHandler) VerifySignupOTP(c *fiber.Ctx) error {
+	var req signupVerifyReq
+	if err := c.BodyParser(&req); err != nil {
+		return apperr.NewValidation("invalid JSON body")
+	}
+	req.Email = strings.TrimSpace(req.Email)
+	req.OTP = strings.TrimSpace(req.OTP)
+
+	var details map[string]string
+	if !looksLikeEmail(req.Email) {
+		details = setDetail(details, "email", "email must be valid")
+	}
+	if !otpCodeRE.MatchString(req.OTP) {
+		details = setDetail(details, "otp", "otp must be 4-8 digits")
+	}
+	if len(details) > 0 {
+		return apperr.NewValidationWith("Validation failed", details)
+	}
+
+	grant, err := h.svc.VerifySignupOTP(c.Context(), req.Email, req.OTP)
+	if err != nil {
+		return err
+	}
+	return c.JSON(grant)
+}
+
+// ---- POST /api/auth/signup/complete ---------------------------------------
+
+type signupCompleteReq struct {
+	SignupToken string `json:"signupToken" example:"sgt_8Kd2..."`
+	Password    string `json:"password"    example:"hunter2password"`
+	// ReferralCode attributes the new account to whoever owns the code. An
+	// unknown code fails the call rather than being ignored.
+	ReferralCode string `json:"referralCode" example:"K7QM4XZ"`
+}
+
+// CompleteSignup godoc
+//
+// @Summary      Finish an email signup
+// @Description  Redeems the single-use `signupToken` from POST /auth/signup/verify, creates the account ACTIVE with the chosen password, and returns a session. The address was already proven, so there is nothing left for POST /auth/verify-email to activate. The token is spent whether or not the caller keeps the response.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        X-Device-Id        header  string  false  "Stable per-device UUID"
+// @Param        X-Device-Name      header  string  false  "Human-readable device name shown in the device list"
+// @Param        X-Device-Platform  header  string  false  "ios | android | web"
+// @Param        X-Device-Info      header  string  false  "JSON device description"
+// @Param        request  body      signupCompleteReq  true  "Signup token + password + optional referral code"
+// @Success      200      {object}  service.AuthResult
+// @Failure      400      {object}  apperr.ErrorBody  "Validation failed (password too short/long, unknown referral code)"
+// @Failure      401      {object}  apperr.ErrorBody  "Signup token is unknown, expired or already used"
+// @Failure      409      {object}  apperr.ErrorBody  "Email was registered while this signup was in progress"
+// @Router       /auth/signup/complete [post]
+func (h *AuthHandler) CompleteSignup(c *fiber.Ctx) error {
+	var req signupCompleteReq
+	if err := c.BodyParser(&req); err != nil {
+		return apperr.NewValidation("invalid JSON body")
+	}
+	// The email is not in the body on purpose: the grant already names the
+	// address it was issued for, and taking a second copy from the client would
+	// only create a way for the two to disagree.
+	res, err := h.svc.CompleteSignup(
+		c.Context(), req.SignupToken, req.Password,
+		strings.TrimSpace(req.ReferralCode), middleware.Device(c))
+	if err != nil {
+		return err
+	}
+	return h.respondAuth(c, res, middleware.Device(c).IsWeb())
+}
+
 // ---- POST /api/auth/otp/phone/send ----------------------------------------
 
 type phoneOtpSendReq struct {

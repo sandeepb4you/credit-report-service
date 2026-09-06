@@ -108,6 +108,13 @@ func New(
 	a.Post("/signup", auth.Signup)
 	a.Post("/verify-email", auth.VerifyEmail)
 	a.Post("/otp/resend", auth.ResendOTP)
+	// Email signup, three-step: prove the address, then choose a password. The
+	// pair above is the older shape (password first, PENDING account, then
+	// verify-email) and stays mounted — both create accounts, and only this one
+	// leaves nothing behind when a signup is abandoned.
+	a.Post("/signup/start", auth.StartEmailSignup)
+	a.Post("/signup/verify", auth.VerifySignupOTP)
+	a.Post("/signup/complete", auth.CompleteSignup)
 	// Phone sign-in: send an SMS OTP, verify it for a session (find-or-create).
 	a.Post("/otp/phone/send", auth.SendPhoneOTP)
 	a.Post("/otp/phone/verify", auth.VerifyPhoneOTP)

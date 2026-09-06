@@ -26,6 +26,14 @@ const (
 	ChannelSMS   = "sms"
 
 	OtpPurposeSignup = "signup"
+	// OtpPurposeSignupEmail proves an address before any account exists, for the
+	// three-step email signup (/auth/signup/start -> verify -> complete).
+	//
+	// Deliberately not OtpPurposeSignup: that one belongs to the older flow, whose
+	// challenge is raised against an already-created PENDING account. Sharing the
+	// value would let a code issued by one flow be spent by the other, and the two
+	// disagree about whether an account exists yet.
+	OtpPurposeSignupEmail = "signup_email"
 	OtpPurposeLogin  = "login"
 	OtpPurposeReset  = "reset"
 
@@ -260,6 +268,21 @@ type PrefillLookup struct {
 type PasswordResetToken struct {
 	ID         int64      `json:"id"         db:"id"`
 	AccountID  int64      `json:"accountId"  db:"account_id"`
+	TokenHash  string     `json:"-"          db:"token_hash"`
+	ExpiresAt  time.Time  `json:"expiresAt"  db:"expires_at"`
+	ConsumedAt *time.Time `json:"-"          db:"consumed_at"`
+	CreatedAt  time.Time  `json:"createdAt"  db:"created_at"`
+}
+
+// SignupToken is the row model for signup_tokens: proof that the holder has
+// verified an email address, redeemable exactly once to create the account.
+//
+// Keyed on Email rather than an account id because there is no account yet —
+// the redesigned email signup proves the address before a password is chosen,
+// and /auth/signup/complete is what creates the row this would point at.
+type SignupToken struct {
+	ID         int64      `json:"id"         db:"id"`
+	Email      string     `json:"email"      db:"email"`
 	TokenHash  string     `json:"-"          db:"token_hash"`
 	ExpiresAt  time.Time  `json:"expiresAt"  db:"expires_at"`
 	ConsumedAt *time.Time `json:"-"          db:"consumed_at"`

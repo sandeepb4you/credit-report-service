@@ -379,6 +379,77 @@ func (r *AccountRepo) InvalidatePasswordResetTokens(
 	return err
 }
 
+// ---- signup_tokens ------------------------------------------------------
+
+const signupTokenCols = `id, email, token_hash, expires_at, consumed_at, created_at`
+
+// CreateSignupToken stores the digest of a freshly minted signup grant.
+//
+// Keyed on the address, not an account: at this point in the flow the caller has
+// proven an email and nothing has been created yet.
+func (r *AccountRepo) CreateSignupToken(
+	ctx context.Context, tx pgx.Tx, email, tokenHash string, expiresAt time.Time,
+) (*models.SignupToken, error) {
+	var t models.SignupToken
+	row := tx.QueryRow(ctx,
+		`INSERT INTO signup_tokens (email, token_hash, expires_at)
+		 VALUES ($1, $2, $3)
+		 RETURNING `+signupTokenCols,
+		email, tokenHash, expiresAt)
+	if err := row.Scan(&t.ID, &t.Email, &t.TokenHash,
+		&t.ExpiresAt, &t.ConsumedAt, &t.CreatedAt); err != nil {
+		return nil, classifyPgErr(err)
+	}
+	return &t, nil
+}
+
+// FindLiveSignupToken returns the unconsumed, unexpired grant holding this
+// digest, or ErrNotFound. As with password resets, callers must not tell the
+// three failure cases apart to the client: wrong, spent and expired all mean
+// the same thing to the user.
+func (r *AccountRepo) FindLiveSignupToken(
+	ctx context.Context, tokenHash string,
+) (*models.SignupToken, error) {
+	var t models.SignupToken
+	err := pgxscan.Get(ctx, r.pool, &t,
+		`SELECT `+signupTokenCols+` FROM signup_tokens
+		  WHERE token_hash = $1 AND consumed_at IS NULL AND expires_at > now()`,
+		tokenHash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &t, err
+}
+
+// ConsumeSignupToken burns a grant. The compare-and-set on consumed_at is what
+// makes redemption single-use under concurrency: only the first caller sees a
+// row affected, so two racing requests cannot both create an account.
+func (r *AccountRepo) ConsumeSignupToken(ctx context.Context, tx pgx.Tx, id int64) error {
+	tag, err := tx.Exec(ctx,
+		`UPDATE signup_tokens SET consumed_at = now()
+		  WHERE id = $1 AND consumed_at IS NULL`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// InvalidateSignupTokens burns every outstanding grant for an address, so only
+// the newest is redeemable. Called when issuing a new grant and after a
+// completed signup — a created account must not leave a grant alive that would
+// try to create it again.
+func (r *AccountRepo) InvalidateSignupTokens(
+	ctx context.Context, tx pgx.Tx, email string,
+) error {
+	_, err := tx.Exec(ctx,
+		`UPDATE signup_tokens SET consumed_at = now()
+		  WHERE email = $1 AND consumed_at IS NULL`, email)
+	return err
+}
+
 // ---- kyc_records --------------------------------------------------------
 
 const kycCols = `id, account_id, pan_number, pan_name, pan_verified,
