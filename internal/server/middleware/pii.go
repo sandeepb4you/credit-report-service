@@ -30,6 +30,10 @@ const maskValue = "********"
 //   - contact:     email, phone, mobile, mobileNo
 //   - identity:    pan, aadhaar*, name fields, DOB
 //   - auth:        providerSubject, passwordHash, otpHash, destination, authorization
+//
+// Shape-based redaction covers the rest: PAN, email, mobile and JWT values that
+// arrive under an unremarkable key, plus the AWS SigV4 parameters that make a
+// presigned S3 download link usable.
 var sensitiveKeys = map[string]struct{}{
 	// credentials / secrets
 	"password":     {},
@@ -94,6 +98,22 @@ var (
 			`|\b91[\-\s]?[6-9]\d{9}\b` +
 			`|\b0[6-9]\d{9}\b` +
 			`|\b[6-9]\d{9}\b`)
+	// AWS SigV4 query credentials, as they appear in a presigned S3 URL.
+	//
+	// A presigned download link IS a credential: whoever holds it can fetch that
+	// object until it expires, without an account or a token. The report-PDF
+	// endpoint returns one in its response body, and the request logger logs
+	// response bodies — so without this the log holds working download links for
+	// customers' credit reports, and anyone who can read the log can use one.
+	//
+	// Only the three secret-bearing parameters are masked, not the whole URL:
+	// the bucket, the key and the expiry stay readable, which is what makes a log
+	// line useful when someone asks why a download failed. Values are matched up
+	// to the next separator — `&`, its JSON-escaped form `\u0026`, a quote or
+	// whitespace — because the logger masks the parsed string before the body is
+	// re-serialized, and raw bodies go through the same function unparsed.
+	awsSigV4RE = regexp.MustCompile(
+		`(?i)(X-Amz-(?:Signature|Credential|Security-Token)=)[^&"'\s]+`)
 )
 
 // maskJSON returns a redacted copy of a JSON body. It parses the body into
@@ -209,8 +229,13 @@ func maskRaw(body []byte) []byte {
 	return []byte(maskShapes(string(body)))
 }
 
-// maskShapes redacts PAN / email / JWT shapes within a string value.
+// maskShapes redacts PAN / email / JWT / presigned-URL shapes within a string value.
 func maskShapes(s string) string {
+	// Before bearerRE: a SigV4 signature is 64 hex characters and a credential
+	// scope carries slashes, neither of which the JWT shape matches — but the
+	// security token does look like one, and masking the whole `X-Amz-...=value`
+	// pair keeps the parameter name in the log where a bare JWT mask would eat it.
+	s = awsSigV4RE.ReplaceAllString(s, "${1}"+maskValue)
 	s = bearerRE.ReplaceAllString(s, maskValue)
 	s = panRE.ReplaceAllString(s, maskValue)
 	s = emailRE.ReplaceAllString(s, maskValue)
