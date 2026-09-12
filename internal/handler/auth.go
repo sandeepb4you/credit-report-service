@@ -743,6 +743,44 @@ func (h *AuthHandler) ResetPassword(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "Password updated. Please sign in."})
 }
 
+// ---- POST /api/auth/password/set -----------------------------------------
+
+type setPasswordReq struct {
+	Password string `json:"password" example:"hunter2pass"`
+}
+
+// SetInitialPassword godoc
+//
+// @Summary      Set a first password for the signed-in account
+// @Description  Writes the password for the account's linked email address, so it can be used with POST /auth/login. For an account created by phone, whose linked email identity carries no password: the add-email flow calls this straight after POST /auth/email/verify. Refuses (409) when no email is linked, when it is not verified, or when a password already exists — changing an existing password still goes through the forgot-password flow. The caller's sessions are left alone, unlike a reset.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        request  body      setPasswordReq  true  "New password"
+// @Success      200      {object}  models.Profile
+// @Failure      400      {object}  apperr.ErrorBody  "Validation failed (password too short/long)"
+// @Failure      401      {object}  apperr.ErrorBody  "Not authenticated"
+// @Failure      409      {object}  apperr.ErrorBody  "No email linked / already has a password"
+// @Router       /auth/password/set [post]
+func (h *AuthHandler) SetInitialPassword(c *fiber.Ctx) error {
+	accountID, ok := middleware.AccountID(c)
+	if !ok {
+		return apperr.NewUnauthorized("Not authenticated")
+	}
+	var req setPasswordReq
+	if err := c.BodyParser(&req); err != nil {
+		return apperr.NewValidation("invalid JSON body")
+	}
+	// Password rules live in the service, with signup and reset. Nothing else
+	// to check here: the address comes from the account, not the body.
+	prof, err := h.svc.SetInitialPassword(c.Context(), accountID, req.Password)
+	if err != nil {
+		return err
+	}
+	return c.JSON(prof)
+}
+
 // ---- POST /api/auth/google -----------------------------------------------
 
 type googleLoginReq struct {

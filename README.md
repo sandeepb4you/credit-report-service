@@ -100,6 +100,7 @@ All routes are under `/api`. 🔒 = requires `Authorization: Bearer <jwt>`.
 | POST   | `/api/auth/phone/verify`                   | 🔒       | Verify it, attach the number to the account  |
 | POST   | `/api/auth/email/send`                     | 🔒       | Link an email address: send an OTP           |
 | POST   | `/api/auth/email/verify`                   | 🔒       | Verify it, attach the address to the account |
+| POST   | `/api/auth/password/set`                   | 🔒       | First password for the linked address        |
 | POST   | `/api/auth/password/forgot`                |          | Email a password-reset OTP                   |
 | POST   | `/api/auth/password/verify-otp`            |          | Reset OTP → single-use `resetToken`          |
 | POST   | `/api/auth/password/reset`                 |          | Set a new password, sign out every device    |
@@ -130,10 +131,24 @@ All routes are under `/api`. 🔒 = requires `Authorization: Bearer <jwt>`.
 5. `POST /api/auth/email/send` then `/api/auth/email/verify` — the mirror, for an
    account that signed up by phone. Optional: nothing is blocked without an email.
    Nothing is written until the code passes. The identity row is created with a
-   NULL password hash, so `login` still rejects the address while
-   `password/forgot` accepts it — the route by which a phone-first user gives
-   themselves a password. See `internal/service/email_link.go`; the challenge
-   handling both flows share is in `internal/service/link_identity.go`.
+   NULL password hash, so `login` still rejects the address until step 7 fills it
+   in (`password/forgot` accepts it too, for anyone who skipped that step). See
+   `internal/service/email_link.go`; the challenge handling both flows share is in
+   `internal/service/link_identity.go`.
+6. `GET /api/profile` reports `hasPassword` — whether that address could be used
+   with `POST /auth/login`. It is what lets the app offer "set a password" only to
+   the accounts step 7 would accept, and it is derived per request rather than
+   stored. Note it is on the **profile** shape only: the account object inside a
+   login or OTP response is a bare account and has no such field.
+7. `POST /api/auth/password/set` with `{password}` and that same bearer token —
+   the first password for the address just linked, so the app can finish the job
+   on the screen the user is already on. No email in the body: the address comes
+   off the account behind the token. **Set, never change** — an identity that
+   already has a hash is `409`, which is what keeps a stolen access token from
+   becoming a permanent credential, and no email linked is `409` too. Sessions
+   are left alone, unlike a reset: this runs inside the account holder's own live
+   session and adds a credential rather than recovering one.
+   See `internal/service/password_set.go`.
 
 ## Forgot password
 

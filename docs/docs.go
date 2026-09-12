@@ -2014,6 +2014,63 @@ const docTemplate = `{
                 }
             }
         },
+        "/auth/password/set": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Writes the password for the account's linked email address, so it can be used with POST /auth/login. For an account created by phone, whose linked email identity carries no password: the add-email flow calls this straight after POST /auth/email/verify. Refuses (409) when no email is linked, when it is not verified, or when a password already exists — changing an existing password still goes through the forgot-password flow. The caller's sessions are left alone, unlike a reset.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Set a first password for the signed-in account",
+                "parameters": [
+                    {
+                        "description": "New password",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.setPasswordReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_models.Profile"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation failed (password too short/long)",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "No email linked / already has a password",
+                        "schema": {
+                            "$ref": "#/definitions/credit-report-service_internal_apperr.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/password/verify-otp": {
             "post": {
                 "description": "Checks the code emailed by POST /auth/password/forgot and returns a single-use ` + "`" + `resetToken` + "`" + `, which POST /auth/password/reset redeems to set the new password. The code is consumed here — a wrong code counts against the same attempt limit as signup verification.",
@@ -5147,6 +5204,10 @@ const docTemplate = `{
                 "firstName": {
                     "type": "string"
                 },
+                "hasPassword": {
+                    "description": "HasPassword reports whether the account's email identity carries a\npassword hash, i.e. whether POST /auth/login would ever accept this\naddress. False for a phone signup that linked an email but never chose a\npassword — the state POST /auth/password/set exists to end, and the only\nway a client can know whether to offer it.\n\nDerived per request rather than stored: it is one lookup, and a cached\ncopy would go stale the moment a password was set or reset. Note it\nappears on the PROFILE routes only — the account object inside a login or\nOTP response is a bare Account and carries no such field.",
+                    "type": "boolean"
+                },
                 "id": {
                     "type": "integer"
                 },
@@ -6509,6 +6570,15 @@ const docTemplate = `{
                 "resetToken": {
                     "type": "string",
                     "example": "prt_8Kd2..."
+                }
+            }
+        },
+        "internal_handler.setPasswordReq": {
+            "type": "object",
+            "properties": {
+                "password": {
+                    "type": "string",
+                    "example": "hunter2pass"
                 }
             }
         },

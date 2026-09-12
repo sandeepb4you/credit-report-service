@@ -276,6 +276,17 @@ type KYCReviewPage struct {
 type Profile struct {
 	Account
 	KYC KYCStatus `json:"kyc"`
+	// HasPassword reports whether the account's email identity carries a
+	// password hash, i.e. whether POST /auth/login would ever accept this
+	// address. False for a phone signup that linked an email but never chose a
+	// password — the state POST /auth/password/set exists to end, and the only
+	// way a client can know whether to offer it.
+	//
+	// Derived per request rather than stored: it is one lookup, and a cached
+	// copy would go stale the moment a password was set or reset. Note it
+	// appears on the PROFILE routes only — the account object inside a login or
+	// OTP response is a bare Account and carries no such field.
+	HasPassword bool `json:"hasPassword"`
 }
 
 // PrefillLookup is one call to the Mobile to Prefill API, kept so a PAN

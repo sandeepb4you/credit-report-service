@@ -344,9 +344,9 @@ func (s *AuthService) GetProfile(ctx context.Context, accountID int64) (*models.
 	return s.profileFor(ctx, acc)
 }
 
-// profileFor decorates an account with its KYC state. A missing kyc_records row
-// is the normal state for a new account, so it reports NOT_SUBMITTED instead of
-// failing the profile read.
+// profileFor decorates an account with its KYC state and whether it has a
+// password. A missing kyc_records row is the normal state for a new account, so
+// it reports NOT_SUBMITTED instead of failing the profile read.
 func (s *AuthService) profileFor(ctx context.Context, acc *models.Account) (*models.Profile, error) {
 	rec, err := s.accounts.FindKYCByAccount(ctx, acc.ID)
 	if errors.Is(err, repository.ErrNotFound) {
@@ -354,7 +354,15 @@ func (s *AuthService) profileFor(ctx context.Context, acc *models.Account) (*mod
 	} else if err != nil {
 		return nil, err
 	}
-	return &models.Profile{Account: *acc, KYC: models.NewKYCStatus(rec)}, nil
+	hasPassword, err := s.hasPassword(ctx, acc)
+	if err != nil {
+		return nil, err
+	}
+	return &models.Profile{
+		Account:     *acc,
+		KYC:         models.NewKYCStatus(rec),
+		HasPassword: hasPassword,
+	}, nil
 }
 
 // UpdateProfile sets first/last name and date of birth, marking the profile

@@ -191,6 +191,12 @@ func New(
 	a.Post("/email/send", requireAuth, auth.SendEmailLink)
 	a.Post("/email/verify", requireAuth, auth.VerifyEmailLink)
 
+	// The first password for an account that signed up by phone, set from the
+	// session that just proved the address. Authenticated and one-way: it fills
+	// a NULL hash and refuses to replace one, so changing a password the caller
+	// cannot remember still costs a code emailed to the mailbox.
+	a.Post("/password/set", requireAuth, auth.SetInitialPassword)
+
 	a.Post("/logout", requireAuth, auth.Logout)
 	a.Get("/sessions", requireAuth, auth.ListSessions)
 	a.Delete("/sessions", requireAuth, auth.RevokeOtherSessions)
