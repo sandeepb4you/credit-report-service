@@ -264,8 +264,33 @@ log:
   # Structured logging (log/slog). Override via LOG_LEVEL / LOG_FORMAT.
   # level: debug | info | warn | error (default info)
   # format: text (human-readable, good for dev) | json (good for log ingestion)
+  #
+  # Text here because this file is the developer default. Every deployment sets
+  # LOG_FORMAT=json (see deploy/docker-compose.yml): CloudWatch Logs Insights
+  # parses a JSON line into fields, so request_id, account_id, status and
+  # latency_ms are filterable — a text line indexes as one blob.
   level: info
   format: text
+
+sentry:
+  # Error reporting. Panics and unmapped 500s only; everything the service maps
+  # deliberately (a wrong OTP, a 409, the paywall's 402) is a handled condition
+  # and is never reported.
+  #
+  # Empty DSN = disabled, which is the default and what a developer's machine
+  # runs. Set SENTRY_DSN per deployment; it is a write credential for the Sentry
+  # project and does not belong in a tracked file.
+  #
+  # Events are scrubbed before they leave the process — request headers and
+  # cookies dropped wholesale, PAN/email/phone shapes masked — because unlike a
+  # log line, a Sentry event leaves the country. See
+  # internal/server/middleware/sentry.go.
+  dsn: ""
+  # Falls back to APP_PROFILE when empty, so a laptop and a deployment are
+  # still distinguishable in the Sentry UI.
+  environment: ""
+  # Set by deploy.sh to the deployed image tag (the git SHA).
+  release: ""
 
 demo:
   # Demo/UAT convenience flag. When true, a PAN submitted via POST /api/kyc/pan

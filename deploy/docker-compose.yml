@@ -57,19 +57,49 @@ services:
       # cannot fire regardless of what is configured. See docs/sms-otp.md.
       SMS_MSG91_APP_SIGNATURE: ${SMS_MSG91_APP_SIGNATURE:-}
       SMS_MSG91_APP_SIGNATURE_VAR: ${SMS_MSG91_APP_SIGNATURE_VAR:-}
+
+      # --- Observability ----------------------------------------------------
+      # JSON, not the default text: CloudWatch Logs Insights parses a JSON line
+      # into fields, so `account_id`, `status` and `latency_ms` are filterable
+      # without a parse rule. Text logs index as one blob.
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Error reporting. The DSN is a secret and arrives through env_file; with
+      # it empty nothing is reported and the boot line says so. SENTRY_RELEASE
+      # is appended to .env by deploy.sh and is the image tag.
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
     volumes:
       - pan-images:/app/data/pan-images
     depends_on:
       db:
         condition: service_healthy
     restart: unless-stopped
-    # The image logs to stdout only; without these opts the json-file driver
-    # never rotates (see the note at the top of the Dockerfile).
+    # Logs go to CloudWatch (ap-south-1, same region as everything else, so
+    # they never leave the country) instead of a json-file on the box. The
+    # json-file driver kept 250MB of ring buffer and nothing else: no search,
+    # no retention, and gone with the instance.
+    #
+    # Two consequences worth knowing:
+    #   - `docker logs scorr-api-1` no longer works. Read them with
+    #     `aws logs tail /scorr/api --follow --region ap-south-1`, which also
+    #     works from a laptop without SSH.
+    #   - The group must exist with a retention policy before this starts;
+    #     awslogs-create-group is deliberately off so a typo in the group name
+    #     creates nothing and fails loudly instead of quietly filling a new
+    #     group that nobody set retention on. Retention is 30 days: these lines
+    #     carry masked PII and keeping them forever is a liability, not a feature.
     logging:
-      driver: json-file
+      driver: awslogs
       options:
-        max-size: 50m
-        max-file: "5"
+        awslogs-region: ap-south-1
+        awslogs-group: /scorr/api
+        awslogs-create-group: "false"
+        awslogs-stream: api
+        # Reconnect rather than block the container if CloudWatch is briefly
+        # unreachable. Losing a few lines beats wedging the API on a logging
+        # backend.
+        mode: non-blocking
+        max-buffer-size: 4m
 
 volumes:
   pgdata:

@@ -70,9 +70,18 @@ func New(
 		ProxyHeader:             proxyHeader,
 	})
 
-	// Request logger runs first so it can time every handler. It logs method,
-	// route pattern, status, latency, and account_id — never the body, headers,
-	// or query string. See middleware.RequestLogger.
+	// Request id first: the logger, the error envelope and any Sentry event all
+	// quote it, so it has to exist before any of them runs.
+	app.Use(middleware.RequestID())
+
+	// Recover from panics before anything else can see them, so a bug becomes a
+	// 500 through the normal error handler — logged, reported once, and with an
+	// id the user can quote — rather than a dropped connection.
+	app.Use(middleware.Recovery())
+
+	// Request logger runs early so it can time every handler. It logs method,
+	// route pattern, status, latency, request id and account_id, plus masked
+	// bodies. See middleware.RequestLogger.
 	app.Use(middleware.RequestLogger())
 
 	// CORS: the browser frontend preflights cross-origin requests (OPTIONS);

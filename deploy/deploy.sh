@@ -60,6 +60,13 @@ if [ "$SYNC_CONFIG" = "1" ]; then
     # undo the rollback while reporting a clean deploy.
     ssh "$DEPLOY_SERVER" "cd '$REMOTE_DIR' && if [ -f .env ]; then cp -p .env .env.bak; fi"
     scp -q "$ENV_FILE" "$DEPLOY_SERVER:$REMOTE_DIR/.env"
+    # The image tag doubles as the Sentry release, so "first seen in this build"
+    # is answerable. Stamped onto the server's copy rather than kept in the local
+    # env file, which would go stale the moment anyone deployed without editing
+    # it. Any existing line is removed first: compose would take the last one,
+    # but a file with two is a puzzle for whoever reads it next.
+    ssh "$DEPLOY_SERVER" \
+        "cd '$REMOTE_DIR' && sed -i '/^SENTRY_RELEASE=/d' .env && echo 'SENTRY_RELEASE=$TAG' >> .env"
     # Secrets: readable by the owner only. scp would otherwise apply the umask.
     ssh "$DEPLOY_SERVER" "chmod 600 '$REMOTE_DIR/.env'"
     echo "    synced $(basename "$ENV_FILE") -> $REMOTE_DIR/.env (previous kept as .env.bak)"

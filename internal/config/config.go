@@ -33,6 +33,7 @@ type Config struct {
 	Statement       StatementConfig       `mapstructure:"statement"`
 	S3              S3Config              `mapstructure:"s3"`
 	Demo            DemoConfig            `mapstructure:"demo"`
+	Sentry          SentryConfig          `mapstructure:"sentry"`
 
 	// Warnings holds problems found while loading that are worth an operator's
 	// attention but not worth refusing to boot over. Load runs before the
@@ -127,6 +128,23 @@ type CashfreeConfig struct {
 type LogConfig struct {
 	Level  string `mapstructure:"level"`
 	Format string `mapstructure:"format"`
+}
+
+// SentryConfig configures error reporting. Errors only — panics and unmapped
+// 500s — never the handled conditions the service maps deliberately.
+type SentryConfig struct {
+	// DSN empty disables reporting entirely, which is the default and what a
+	// developer's machine runs with. Set it per environment, never in the
+	// tracked config: it is a write credential for your Sentry project.
+	DSN string `mapstructure:"dsn"`
+	// Environment labels events in the Sentry UI ("production", "dev"). Left
+	// empty it falls back to APP_PROFILE, so a deployment that sets neither is
+	// still distinguishable from a laptop.
+	Environment string `mapstructure:"environment"`
+	// Release ties an event to the build it came from. The deploy script tags
+	// images with the git SHA; passing the same value here is what makes
+	// "first seen in this release" mean anything.
+	Release string `mapstructure:"release"`
 }
 
 // CreditAnalyticsConfig holds policy for the paid bureau pull that is ours
@@ -712,6 +730,10 @@ func setDefaults(v *viper.Viper) {
 	// unrecognized value; set "json" for production/structured ingestion.
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "text")
+	// Reporting is opt-in: no DSN, no events. See SentryConfig.
+	v.SetDefault("sentry.dsn", "")
+	v.SetDefault("sentry.environment", "")
+	v.SetDefault("sentry.release", "")
 
 	v.SetDefault("cashfree.mode", "sandbox")
 	v.SetDefault("cashfree.api-version", "2025-01-01")
@@ -781,6 +803,7 @@ func allKeys() []string {
 		"digitap.prefill.base-url", "digitap.prefill.client-id",
 		"digitap.prefill.client-secret", "digitap.prefill.timeout",
 		"log.level", "log.format",
+		"sentry.dsn", "sentry.environment", "sentry.release",
 		"cashfree.mode", "cashfree.base-url", "cashfree.client-id",
 		"cashfree.client-secret", "cashfree.api-version",
 		"cashfree.return-url", "cashfree.notify-url", "cashfree.timeout",

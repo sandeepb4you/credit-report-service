@@ -81,6 +81,11 @@ func RequestLogger() fiber.Handler {
 			"status", status,
 			"latency_ms", latencyMs,
 		}
+		// The id every other record of this request quotes: the error envelope
+		// the user was shown, and the Sentry event if it was a 500.
+		if id := RequestIDOf(c); id != "" {
+			attrs = append(attrs, "request_id", id)
+		}
 		// account_id is only present for routes behind RequireAuth/RequireRole;
 		// reading it from Locals avoids re-parsing the JWT here.
 		if aid, ok := AccountID(c); ok {

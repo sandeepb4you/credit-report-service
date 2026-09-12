@@ -13,6 +13,7 @@ import (
 	"time"
 
 	_ "credit-report-service/docs" // generated Swagger spec; self-registers fiberSwagger
+	"credit-report-service/internal/apperr"
 	"credit-report-service/internal/bankdata"
 	"credit-report-service/internal/config"
 	"credit-report-service/internal/db"
@@ -21,6 +22,7 @@ import (
 	"credit-report-service/internal/payments"
 	"credit-report-service/internal/repository"
 	"credit-report-service/internal/s3store"
+	"credit-report-service/internal/server/middleware"
 	"credit-report-service/internal/server"
 	"credit-report-service/internal/service"
 	"credit-report-service/internal/sms"
@@ -58,6 +60,28 @@ func main() {
 	for _, w := range cfg.Warnings {
 		slog.Warn("configuration warning", "detail", w)
 	}
+
+	// Error reporting. No DSN means no reporting and no error — a developer's
+	// machine and a deployment that has not opted in both run silently, and the
+	// boot log says which it is. A DSN that will not parse is fatal: a
+	// deployment that meant to report and cannot should not start pretending it
+	// does.
+	sentryEnv := cfg.Sentry.Environment
+	if sentryEnv == "" {
+		sentryEnv = profile
+	}
+	flushSentry, err := middleware.InitSentry(middleware.SentryConfig{
+		DSN:         cfg.Sentry.DSN,
+		Environment: sentryEnv,
+		Release:     cfg.Sentry.Release,
+	})
+	if err != nil {
+		slog.Error("sentry init failed", "error", err)
+		os.Exit(1)
+	}
+	defer flushSentry()
+	// Only unmapped 500s and recovered panics reach this; see apperr.ErrorHandler.
+	apperr.ReportServerError = middleware.ReportServerError
 
 	rootCtx, cancel := signal.NotifyContext(context.Background(),
 		os.Interrupt, syscall.SIGTERM)

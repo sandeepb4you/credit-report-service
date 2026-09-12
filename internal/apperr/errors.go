@@ -205,11 +205,16 @@ func ErrorHandler(c *fiber.Ctx, err error) error {
 	if status == 500 {
 		// Nothing mapped it, so this is a bug rather than a handled condition.
 		// StatusFor already substituted text that is safe to return.
+		id, _ := c.Locals(RequestIDKey).(string)
 		slog.Error("unhandled error",
 			"method", c.Method(),
 			"path", c.Path(),
+			"request_id", id,
 			"error", err,
 		)
+		if ReportServerError != nil {
+			ReportServerError(c, err)
+		}
 	}
 	return writeError(c, status, title, msg, details)
 }
@@ -222,22 +227,44 @@ func isFiberBodyLimit(err error) bool {
 	return false
 }
 
+// RequestIDKey is the Fiber Locals key the request id is stored under.
+//
+// It lives here, in the leaf package, rather than with the middleware that sets
+// it: middleware imports apperr and not the other way round, and the error
+// envelope has to read the id without dragging the server package into every
+// consumer of this one.
+const RequestIDKey = "request_id"
+
+// ReportServerError is called for every response that is a 500 — that is, for
+// bugs, never for a mapped condition like a 401 or a 409.
+//
+// A hook rather than a direct call so this package keeps no opinion about where
+// errors are reported; main wires it to Sentry, tests leave it nil, and the
+// integration suite does not need a DSN to run.
+var ReportServerError func(c *fiber.Ctx, err error)
+
 // ErrorBody is the JSON envelope returned for every error response. It is
 // exported so Swagger annotations can reference it via `@Failure ... apperr.ErrorBody`.
 type ErrorBody struct {
-	Status    int         `json:"status"`
-	Error     string      `json:"error"`
-	Message   string      `json:"message"`
-	Details   interface{} `json:"details,omitempty"`
-	Timestamp time.Time   `json:"timestamp"`
+	Status  int         `json:"status"`
+	Error   string      `json:"error"`
+	Message string      `json:"message"`
+	Details interface{} `json:"details,omitempty"`
+	// RequestID identifies this exact request in the logs. Returned so a user
+	// can quote it in a support message and so the app can print it beside a
+	// failure; it identifies a request, not a person, and is safe to show.
+	RequestID string    `json:"requestId,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 func writeError(c *fiber.Ctx, status int, errName, msg string, details interface{}) error {
+	id, _ := c.Locals(RequestIDKey).(string)
 	return c.Status(status).JSON(ErrorBody{
 		Status:    status,
 		Error:     errName,
 		Message:   msg,
 		Details:   details,
+		RequestID: id,
 		Timestamp: time.Now().UTC(),
 	})
 }
