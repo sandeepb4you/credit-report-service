@@ -61,9 +61,16 @@ func New(
 	}
 
 	app := fiber.New(fiber.Config{
-		ErrorHandler:            apperr.ErrorHandler,
-		ServerHeader:            "credit-report-service",
-		DisableStartupMessage:   false,
+		ErrorHandler: apperr.ErrorHandler,
+		ServerHeader: "credit-report-service",
+		// Fiber's boot banner is drawn with box characters. In a terminal it is
+		// a nicety; in an indexed log it is five lines of mojibake per restart
+		// that no parser can read — and enough to break tools that assume the
+		// stream is ASCII (the AWS CLI dies rendering it on a Windows console).
+		// So it survives where someone is reading the output directly and goes
+		// wherever the logs are being shipped. The useful half of it — the
+		// address being listened on — is logged by main either way.
+		DisableStartupMessage:   cfg.Log.Format == "json",
 		BodyLimit:               bodyLimitBytes(cfg.Multipart.MaxRequestSize),
 		EnableTrustedProxyCheck: trustProxies,
 		TrustedProxies:          cfg.Server.TrustedProxies,
