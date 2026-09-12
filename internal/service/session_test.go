@@ -65,6 +65,36 @@ func TestDeviceLabel_Fallbacks(t *testing.T) {
 		want string
 	}{
 		{"explicit name wins", models.DeviceInfo{Name: "Pixel 8", Platform: "android"}, "Pixel 8"},
+		// The user agent is tried before the platform default: "Chrome on Windows"
+		// is something a user can recognise in the session list, "Web browser" is
+		// not. This is what every client that never learned to send X-Device-Name
+		// gets — an older app build, a browser, a curl session.
+		{
+			"user agent beats the platform default",
+			models.DeviceInfo{
+				Platform: models.PlatformWeb,
+				Meta:     models.DeviceMeta{Agent: &models.AgentMeta{Browser: "Chrome", OS: "Windows"}},
+			},
+			"Chrome on Windows",
+		},
+		{
+			"browser alone",
+			models.DeviceInfo{Meta: models.DeviceMeta{Agent: &models.AgentMeta{Browser: "Firefox"}}},
+			"Firefox",
+		},
+		{
+			"os alone",
+			models.DeviceInfo{Meta: models.DeviceMeta{Agent: &models.AgentMeta{OS: "Android"}}},
+			"Android",
+		},
+		{
+			"a declared name still wins over the agent",
+			models.DeviceInfo{
+				Name: "Rahul's iPhone",
+				Meta: models.DeviceMeta{Agent: &models.AgentMeta{Browser: "Safari", OS: "iOS"}},
+			},
+			"Rahul's iPhone",
+		},
 		{"blank name falls back to platform", models.DeviceInfo{Name: "  ", Platform: "ios"}, "iOS device"},
 		{"android fallback", models.DeviceInfo{Platform: models.PlatformAndroid}, "Android device"},
 		{"web fallback", models.DeviceInfo{Platform: models.PlatformWeb}, "Web browser"},
@@ -76,6 +106,16 @@ func TestDeviceLabel_Fallbacks(t *testing.T) {
 				t.Errorf("deviceLabel = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// The agent-derived label is built from a client-supplied header too, so it is
+// bounded the same way the declared name is.
+func TestDeviceLabel_TruncatesAgentDerivedLabel(t *testing.T) {
+	agent := &models.AgentMeta{Browser: strings.Repeat("b", 200), OS: strings.Repeat("o", 200)}
+	got := deviceLabel(models.DeviceInfo{Meta: models.DeviceMeta{Agent: agent}})
+	if len(got) != 128 {
+		t.Errorf("agent-derived label not clipped: %d bytes", len(got))
 	}
 }
 

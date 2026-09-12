@@ -282,6 +282,23 @@ func deviceLabel(dev models.DeviceInfo) string {
 	if n := strings.TrimSpace(dev.Name); n != "" {
 		return truncate(n, 128)
 	}
+	// Nothing declared, so fall back to what the User-Agent gave up: "Chrome on
+	// Windows" beats "Web browser", and beats "Unknown device" by enough to make
+	// "sign out anything you don't recognise" a sentence the user can act on.
+	//
+	// This is the line that covers every client already in the wild — an older
+	// app build, a curl session, anything that never learned to send the
+	// headers — so it earns its place even once every client does.
+	if a := dev.Meta.Agent; a != nil {
+		switch {
+		case a.Browser != "" && a.OS != "":
+			return truncate(a.Browser+" on "+a.OS, 128)
+		case a.Browser != "":
+			return truncate(a.Browser, 128)
+		case a.OS != "":
+			return truncate(a.OS, 128)
+		}
+	}
 	switch dev.Platform {
 	case models.PlatformIOS:
 		return "iOS device"
