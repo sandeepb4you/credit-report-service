@@ -4,7 +4,29 @@
 
 services:
   db:
-    image: postgres:16-alpine
+    # Stock postgres:16-alpine plus pgBackRest — see deploy/db/Dockerfile. The
+    # tag is pinned rather than :latest: an unattended `compose up` must never
+    # move a database to a new image on its own.
+    image: ${ECR_REGISTRY:?set ECR_REGISTRY in .env}/scorr-postgres:16-pgbackrest
+    # Continuous archiving to S3. archive_mode is not reloadable, which is why
+    # it lives here rather than in a SQL setting: turning it on costs one
+    # restart, and the alternative is a database that silently is not backed up.
+    #
+    # archive_timeout=60 bounds the recovery point on an idle system. Without it
+    # a half-filled WAL segment sits on local disk until something writes enough
+    # to close it, so a quiet Sunday could lose hours of the few transactions
+    # that did happen. The cost is one mostly-empty 16 MB segment a minute,
+    # compressed to a few KB.
+    command:
+      - postgres
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=pgbackrest --stanza=myscorr archive-push %p
+      - -c
+      - archive_timeout=60
+      - -c
+      - wal_level=replica
     environment:
       POSTGRES_USER: scorr
       POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
@@ -17,6 +39,9 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./init:/docker-entrypoint-initdb.d:ro
+      # pgBackRest's own logs, kept on the host so a failed archive-push can be
+      # read after the container that failed it is gone.
+      - /var/log/pgbackrest:/var/log/pgbackrest
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U scorr -d credit"]
