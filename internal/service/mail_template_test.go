@@ -126,3 +126,31 @@ func TestOTPKinds_CopyIsComplete(t *testing.T) {
 		}
 	}
 }
+
+// The product name in email is the one the app on the same phone shows.
+//
+// It said "Scorr.club" for months, in both OTP subjects, both intro sentences,
+// the header band and the footer, while the app, the store listing, the plan
+// names and the PDF filename all said myScorr. An email that calls the product
+// something else reads as a phishing attempt, which is the opposite of what a
+// verification code is for. Asserting the literal rather than `brandName` is
+// the point: a test written against the constant passes whatever it holds.
+func TestBrandNameIsTheProductName(t *testing.T) {
+	if brandName != "myScorr" {
+		t.Fatalf("brandName = %q, want %q — the app's name, exactly", brandName, "myScorr")
+	}
+
+	html, text, err := renderOTPEmail("1234", 10, otpKindSignup)
+	if err != nil {
+		t.Fatalf("renderOTPEmail: %v", err)
+	}
+	for name, body := range map[string]string{"html": html, "text": text} {
+		if !strings.Contains(body, "myScorr") {
+			t.Errorf("%s body does not name the product: %s", name, body)
+		}
+		// The old name is gone from every wording, not merely overwritten in one.
+		if strings.Contains(body, "Scorr.club") {
+			t.Errorf("%s body still says Scorr.club", name)
+		}
+	}
+}
