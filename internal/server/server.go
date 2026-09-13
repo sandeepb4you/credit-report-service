@@ -257,6 +257,7 @@ func New(
 	// Report PDF delivery. The link is presigned and short-lived; the email
 	// carries the file itself. Both are scoped to the caller's own reports.
 	ca.Get("/reports/:id<int>/pdf", analytics.GetReportPDFLink)
+	ca.Get("/reports/:id<int>/advanced-pdf", analytics.GetAdvancedReportLink)
 	ca.Post("/reports/:id<int>/email", analytics.EmailReportPDF)
 	// What-if simulator: any signed-in user (S29). Reads the caller's own
 	// report, so RequireAuth is sufficient.

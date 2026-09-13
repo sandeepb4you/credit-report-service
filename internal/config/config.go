@@ -32,6 +32,7 @@ type Config struct {
 	Cashfree        CashfreeConfig        `mapstructure:"cashfree"`
 	Statement       StatementConfig       `mapstructure:"statement"`
 	S3              S3Config              `mapstructure:"s3"`
+	Renderer        RendererConfig        `mapstructure:"renderer"`
 	Demo            DemoConfig            `mapstructure:"demo"`
 	Sentry          SentryConfig          `mapstructure:"sentry"`
 
@@ -41,6 +42,21 @@ type Config struct {
 	// emitted by the caller once logging is configured. Never contains a
 	// secret's value -- only its shape.
 	Warnings []string `mapstructure:"-"`
+}
+
+// RendererConfig points at the headless-Chromium sidecar that prints the
+// myScorr Advanced Report.
+//
+// A separate container rather than a browser inside this image: `apk add
+// chromium` takes the API image from 17 MB to 1.16 GB, and a render's few
+// hundred MB of RAM would spike inside the process serving requests. Empty URL
+// -> no renderer, and that endpoint reports the report unavailable, the same
+// unconfigured-upstream convention as S3, SMS and mail.
+type RendererConfig struct {
+	// URL is the DevTools websocket endpoint, e.g. ws://renderer:9222.
+	URL string `mapstructure:"url"`
+	// Timeout bounds one render: a user is waiting on this.
+	Timeout time.Duration `mapstructure:"timeout"`
 }
 
 // S3Config configures the credit-report PDF store.
@@ -746,6 +762,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("s3.bucket", "")
 	v.SetDefault("s3.region", "ap-south-1")
 	v.SetDefault("s3.presign-ttl", "10m")
+
+	v.SetDefault("renderer.url", "")
+	v.SetDefault("renderer.timeout", "45s")
 	v.SetDefault("statement.parser", "pdf")
 	v.SetDefault("statement.max-file-size", "10MB")
 	v.SetDefault("statement.worker-concurrency", 4)
@@ -808,6 +827,7 @@ func allKeys() []string {
 		"cashfree.client-secret", "cashfree.api-version",
 		"cashfree.return-url", "cashfree.notify-url", "cashfree.timeout",
 		"s3.bucket", "s3.region", "s3.presign-ttl",
+		"renderer.url", "renderer.timeout",
 		"statement.parser", "statement.max-file-size",
 		"statement.worker-concurrency", "statement.worker-buffer",
 		"statement.process-timeout",

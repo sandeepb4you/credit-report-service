@@ -20,10 +20,11 @@ import (
 	"credit-report-service/internal/digitap"
 	"credit-report-service/internal/handler"
 	"credit-report-service/internal/payments"
+	"credit-report-service/internal/render"
 	"credit-report-service/internal/repository"
 	"credit-report-service/internal/s3store"
-	"credit-report-service/internal/server/middleware"
 	"credit-report-service/internal/server"
+	"credit-report-service/internal/server/middleware"
 	"credit-report-service/internal/service"
 	"credit-report-service/internal/sms"
 	"credit-report-service/internal/statement"
@@ -254,6 +255,19 @@ func main() {
 	// email-delivery endpoints.
 	analyticsSvc.SetReportPDFStore(pdfStore)
 	analyticsSvc.SetReportMailer(mailSvc)
+	// The myScorr Advanced Report: our own eight-page write-up of the same
+	// report, printed by the headless-Chromium sidecar and kept in the same
+	// bucket. Unconfigured renderer -> the endpoint says so; the bureau PDF,
+	// which needs no browser, is unaffected either way.
+	advancedRenderer := render.NewChromium(render.Config{
+		URL:     cfg.Renderer.URL,
+		Timeout: cfg.Renderer.Timeout,
+	})
+	if !advancedRenderer.Available() {
+		slog.Warn("renderer.url is empty; the myScorr Advanced Report will report itself unavailable")
+	}
+	analyticsSvc.SetAdvancedReportRenderer(advancedRenderer)
+	analyticsSvc.SetAdvancedReportStore(pdfStore)
 	// Uploaded PAN card documents share the same private bucket; with the stub
 	// the upload endpoint reports document storage unavailable.
 	kycSvc.SetDocumentStore(pdfStore)

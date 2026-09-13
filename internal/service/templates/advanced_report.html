@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>myScorr Advanced Report</title>
+<style>
+  /* A4 with the page geometry in the document, not in the print call: this is
+     the only place a designer can see and change it. */
+  @page { size: A4; margin: 0; }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color: #0E1B26;
+    /* No web fonts: the renderer is a container with no network and no font
+       cache, and a missing face silently reflows the whole document. */
+  }
+  .page {
+    width: 210mm; height: 297mm; padding: 18mm 16mm 14mm;
+    position: relative; page-break-after: always; overflow: hidden;
+  }
+  .page:last-child { page-break-after: auto; }
+  .navy { background: linear-gradient(150deg, #12202E, #1C3547); color: #fff; }
+  .brand { font-size: 13pt; font-weight: 800; letter-spacing: -.2pt; }
+  .brand .dot { color: #12A07F; }
+  .runhead {
+    display: flex; justify-content: space-between; align-items: baseline;
+    border-bottom: .4pt solid #E4E9EF; padding-bottom: 6pt; margin-bottom: 16pt;
+    font-size: 8pt; color: #5B6B7B;
+  }
+  .navy .runhead { border-color: rgba(255,255,255,.18); color: #C5D0D9; }
+  .foot {
+    position: absolute; left: 16mm; right: 16mm; bottom: 9mm;
+    font-size: 7pt; color: #8A9AA8; display: flex; justify-content: space-between;
+  }
+  .navy .foot { color: rgba(255,255,255,.55); }
+  h1 { font-size: 26pt; line-height: 1.15; font-weight: 800; letter-spacing: -.6pt; }
+  h2 { font-size: 17pt; line-height: 1.2; font-weight: 800; letter-spacing: -.3pt; margin-bottom: 14pt; }
+  .kicker { font-size: 8pt; letter-spacing: 1.6pt; text-transform: uppercase; color: #12A07F; margin-bottom: 8pt; }
+  .navy .kicker { color: #7FE3B4; }
+  .lede { font-size: 10pt; line-height: 1.5; color: #5B6B7B; }
+  .navy .lede { color: #C5D0D9; }
+
+  /* ---- cover ---- */
+  .score { font-size: 84pt; font-weight: 800; line-height: .95; letter-spacing: -3pt; }
+  .band { font-size: 13pt; font-weight: 800; letter-spacing: 2pt; text-transform: uppercase; color: #7FE3B4; }
+  .arc { margin: 6pt 0 2pt; }
+
+  /* ---- generic blocks ---- */
+  .row { display: flex; gap: 10pt; }
+  .card {
+    border: .5pt solid #E4E9EF; border-radius: 10pt; padding: 11pt 12pt;
+    margin-bottom: 7pt; display: flex; align-items: center; gap: 10pt;
+  }
+  .navy .card { border-color: rgba(255,255,255,.16); background: rgba(255,255,255,.05); }
+  .card .grow { flex: 1; }
+  .name { font-size: 10.5pt; font-weight: 700; }
+  .sub { font-size: 8.5pt; color: #5B6B7B; margin-top: 2pt; }
+  .navy .sub { color: #C5D0D9; }
+  .amount { font-size: 12pt; font-weight: 800; white-space: nowrap; }
+  .pill {
+    font-size: 7.5pt; font-weight: 700; border-radius: 99pt; padding: 3pt 8pt;
+    background: #DDF3EA; color: #0B7A5F; white-space: nowrap;
+  }
+  .pill.warn { background: #FFF1D9; color: #8A5B00; }
+  .pill.bad { background: #FDE3E0; color: #A32B1E; }
+
+  /* ---- the three numbers ---- */
+  .stat { flex: 1; border: .5pt solid #E4E9EF; border-radius: 10pt; padding: 14pt 12pt; }
+  .stat .big { font-size: 30pt; font-weight: 800; letter-spacing: -1pt; color: #0E8A78; }
+  .stat .cap { font-size: 8.5pt; color: #5B6B7B; line-height: 1.4; margin-top: 4pt; }
+
+  /* ---- payment grid ---- */
+  .yearrow { display: flex; align-items: center; gap: 6pt; margin-bottom: 5pt; }
+  .yearlbl { font-size: 8pt; color: #5B6B7B; width: 26pt; }
+  .cells { display: flex; gap: 2.5pt; flex: 1; }
+  .cell { flex: 1; height: 9pt; border-radius: 2pt; background: #EDF1F5; }
+  .cell.paid { background: #0E8A78; }
+  .cell.late { background: #F5A623; }
+  .cell.bad { background: #E85A4F; }
+  .legend { display: flex; gap: 12pt; font-size: 7.5pt; color: #5B6B7B; margin-top: 8pt; }
+  .legend span { display: flex; align-items: center; gap: 4pt; }
+  .dotm { width: 7pt; height: 7pt; border-radius: 99pt; display: inline-block; }
+
+  /* ---- closing / legal ---- */
+  .legal { font-size: 7pt; line-height: 1.55; color: #8A9AA8; }
+  .navy .legal { color: rgba(255,255,255,.5); }
+</style>
+</head>
+<body>
+
+<!-- 1 — cover -->
+<section class="page navy">
+  <div class="runhead"><span class="brand">myScorr<span class="dot">.</span></span><span>{{.PreparedOn}}</span></div>
+  <div class="kicker">Your Experian score</div>
+  <div class="score">{{.ScoreText}}</div>
+  <div class="arc">
+    <svg width="210" height="18" viewBox="0 0 210 18" fill="none">
+      <rect x="0" y="6" width="210" height="6" rx="3" fill="rgba(255,255,255,.15)"/>
+      <rect x="0" y="6" width="{{.ScoreBarWidth}}" height="6" rx="3" fill="#7FE3B4"/>
+    </svg>
+  </div>
+  <div class="band">{{.Band}}</div>
+  <div style="margin-top:22pt" class="lede">
+    {{.HolderName}}<br>Prepared {{.PreparedOn}} · Source: Experian
+  </div>
+  <div style="position:absolute;left:16mm;right:16mm;bottom:34mm">
+    <h1>{{.CoverHeadline}}</h1>
+  </div>
+  <div class="foot"><span>myScorr Advanced Report</span><span>Page 1</span></div>
+</section>
+
+<!-- 2 — the factor model -->
+{{if .Factors}}
+<section class="page">
+  <div class="runhead"><span class="brand">myScorr<span class="dot">.</span></span><span>{{.HolderName}} · {{.ScoreText}} · {{.PreparedOn}}</span></div>
+  <h2>{{.FactorHeadline}}</h2>
+  {{range .Factors}}
+  <div class="card">
+    <div class="grow">
+      <div class="name">{{.Name}}</div>
+      <div class="sub">{{.Summary}}</div>
+    </div>
+    <span class="pill {{.PillClass}}">{{.Verdict}}</span>
+  </div>
+  {{end}}
+  <div class="foot"><span>myScorr Advanced Report · Experian's factor model</span><span>Page 2</span></div>
+</section>
+{{end}}
+
+<!-- 3 — three numbers -->
+<section class="page">
+  <div class="runhead"><span class="brand">myScorr<span class="dot">.</span></span><span>{{.HolderName}} · {{.ScoreText}} · {{.PreparedOn}}</span></div>
+  <h2>Your discipline, in three numbers</h2>
+  <div class="row">
+    {{range .Highlights}}
+    <div class="stat"><div class="big">{{.Value}}</div><div class="cap">{{.Caption}}</div></div>
+    {{end}}
+  </div>
+  <div style="margin-top:18pt" class="lede">Numbers most people never see about themselves, until now.</div>
+  <div class="foot"><span>myScorr Advanced Report</span><span>Page 3</span></div>
+</section>
+
+<!-- 4 — open accounts -->
+{{if .OpenAccounts}}
+<section class="page">
+  <div class="runhead"><span class="brand">myScorr<span class="dot">.</span></span><span>{{.HolderName}} · {{.ScoreText}} · {{.PreparedOn}}</span></div>
+  <h2>{{.OpenAccountsHeadline}}</h2>
+  {{range .OpenAccounts}}
+  <div class="card">
+    <div class="grow">
+      <div class="name">{{.Company}}</div>
+      <div class="sub">{{.Detail}}</div>
+    </div>
+    <div class="amount">{{.Amount}}</div>
+  </div>
+  {{end}}
+  <div class="foot"><span>myScorr Advanced Report · Account numbers shown as last 4 digits only</span><span>Page 4</span></div>
+</section>
+{{end}}
+
+<!-- 5 — history and closed accounts -->
+{{if .ClosedAccounts}}
+<section class="page">
+  <div class="runhead"><span class="brand">myScorr<span class="dot">.</span></span><span>{{.HolderName}} · {{.ScoreText}} · {{.PreparedOn}}</span></div>
+  <div class="kicker">Closed, and still working for you</div>
+  <h2>{{.ClosedAccountsHeadline}}</h2>
+  {{range .ClosedAccounts}}
+  <div class="card">
+    <div class="grow">
+      <div class="name">{{.Company}}</div>
+      <div class="sub">{{.Detail}}</div>
+    </div>
+  </div>
+  {{end}}
+  <div class="foot"><span>myScorr Advanced Report</span><span>Page 5</span></div>
+</section>
+{{end}}
+
+<!-- 6 — payment history -->
+{{if .PaymentYears}}
+<section class="page">
+  <div class="runhead"><span class="brand">myScorr<span class="dot">.</span></span><span>{{.HolderName}} · {{.ScoreText}} · {{.PreparedOn}}</span></div>
+  <h2>{{.PaymentHeadline}}</h2>
+  {{range .PaymentYears}}
+  <div class="yearrow">
+    <div class="yearlbl">{{.Year}}</div>
+    <div class="cells">{{range .Cells}}<div class="cell {{.}}"></div>{{end}}</div>
+  </div>
+  {{end}}
+  <div class="legend">
+    <span><i class="dotm" style="background:#0E8A78"></i>On time</span>
+    <span><i class="dotm" style="background:#F5A623"></i>1–89 days late</span>
+    <span><i class="dotm" style="background:#E85A4F"></i>90+ days</span>
+    <span><i class="dotm" style="background:#EDF1F5"></i>Not reported</span>
+  </div>
+  <div class="foot"><span>myScorr Advanced Report · every reporting account, merged by month</span><span>Page 6</span></div>
+</section>
+{{end}}
+
+<!-- 7 — what happens next -->
+{{if .Actions}}
+<section class="page navy">
+  <div class="runhead"><span class="brand">myScorr<span class="dot">.</span></span><span>{{.HolderName}} · {{.ScoreText}} · {{.PreparedOn}}</span></div>
+  <div class="kicker">{{.ProjectionKicker}}</div>
+  <h2 style="color:#fff">{{.ProjectionHeadline}}</h2>
+  {{range .Actions}}
+  <div class="card">
+    <div class="grow"><div class="name" style="color:#fff">{{.Title}}</div>{{if .Detail}}<div class="sub">{{.Detail}}</div>{{end}}</div>
+    <span class="pill">{{.Tag}}</span>
+  </div>
+  {{end}}
+  <div class="foot"><span>myScorr Advanced Report · Projections are estimates, not guarantees</span><span>Page 7</span></div>
+</section>
+{{end}}
+
+<!-- 8 — closing + the legal position -->
+<section class="page">
+  <div class="runhead"><span class="brand">myScorr<span class="dot">.</span></span><span>{{.HolderName}} · {{.PreparedOn}}</span></div>
+  <h1 style="font-size:22pt">This report is yours.<br>Keep it, share it, act on it.</h1>
+  <div style="margin-top:16pt" class="lede">
+    Generated by myScorr using your Experian credit file · {{.PreparedOn}}
+  </div>
+  <div style="position:absolute;left:16mm;right:16mm;bottom:20mm">
+    <p class="legal">
+      This report has been prepared using data from your Experian credit report and is intended
+      solely for your personal, individual use. myScorr is a credit intelligence platform, not a
+      credit information company or credit bureau, and does not independently verify, determine,
+      or guarantee the accuracy of the underlying bureau data. Any score projections, ranges, or
+      improvement estimates shown in this report are illustrative only; myScorr does not promise
+      or guarantee any increase in your credit score, as your actual score depends on your ongoing
+      credit usage and payment timelines, among other factors determined solely by the credit
+      bureau. This report is generated for consumer financial health check purposes only and does
+      not constitute financial, credit, investment, or legal advice. For any dispute regarding the
+      data itself, please contact Experian directly.
+    </p>
+  </div>
+  <div class="foot"><span>myScorr Advanced Report</span><span>Page 8</span></div>
+</section>
+
+</body>
+</html>

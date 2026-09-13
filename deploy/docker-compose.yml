@@ -73,6 +73,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      renderer:
+        condition: service_started
     restart: unless-stopped
     # Logs go to CloudWatch (ap-south-1, same region as everything else, so
     # they never leave the country) instead of a json-file on the box. The
@@ -98,6 +100,42 @@ services:
         # Reconnect rather than block the container if CloudWatch is briefly
         # unreachable. Losing a few lines beats wedging the API on a logging
         # backend.
+        mode: non-blocking
+        max-buffer-size: 4m
+
+  # Headless Chromium, for the myScorr Advanced Report only.
+  #
+  # A sidecar rather than a browser inside the API image, for three reasons
+  # measured rather than assumed: `apk add chromium` takes that image from 17 MB
+  # to 1.16 GB; a render peaks at a few hundred MB of RAM, which here spikes in
+  # its own container instead of next to request handling; and a browser that
+  # wedges or leaks is restarted on its own without touching the API.
+  #
+  # Not published to the host: 9222 is a remote-control port for the browser,
+  # and anything that can reach it can drive it — read any page it loads, and
+  # with file access read local files. It is reachable only on the compose
+  # network, which is why RENDERER_URL names the service, not localhost.
+  renderer:
+    image: chromedp/headless-shell:latest
+    # The default /dev/shm is 64 MB; Chromium uses it for renderer IPC and a
+    # page of any size crashes the tab without this.
+    shm_size: 1gb
+    # No --no-sandbox: the image runs headless-shell in its own container with
+    # the default seccomp profile, and this renders OUR templates, not
+    # user-supplied HTML.
+    restart: unless-stopped
+    # Bounded so a runaway render cannot take the box down with the API on it.
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ap-south-1
+        awslogs-group: /scorr/api
+        awslogs-create-group: "false"
+        awslogs-stream: renderer
         mode: non-blocking
         max-buffer-size: 4m
 

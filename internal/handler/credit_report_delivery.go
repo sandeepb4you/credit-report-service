@@ -63,6 +63,49 @@ func (h *CreditAnalyticsHandler) GetReportPDFLink(c *fiber.Ctx) error {
 	})
 }
 
+// AdvancedReportLinkResponse carries a download URL for the myScorr Advanced
+// Report. No password hint, unlike its bureau sibling: this document is written
+// by myScorr and ships unencrypted by design.
+type AdvancedReportLinkResponse struct {
+	URL              string `json:"url"`
+	ExpiresInSeconds int    `json:"expiresInSeconds" example:"600"`
+}
+
+// GetAdvancedReportLink godoc
+//
+// @Summary      Get a download link for the myScorr Advanced Report
+// @Description  Renders the caller's own report as the myScorr Advanced Report — an eight-page PDF written by myScorr from the bureau data: score and band, the factor grades, open and closed accounts, the merged payment record and the improvement plan. Rendered on first request and kept, so a second call is just a new link. Unlike the bureau PDF it carries no password. 503 means no renderer or no storage is configured.
+// @Tags         credit-analytics
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id  path      int  true  "Report id"
+// @Success      200  {object}  AdvancedReportLinkResponse
+// @Failure      400  {object}  apperr.ErrorBody  "id must be an integer"
+// @Failure      401  {object}  apperr.ErrorBody  "Not authenticated"
+// @Failure      404  {object}  apperr.ErrorBody  "Report not found"
+// @Failure      502  {object}  apperr.ErrorBody  "Could not prepare the report"
+// @Failure      503  {object}  apperr.ErrorBody  "The advanced report is not available"
+// @Router       /credit-analytics/reports/{id}/advanced-pdf [get]
+func (h *CreditAnalyticsHandler) GetAdvancedReportLink(c *fiber.Ctx) error {
+	accountID, ok := middleware.AccountID(c)
+	if !ok {
+		return apperr.NewUnauthorized("Not authenticated")
+	}
+	id, err := strconv.ParseInt(c.Params("id"), 10, 64)
+	if err != nil {
+		return apperr.NewValidation("id must be an integer")
+	}
+
+	url, ttl, err := h.svc.AdvancedReportLink(c.Context(), accountID, id)
+	if err != nil {
+		return err
+	}
+	return c.JSON(AdvancedReportLinkResponse{
+		URL:              url,
+		ExpiresInSeconds: int(ttl.Seconds()),
+	})
+}
+
 // EmailReportPDF godoc
 //
 // @Summary      Email a report's PDF to the account's address

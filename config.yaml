@@ -223,6 +223,23 @@ s3:
   # once, so a longer window only widens the period in which a leaked URL works.
   presign-ttl: 10m
 
+renderer:
+  # Headless Chromium for the myScorr Advanced Report (the eight-page PDF this
+  # service writes from the bureau data — not the Experian file itself, which
+  # needs no browser and is unaffected by anything here).
+  #
+  # A sidecar container rather than a browser in this image: `apk add chromium`
+  # takes the API image from 17 MB to 1.16 GB, and a render's few hundred MB of
+  # RAM would spike inside the process serving requests. docker-compose runs
+  # chromedp/headless-shell as `renderer`; point this at its DevTools endpoint.
+  #
+  # Empty -> no renderer, and that one endpoint answers "not available" rather
+  # than the service failing at boot. Override via env: RENDERER_URL,
+  # RENDERER_TIMEOUT.
+  url: ""
+  # A user is waiting on this, so it is bounded well short of the HTTP timeout.
+  timeout: 45s
+
 statement:
   # Bank-statement analysis. Override via env:
   #   STATEMENT_PARSER=stub, STATEMENT_MAX_FILE_SIZE=10MB, ...

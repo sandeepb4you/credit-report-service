@@ -106,6 +106,13 @@ type CreditAnalyticsService struct {
 	// mailer sends the report as an attachment. Optional for the same reason.
 	// Via SetReportMailer.
 	mailer ReportMailer
+	// renderer prints the myScorr Advanced Report's HTML to PDF (a headless
+	// Chromium sidecar). Optional: with none configured that endpoint reports
+	// the report unavailable. Via SetAdvancedReportRenderer.
+	renderer htmlRenderer
+	// advancedStore is where that PDF is written and read from. Optional, and
+	// the same bucket the bureau PDFs use. Via SetAdvancedReportStore.
+	advancedStore advancedReportStore
 }
 
 // ReportMailer is the one mail capability this service needs. Narrow on purpose:
@@ -223,12 +230,18 @@ type ReportInsights struct {
 	// would eventually disagree about whether the same report is stale.
 	Outdated bool `json:"outdated"`
 	// CreatedAt is when the bureau pull ran — what a client shows as "checked on".
-	CreatedAt              time.Time `json:"createdAt"`
-	TotalAccountCount      int64     `json:"totalAccountCount"`
-	ActiveAccountCount     int64     `json:"activeAccountCount"`
-	TotalOutstandingAmount float64   `json:"totalOutstandingAmount"`
-	MonthlyEMI             float64   `json:"monthlyEmi"`
-	InterestPaidPerYear    float64   `json:"interestPaidPerYear"`
+	CreatedAt time.Time `json:"createdAt"`
+	// CreditAgeYears is how long the oldest open account has been open, the same
+	// figure the report card's credit-age factor is graded on. Exposed because
+	// deriving it a second time somewhere else is how one document ends up
+	// saying "6+ years" on one page and "15.5 years" on the next. Nil when the
+	// file carries no open date.
+	CreditAgeYears         *float64 `json:"creditAgeYears,omitempty"`
+	TotalAccountCount      int64    `json:"totalAccountCount"`
+	ActiveAccountCount     int64    `json:"activeAccountCount"`
+	TotalOutstandingAmount float64  `json:"totalOutstandingAmount"`
+	MonthlyEMI             float64  `json:"monthlyEmi"`
+	InterestPaidPerYear    float64  `json:"interestPaidPerYear"`
 	// DerogatoryAccounts counts written-off / settled / defaulted tradelines —
 	// the serious negatives the "good news" diagnosis checks for.
 	DerogatoryAccounts int           `json:"derogatoryAccounts"`
@@ -2233,6 +2246,11 @@ func parseReportInsights(raw json.RawMessage) (*ReportInsights, error) {
 	}
 
 	insights.LoanAccounts = loanAccounts
+
+	if !oldestOpenDate.IsZero() {
+		years := time.Since(oldestOpenDate).Hours() / 24 / 365.25
+		insights.CreditAgeYears = &years
+	}
 
 	// ---- Report card ----
 	insights.ReportCard = buildReportCard(reportCardInputs{
