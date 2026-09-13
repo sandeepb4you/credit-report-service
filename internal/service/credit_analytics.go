@@ -9,9 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"math/big"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -562,6 +562,7 @@ type digitapPayload struct {
 //     actually delivered. A pull that fails leaves the purchase unspent and
 //     retryable, because the user paid for a report and did not get one; making
 //     them buy a second one for our vendor's outage is indefensible.
+//
 // The bool reports that the row is a REUSED earlier report rather than a pull
 // made for this request, so the caller can say so instead of implying it just
 // came from the bureau. An idempotency replay does NOT set it: that is the same
@@ -918,12 +919,32 @@ func (s *CreditAnalyticsService) ReportInsightsFromRow(ctx context.Context, row 
 	return insights, nil
 }
 
-// buildPayload assembles the Digitap request from the account's profile and KYC
-// record, generating the per-request correlation id, OTP, and timestamp.
-func (s *CreditAnalyticsService) buildPayload(ctx context.Context, accountID int64, deviceIP string) (*digitapPayload, error) {
+// AccountReady reports whether a report can be pulled for this account at all,
+// with the same rules and the same user-facing wording the pull itself uses.
+//
+// Exists so a caller can ask *before* attempting a run. The scheduled-checks
+// runner does: a plan holder who has not finished PAN verification is not a
+// failing run, they are a run that is not owed yet, and spending an attempt on
+// each sweep would park a paid refresh FAILED for a reason the user can still
+// fix themselves.
+func (s *CreditAnalyticsService) AccountReady(ctx context.Context, accountID int64) error {
+	_, _, err := s.accountForPull(ctx, accountID)
+	return err
+}
+
+// accountForPull loads the account and its KYC record and refuses the pull if
+// either is not ready: the profile fields Digitap requires as inputs, and a
+// VERIFIED PAN.
+//
+// One implementation, two callers — [buildPayload] needs both rows anyway, so
+// the checks live where the data is fetched rather than being restated by
+// anything that wants to ask the question first.
+func (s *CreditAnalyticsService) accountForPull(
+	ctx context.Context, accountID int64,
+) (*models.Account, *models.KYCRecord, error) {
 	acc, err := s.accounts.FindByID(ctx, accountID)
 	if err != nil {
-		return nil, apperr.NewNotFound("Account not found")
+		return nil, nil, apperr.NewNotFound("Account not found")
 	}
 
 	// The profile step must be complete: mobile + name are mandatory upstream
@@ -949,7 +970,7 @@ func (s *CreditAnalyticsService) buildPayload(ctx context.Context, accountID int
 		// The message is what the app shows verbatim in its failure state, so
 		// it is written for the user; the details map keeps the per-field
 		// specifics for clients that render them.
-		return nil, apperr.NewValidationWith(
+		return nil, nil, apperr.NewValidationWith(
 			"Complete your profile (name and mobile number) before requesting a credit report", missing)
 	}
 
@@ -959,21 +980,31 @@ func (s *CreditAnalyticsService) buildPayload(ctx context.Context, accountID int
 	kyc, err := s.accounts.FindKYCByAccount(ctx, accountID)
 	if err != nil {
 		slog.Info("credit-analytics rejected: no KYC record", "account_id", accountID)
-		return nil, apperr.NewValidationWith(
+		return nil, nil, apperr.NewValidationWith(
 			"Submit your PAN before requesting a credit report",
 			map[string]string{"pan": "no PAN on file; submit one via POST /api/kyc/pan"})
 	}
 	if strings.TrimSpace(kyc.PANNumber) == "" {
 		slog.Info("credit-analytics rejected: no PAN on file", "account_id", accountID)
-		return nil, apperr.NewValidationWith(
+		return nil, nil, apperr.NewValidationWith(
 			"Submit your PAN before requesting a credit report",
 			map[string]string{"pan": "no PAN on file; submit one via POST /api/kyc/pan"})
 	}
 	if !kyc.PANVerified {
 		slog.Info("credit-analytics rejected: PAN not verified", "account_id", accountID)
-		return nil, apperr.NewValidationWith(
+		return nil, nil, apperr.NewValidationWith(
 			"Your PAN verification is still in progress. Your report will be available once it completes.",
 			map[string]string{"pan": "PAN not verified; verification is pending admin review"})
+	}
+	return acc, kyc, nil
+}
+
+// buildPayload assembles the Digitap request from the account's profile and KYC
+// record, generating the per-request correlation id, OTP, and timestamp.
+func (s *CreditAnalyticsService) buildPayload(ctx context.Context, accountID int64, deviceIP string) (*digitapPayload, error) {
+	acc, kyc, err := s.accountForPull(ctx, accountID)
+	if err != nil {
+		return nil, err
 	}
 
 	otp, err := generateOTP(otpDigits)
@@ -1008,9 +1039,9 @@ func (s *CreditAnalyticsService) buildRow(accountID int64, p *digitapPayload, re
 	return &models.CreditAnalyticsRequest{
 		AccountID:      &accountID,
 		IdempotencyKey: idem,
-		ClientRefNum: p.ClientRefNum,
-		MobileNo:     p.MobileNo,
-		RequestBody:  reqBody,
+		ClientRefNum:   p.ClientRefNum,
+		MobileNo:       p.MobileNo,
+		RequestBody:    reqBody,
 	}
 }
 

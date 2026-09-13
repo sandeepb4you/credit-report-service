@@ -111,7 +111,7 @@ func (r *ScheduledCheckRunner) Sweep(ctx context.Context) {
 		slog.Info("scheduled-checks: expired unrun plan checks", "count", expired)
 	}
 
-	var claimed, done, failed int
+	var claimed, done, failed, skipped int
 	for {
 		rows, err := r.repo.ClaimDue(ctx, today, r.cfg.BatchSize)
 		if err != nil {
@@ -125,9 +125,12 @@ func (r *ScheduledCheckRunner) Sweep(ctx context.Context) {
 				// next boot's reclaim returns them to PENDING. Nothing is lost.
 				return
 			}
-			if r.execute(ctx, &rows[i]) {
+			switch r.execute(ctx, &rows[i]) {
+			case runDone:
 				done++
-			} else {
+			case runSkipped:
+				skipped++
+			case runFailed:
 				failed++
 			}
 		}
@@ -138,13 +141,45 @@ func (r *ScheduledCheckRunner) Sweep(ctx context.Context) {
 
 	slog.Info("scheduled-checks: sweep heartbeat",
 		"due_as_of", today.Format(dateOnly),
-		"claimed", claimed, "done", done, "failed", failed,
+		"claimed", claimed, "done", done, "failed", failed, "skipped", skipped,
 		"reclaimed", reclaimed, "expired", expired)
 }
 
+// runOutcome is what one claimed row did, which the heartbeat counts and
+// nothing else reads.
+type runOutcome int
+
+const (
+	runDone runOutcome = iota
+	runFailed
+	// runSkipped: the account cannot have a report pulled yet — no verified PAN
+	// — so nothing was attempted and the row went back to PENDING with its
+	// attempt returned.
+	runSkipped
+)
+
 // execute runs one claimed row through the full credit-analytics path and
-// settles the row from the outcome. Returns true when the run completed.
-func (r *ScheduledCheckRunner) execute(ctx context.Context, row *models.ScheduledScoreCheck) bool {
+// settles the row from the outcome.
+func (r *ScheduledCheckRunner) execute(ctx context.Context, row *models.ScheduledScoreCheck) runOutcome {
+	// Asked before the pull rather than inferred from its failure: the two are
+	// different events. A blocked account is waiting on its own PAN (or on an
+	// admin reviewing it) and will be ready one day; a failing pull is the
+	// system's problem and is what the attempt cap is for. Told apart here, the
+	// paid refresh survives until the plan year ends instead of being parked
+	// FAILED after three sweeps of something the user can still fix.
+	if err := r.analytics.AccountReady(ctx, row.AccountID); err != nil {
+		if rerr := r.repo.ReleaseBlocked(ctx, row.ID, err.Error()); rerr != nil {
+			slog.Error("scheduled-checks: release after skip failed; row stays RUNNING until the stale reclaim",
+				"scheduled_check_id", row.ID, "error", rerr)
+		}
+		// Info, not Warn: this is the expected state of a plan bought before
+		// PAN verification was finished, and it resolves itself.
+		slog.Info("scheduled-checks: skipped, account not ready; re-queued for the next sweep",
+			"scheduled_check_id", row.ID, "account_id", row.AccountID,
+			"due_on", row.DueOn.Format(dateOnly), "reason", err.Error())
+		return runSkipped
+	}
+
 	report, err := r.analytics.RunScheduled(ctx, row)
 	if err != nil {
 		// The row goes back to PENDING for the next sweep — or FAILED at the
@@ -163,7 +198,7 @@ func (r *ScheduledCheckRunner) execute(ctx context.Context, row *models.Schedule
 				"scheduled_check_id", row.ID, "account_id", row.AccountID,
 				"attempts", row.Attempts, "error", err)
 		}
-		return false
+		return runFailed
 	}
 
 	if err := r.repo.Complete(ctx, row.ID, report.ID, models.ScheduledCheckByRunner); err != nil {
@@ -172,10 +207,10 @@ func (r *ScheduledCheckRunner) execute(ctx context.Context, row *models.Schedule
 		// will replay the same report into a clean Complete — no second bill.
 		slog.Error("scheduled-checks: run delivered but row not completed; stale reclaim will settle it",
 			"scheduled_check_id", row.ID, "report_id", report.ID, "error", err)
-		return false
+		return runFailed
 	}
 	slog.Info("scheduled-checks: run completed",
 		"scheduled_check_id", row.ID, "account_id", row.AccountID,
 		"report_id", report.ID, "sequence_no", row.SequenceNo)
-	return true
+	return runDone
 }

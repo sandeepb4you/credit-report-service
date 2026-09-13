@@ -296,27 +296,60 @@ func TestRunnerSweep_ExecutesTheDueRunAndCompletesIt(t *testing.T) {
 	}
 }
 
-func TestRunnerSweep_FailedRunStaysPendingAndBurnsNoQuota(t *testing.T) {
+// A genuinely failing pull stays retryable, spends an attempt each time, and is
+// parked FAILED at the cap — the case the cap exists for, and the opposite of
+// the skip below.
+//
+// Driven at the repository seam rather than through a sweep. The harness's
+// Digitap client is the offline stub, which always succeeds, and the only way
+// this test previously forced a failure — an account with no verified PAN — is
+// deliberately no longer one: that is now a skip, because it is the user's to
+// clear and not the system's to retry.
+func TestScheduledRun_FailureIsRetryableUntilTheAttemptCap(t *testing.T) {
 	h := newHarness(t)
-	// No PAN verification: buildPayload refuses the pull, so the run FAILS.
-	token, accountID := h.signInByPhone("+919600000007", "")
+	token, accountID := h.planAccount("+919600000007")
 	h.buyPlan(token, "SCORE_PLUS_QUARTERLY")
 
-	h.runner().Sweep(context.Background())
+	const maxAttempts = 3
+	repo := repository.NewScheduledCheckRepo(h.pool)
 
-	var status string
-	var attempts int
-	if err := h.pool.QueryRow(h.baseCtx,
-		`SELECT status, attempts FROM scheduled_score_checks
-		 WHERE account_id = $1 AND sequence_no = 1`, accountID,
-	).Scan(&status, &attempts); err != nil {
-		t.Fatalf("read run 1: %v", err)
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		rows, err := repo.ClaimDue(h.baseCtx, today(), 1)
+		if err != nil {
+			t.Fatalf("claim (attempt %d): %v", attempt, err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("claimed %d rows on attempt %d, want 1", len(rows), attempt)
+		}
+		if err := repo.ReleaseFailed(h.baseCtx, rows[0].ID, "upstream unavailable", maxAttempts); err != nil {
+			t.Fatalf("release (attempt %d): %v", attempt, err)
+		}
+
+		var status string
+		var attempts int
+		if err := h.pool.QueryRow(h.baseCtx,
+			`SELECT status, attempts FROM scheduled_score_checks
+			 WHERE account_id = $1 AND sequence_no = 1`, accountID,
+		).Scan(&status, &attempts); err != nil {
+			t.Fatalf("read run 1 (attempt %d): %v", attempt, err)
+		}
+		if attempts != attempt {
+			t.Fatalf("attempts = %d after attempt %d, want %d", attempts, attempt, attempt)
+		}
+		want := "PENDING"
+		if attempt == maxAttempts {
+			want = "FAILED"
+		}
+		if status != want {
+			t.Fatalf("run 1 = %s after attempt %d, want %s", status, attempt, want)
+		}
 	}
-	if status != "PENDING" || attempts != 1 {
-		t.Fatalf("failed run = %s/attempts %d, want PENDING/1 (retryable, quota intact)", status, attempts)
-	}
-	if got := pendingRuns(h.scheduledChecks(token)); got != 4 {
-		t.Fatalf("pendingRuns = %d, want 4 — a failure must not spend a run", got)
+
+	// Only Complete spends a run, so nothing above cost the user anything: three
+	// of the four are still pending, and the failed one is a paid run an
+	// operator has to settle rather than one quietly consumed.
+	if got := pendingRuns(h.scheduledChecks(token)); got != 3 {
+		t.Fatalf("pendingRuns = %d, want 3 — a failure must not spend a run", got)
 	}
 }
 
@@ -368,4 +401,67 @@ func TestRunnerSweep_ReclaimsACrashedClaimAndExpiresTheOverdue(t *testing.T) {
 		t.Fatalf("mid-plan runs = %s/%s, want PENDING/PENDING", rows[2], rows[3])
 	}
 	_ = token
+}
+
+// A plan bought before PAN verification is finished must not burn its refreshes
+// on sweeps that cannot run.
+//
+// This is what production did: an account with a monthly plan and no verified
+// PAN logged "run failed; will retry next sweep" every hour, and the attempt cap
+// would have parked a paid refresh FAILED — needing an operator — for something
+// the user could still fix themselves. The run is now skipped and re-queued
+// with its attempt returned, bounded by the plan year's expiry like any other
+// unrun row.
+func TestRunnerSweep_SkipsAnAccountWithNoVerifiedPan(t *testing.T) {
+	h := newHarness(t)
+
+	// Deliberately NOT planAccount: this one never verifies a PAN.
+	token, accountID := h.signInByPhone("+919600000009", "")
+	h.buyPlan(token, "SCORE_PLUS_MONTHLY")
+
+	// Three sweeps — one more than the attempt cap of 3 would survive if these
+	// counted as attempts.
+	for range 4 {
+		h.runner().Sweep(context.Background())
+	}
+
+	var status string
+	var attempts int
+	var reason *string
+	if err := h.pool.QueryRow(h.baseCtx,
+		`SELECT status, attempts, failure_reason FROM scheduled_score_checks
+		 WHERE account_id = $1 AND sequence_no = 1`, accountID,
+	).Scan(&status, &attempts, &reason); err != nil {
+		t.Fatalf("read run 1: %v", err)
+	}
+	if status != "PENDING" {
+		t.Errorf("run 1 = %s, want PENDING — a blocked account must not fail its own refresh", status)
+	}
+	if attempts != 0 {
+		t.Errorf("attempts = %d, want 0 — a run that was never tried must not spend one", attempts)
+	}
+	if reason == nil || *reason == "" {
+		t.Error("no failure_reason recorded; the row should say why it is waiting")
+	}
+
+	// Nothing was spent: the whole plan is still there.
+	if got := pendingRuns(h.scheduledChecks(token)); got != 12 {
+		t.Errorf("pendingRuns = %d, want 12", got)
+	}
+
+	// And once the PAN is verified, the next sweep runs it.
+	if res := h.verifyPAN(token, stubPAN, stubPANName); res.Status != http.StatusCreated {
+		t.Fatalf("verify PAN: %d %s", res.Status, res.Raw)
+	}
+	h.runner().Sweep(context.Background())
+
+	if err := h.pool.QueryRow(h.baseCtx,
+		`SELECT status FROM scheduled_score_checks WHERE account_id = $1 AND sequence_no = 1`,
+		accountID,
+	).Scan(&status); err != nil {
+		t.Fatalf("re-read run 1: %v", err)
+	}
+	if status != "DONE" {
+		t.Errorf("run 1 after verification = %s, want DONE", status)
+	}
 }

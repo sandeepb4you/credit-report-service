@@ -250,6 +250,28 @@ func (r *ScheduledCheckRepo) ReleaseFailed(ctx context.Context, id int64, reason
 	return err
 }
 
+// ReleaseBlocked returns a claimed run to PENDING and gives back the attempt
+// ClaimDue spent on it, for a run that was never tried.
+//
+// The attempt cap exists to stop the runner hammering a pull that keeps
+// breaking; a plan holder who has not finished PAN verification is not that.
+// Counting those sweeps would park a paid refresh FAILED — needing an operator
+// — for something the user can still fix themselves, and on a plan that sweeps
+// hourly it would happen within the day. The natural bound stays the plan year:
+// ExpireOverdue voids what is still PENDING when it ends.
+//
+// The reason is recorded so the row says why it is waiting rather than looking
+// like one nothing has touched.
+func (r *ScheduledCheckRepo) ReleaseBlocked(ctx context.Context, id int64, reason string) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE scheduled_score_checks SET
+		     status = $2, attempts = GREATEST(attempts - 1, 0),
+		     failure_reason = $3, updated_at = now()
+		 WHERE id = $1`,
+		id, models.ScheduledCheckPending, reason)
+	return err
+}
+
 // ReclaimStale returns RUNNING rows whose attempt started before cutoff to
 // PENDING: a crash between claim and completion left them orphaned. The
 // retry is safe because the run's idempotency key (sched-<id>) replays the
