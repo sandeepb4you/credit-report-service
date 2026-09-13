@@ -108,9 +108,9 @@ func TestAdvancedReport_RendersTheWholeDocument(t *testing.T) {
 		"State Bank of India", // an open account
 		"₹1.14 Cr",            // its balance, in the document's own units
 		"IDFC FIRST Bank",
-		"HDFC Bank", // a closed one, on its own page
-		"835",       // the projection
-		"Page 8",    // the last page exists, so the run did not truncate
+		"HDFC Bank",            // a closed one, on its own page
+		"835",                  // the projection
+		"This report is yours", // the closing page, so nothing truncated
 		"not a credit information company or credit bureau", // the legal position
 	} {
 		if !strings.Contains(html, want) {
@@ -150,17 +150,19 @@ func TestAdvancedReport_OmitsWhatItCannotFill(t *testing.T) {
 	html = flatten(html)
 
 	for _, absent := range []string{
-		"carrying you forward",   // open accounts
-		"settled and behind you", // closed accounts
-		"not one missed",         // the payment grid's headline
-		"Page 7",                 // the projection page
+		"carrying you forward",      // open accounts
+		"settled and behind you",    // closed accounts
+		"not one missed",            // the payment grid's headline
+		"in three numbers",          // the highlights page
+		"Projections are estimates", // the projection page's footer
 	} {
 		if strings.Contains(html, absent) {
 			t.Errorf("thin report still rendered %q", absent)
 		}
 	}
-	// What must survive: the cover, addressed to nobody rather than to "".
-	for _, want := range []string{"Your report", "Page 1", "Page 8", "—"} {
+	// What must survive: the cover, addressed to nobody rather than to "", and
+	// the closing page with the legal position on it.
+	for _, want := range []string{"Your report", "Your Experian score", "This report is yours", "—"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("thin report is missing %q", want)
 		}

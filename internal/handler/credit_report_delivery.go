@@ -106,6 +106,42 @@ func (h *CreditAnalyticsHandler) GetAdvancedReportLink(c *fiber.Ctx) error {
 	})
 }
 
+// EmailAdvancedReport godoc
+//
+// @Summary      Email the myScorr Advanced Report
+// @Description  Renders the caller's own report as the myScorr Advanced Report and sends it to the address on their account. Returns 409 when the account has no email, like the bureau report's own email route, so the client can offer to link one. The attachment carries no password.
+// @Tags         credit-analytics
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id  path      int  true  "Report id"
+// @Success      200  {object}  ReportEmailResponse
+// @Failure      400  {object}  apperr.ErrorBody  "id must be an integer"
+// @Failure      401  {object}  apperr.ErrorBody  "Not authenticated"
+// @Failure      404  {object}  apperr.ErrorBody  "Report not found"
+// @Failure      409  {object}  apperr.ErrorBody  "No email address on the account — link one first"
+// @Failure      502  {object}  apperr.ErrorBody  "Could not send the email"
+// @Failure      503  {object}  apperr.ErrorBody  "The advanced report or email delivery is not available"
+// @Router       /credit-analytics/reports/{id}/advanced-pdf/email [post]
+func (h *CreditAnalyticsHandler) EmailAdvancedReport(c *fiber.Ctx) error {
+	accountID, ok := middleware.AccountID(c)
+	if !ok {
+		return apperr.NewUnauthorized("Not authenticated")
+	}
+	id, err := strconv.ParseInt(c.Params("id"), 10, 64)
+	if err != nil {
+		return apperr.NewValidation("id must be an integer")
+	}
+
+	switch err := h.svc.EmailAdvancedReport(c.Context(), accountID, id); {
+	case err == nil:
+		return c.JSON(ReportEmailResponse{Message: "Your advanced report is on its way"})
+	case errors.Is(err, service.ErrReportEmailMissing):
+		return apperr.NewConflict("Add an email address to your account to have the report sent to you.")
+	default:
+		return err
+	}
+}
+
 // EmailReportPDF godoc
 //
 // @Summary      Email a report's PDF to the account's address

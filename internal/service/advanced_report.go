@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"html/template"
 	"log/slog"
-	"math"
 	"sort"
 	"strings"
 	"time"
@@ -93,30 +92,13 @@ func (s *CreditAnalyticsService) AdvancedReportLink(
 			"The advanced report is not available right now. Please try again later.")
 	}
 
-	row, err := s.findOwnedReport(ctx, accountID, reportID)
-	if err != nil {
-		return "", 0, err
-	}
-	insights, err := s.ReportInsightsFromRow(ctx, row)
-	if err != nil {
-		return "", 0, apperr.NewBadGateway("Could not read your report. Please try again.")
-	}
 	acc, err := s.accounts.FindByID(ctx, accountID)
 	if err != nil {
 		return "", 0, apperr.NewNotFound("Account not found")
 	}
-
-	html, err := s.renderAdvancedHTML(acc, insights)
+	pdf, err := s.renderAdvancedReport(ctx, accountID, reportID, acc)
 	if err != nil {
-		slog.Error("advanced report: template failed",
-			"account_id", accountID, "report_id", reportID, "error", err)
-		return "", 0, apperr.NewBadGateway("Could not prepare your report. Please try again.")
-	}
-	pdf, err := s.renderer.PDF(ctx, html)
-	if err != nil {
-		slog.Error("advanced report: render failed",
-			"account_id", accountID, "report_id", reportID, "error", err)
-		return "", 0, apperr.NewBadGateway("Could not prepare your report. Please try again.")
+		return "", 0, err
 	}
 
 	key := advancedReportKey(accountID, reportID)
@@ -137,15 +119,87 @@ func (s *CreditAnalyticsService) AdvancedReportLink(
 	return url, ttl, nil
 }
 
+// EmailAdvancedReport renders the advanced report and sends it to the address
+// on the account.
+//
+// Returns [ErrReportEmailMissing] when there is none, exactly as the bureau
+// report's email does, so the app can offer to link an address rather than
+// reporting a failure the user cannot act on from that screen.
+func (s *CreditAnalyticsService) EmailAdvancedReport(
+	ctx context.Context, accountID, reportID int64,
+) error {
+	acc, err := s.accounts.FindByID(ctx, accountID)
+	if err != nil {
+		return apperr.NewNotFound("Account not found")
+	}
+	if acc.PrimaryEmail == nil || *acc.PrimaryEmail == "" {
+		return ErrReportEmailMissing
+	}
+	if s.mailer == nil {
+		return apperr.NewServiceUnavailable("Email delivery is not configured.")
+	}
+
+	pdf, err := s.renderAdvancedReport(ctx, accountID, reportID, acc)
+	if err != nil {
+		return err
+	}
+	filename := fmt.Sprintf("myScorr-advanced-report-%d.pdf", reportID)
+	if err := s.mailer.SendAdvancedReport(*acc.PrimaryEmail, filename, pdf); err != nil {
+		return apperr.NewBadGateway("Could not send the email. Please try again.")
+	}
+	return nil
+}
+
+// renderAdvancedReport builds the document for one report the caller owns and
+// prints it, without storing anything.
+//
+// Shared by the download and the email so there is exactly one definition of
+// what the report contains: two renderers would eventually put a different
+// document in the mailbox from the one on screen.
+func (s *CreditAnalyticsService) renderAdvancedReport(
+	ctx context.Context, accountID, reportID int64, acc *models.Account,
+) ([]byte, error) {
+	if s.renderer == nil || !s.renderer.Available() {
+		return nil, apperr.NewServiceUnavailable(
+			"The advanced report is not available right now. Please try again later.")
+	}
+	row, err := s.findOwnedReport(ctx, accountID, reportID)
+	if err != nil {
+		return nil, err
+	}
+	insights, err := s.ReportInsightsFromRow(ctx, row)
+	if err != nil {
+		return nil, apperr.NewBadGateway("Could not read your report. Please try again.")
+	}
+	html, err := s.renderAdvancedHTML(acc, insights)
+	if err != nil {
+		slog.Error("advanced report: template failed",
+			"account_id", accountID, "report_id", reportID, "error", err)
+		return nil, apperr.NewBadGateway("Could not prepare your report. Please try again.")
+	}
+	pdf, err := s.renderer.PDF(ctx, html)
+	if err != nil {
+		slog.Error("advanced report: render failed",
+			"account_id", accountID, "report_id", reportID, "error", err)
+		return nil, apperr.NewBadGateway("Could not prepare your report. Please try again.")
+	}
+	return pdf, nil
+}
+
 // ---- the document's view model -------------------------------------------
 
 type advancedReportView struct {
-	HolderName    string
-	PreparedOn    string
-	ScoreText     string
-	ScoreBarWidth int
-	Band          string
-	CoverHeadline string
+	HolderName string
+	// PreparedOn is the long form for the cover ("5 September 2026"); ShortDate
+	// is the running head's ("5 Sep 2026").
+	PreparedOn string
+	ShortDate  string
+	ScoreText  string
+	// ScoreLine is the score as it appears in the running head and the
+	// projection, empty when the file carries none — the two places that read
+	// wrong with an em dash in them.
+	ScoreLine string
+	Band      string
 
 	FactorHeadline string
 	Factors        []advancedFactor
@@ -156,13 +210,15 @@ type advancedReportView struct {
 	OpenAccounts           []advancedAccount
 	ClosedAccountsHeadline string
 	ClosedAccounts         []advancedAccount
+	HistorySince           string
+	HistoryNote            string
 
-	PaymentHeadline string
-	PaymentYears    []advancedPaymentYear
+	StreakCount  string
+	PaymentYears []advancedPaymentYear
 
-	ProjectionKicker   string
-	ProjectionHeadline string
-	Actions            []advancedAction
+	ProjectionKicker string
+	TargetRange      string
+	Actions          []advancedAction
 }
 
 type advancedFactor struct {
@@ -175,6 +231,9 @@ type advancedFactor struct {
 type advancedHighlight struct {
 	Value   string
 	Caption string
+	// Colour is "teal" or "amber": the sample alternates them, and utilisation
+	// is the amber one because it is the number a reader is meant to watch.
+	Colour string
 }
 
 type advancedAccount struct {
@@ -192,6 +251,9 @@ type advancedAction struct {
 	Title  string
 	Detail string
 	Tag    string
+	// TagColour is "" (teal) or "amber" — amber for the tags that ask the reader
+	// to go and do something rather than to keep doing it.
+	TagColour string
 }
 
 func (s *CreditAnalyticsService) renderAdvancedHTML(
@@ -215,6 +277,7 @@ func buildAdvancedReportView(acc *models.Account, in *ReportInsights) advancedRe
 	v := advancedReportView{
 		HolderName: accountDisplayName(acc),
 		PreparedOn: in.CreatedAt.Format("2 January 2006"),
+		ShortDate:  in.CreatedAt.Format("2 Jan 2006"),
 		ScoreText:  "—",
 		Band:       "Not scored",
 	}
@@ -222,13 +285,8 @@ func buildAdvancedReportView(acc *models.Account, in *ReportInsights) advancedRe
 	if in.CreditScore != nil {
 		score := int(*in.CreditScore)
 		v.ScoreText = fmt.Sprintf("%d", score)
+		v.ScoreLine = v.ScoreText
 		v.Band = strings.ToUpper(scoreBandLabel(score))
-		// The bar is the same 300–900 range the app's gauge uses.
-		frac := float64(score-300) / 600
-		v.ScoreBarWidth = int(math.Round(math.Max(0, math.Min(1, frac)) * 210))
-		v.CoverHeadline = coverHeadlineFor(score)
-	} else {
-		v.CoverHeadline = "Your credit file, read in full."
 	}
 
 	if in.ReportCard != nil && len(in.ReportCard.Factors) > 0 {
@@ -255,36 +313,94 @@ func buildAdvancedReportView(acc *models.Account, in *ReportInsights) advancedRe
 	}
 	if len(closed) > 0 {
 		v.ClosedAccounts = closed
-		v.ClosedAccountsHeadline = fmt.Sprintf("%s, settled and behind you",
-			countWord(len(closed), "account"))
+		v.ClosedAccountsHeadline = strings.ToUpper(
+			countWord(len(closed), "closed account")) + ", ALL PAID IN FULL"
+		// The month the file starts, which is this page's headline when the
+		// history reaches back far enough to be worth a page of its own.
+		if since := historyStart(in.LoanAccounts); !since.IsZero() {
+			v.HistorySince = since.Format("January 2006")
+			if oldest := oldestClosedCompany(in.LoanAccounts); oldest != "" {
+				v.HistoryNote = fmt.Sprintf(
+					"A %s account, since closed, still anchors your credit age today", oldest)
+			}
+		}
 	}
 
 	v.PaymentYears = advancedPaymentGrid(in.LoanAccounts)
-	if len(v.PaymentYears) > 0 {
-		if streak := onTimeStreak(in.LoanAccounts); streak > 0 {
-			v.PaymentHeadline = fmt.Sprintf("%d months, not one missed", streak)
-		} else {
-			v.PaymentHeadline = "Your payment record, month by month"
-		}
+	if streak := onTimeStreak(in.LoanAccounts); streak > 0 {
+		v.StreakCount = fmt.Sprintf("%d", streak)
 	}
 
 	if sb := in.ScoreBuilder; sb != nil && sb.TargetScoreMax > 0 && len(sb.Strategies) > 0 {
 		v.ProjectionKicker = projectionKicker(sb)
-		if in.CreditScore != nil {
-			v.ProjectionHeadline = fmt.Sprintf("%d → %d–%d",
-				*in.CreditScore, sb.TargetScoreMin, sb.TargetScoreMax)
+		if sb.TargetScoreMin == sb.TargetScoreMax {
+			v.TargetRange = fmt.Sprintf("%d", sb.TargetScoreMax)
 		} else {
-			v.ProjectionHeadline = fmt.Sprintf("Toward %d–%d", sb.TargetScoreMin, sb.TargetScoreMax)
+			v.TargetRange = fmt.Sprintf("%d–%d", sb.TargetScoreMin, sb.TargetScoreMax)
 		}
 		for _, st := range sb.Strategies {
+			tag := strings.ToUpper(strings.TrimSpace(st.Tag))
+			if tag == "" {
+				tag = "DO"
+			}
 			v.Actions = append(v.Actions, advancedAction{
-				Title:  st.Title,
-				Detail: st.Detail,
-				Tag:    strings.ToUpper(st.Tag),
+				Title:     st.Title,
+				Detail:    st.Detail,
+				Tag:       tag,
+				TagColour: actionTagColour(tag),
 			})
 		}
 	}
 	return v
+}
+
+// actionTagColour: teal for what the reader is already doing and should keep
+// doing, amber for what asks them to go and act. The sample's own split.
+func actionTagColour(tag string) string {
+	switch tag {
+	case "PROTECT", "KEEP", "MAINTAIN", "HOLD":
+		return ""
+	default:
+		return "amber"
+	}
+}
+
+// historyStart is the earliest month any account reported, which is how far back
+// the file goes.
+func historyStart(accounts []LoanAccount) time.Time {
+	oldest := ""
+	for _, a := range accounts {
+		for _, m := range a.PaymentHistory {
+			if oldest == "" || m.Month < oldest {
+				oldest = m.Month
+			}
+		}
+	}
+	if oldest == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse("2006-01", oldest)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+// oldestClosedCompany names the closed account whose history reaches furthest
+// back - the one this page's note is about.
+func oldestClosedCompany(accounts []LoanAccount) string {
+	best, bestMonth := "", ""
+	for _, a := range accounts {
+		if a.Active {
+			continue
+		}
+		for _, m := range a.PaymentHistory {
+			if bestMonth == "" || m.Month < bestMonth {
+				bestMonth, best = m.Month, a.Company
+			}
+		}
+	}
+	return best
 }
 
 // accountDisplayName prefers the name on the account and falls back to the
@@ -373,12 +489,14 @@ func advancedHighlights(in *ReportInsights) []advancedHighlight {
 		out = append(out, advancedHighlight{
 			Value:   fmt.Sprintf("%d", streak),
 			Caption: "consecutive months of on-time payments",
+			Colour:  "teal",
 		})
 	}
 	if in.CardUtilizationPercent > 0 {
 		out = append(out, advancedHighlight{
 			Value:   fmt.Sprintf("%.0f%%", in.CardUtilizationPercent),
-			Caption: "card utilisation, against an ideal ceiling of 30%",
+			Caption: utilisationCaption(in.CardUtilizationPercent),
+			Colour:  "amber",
 		})
 	}
 	// The server's own figure, never a second derivation of it: the report card
@@ -389,18 +507,33 @@ func advancedHighlights(in *ReportInsights) []advancedHighlight {
 		out = append(out, advancedHighlight{
 			Value:   fmt.Sprintf("%d+", int(*in.CreditAgeYears)),
 			Caption: "years of credit history behind you",
+			Colour:  "teal",
 		})
 	}
 	if in.ActiveAccountCount > 0 && len(out) < 3 {
 		out = append(out, advancedHighlight{
 			Value:   fmt.Sprintf("%d", in.ActiveAccountCount),
 			Caption: "active accounts, all reporting",
+			Colour:  "teal",
 		})
 	}
 	if len(out) > 3 {
 		out = out[:3]
 	}
 	return out
+}
+
+// utilisationCaption says what the number means rather than repeating it: well
+// under the ideal ceiling is worth saying so, over it is worth saying plainly.
+func utilisationCaption(pct float64) string {
+	switch {
+	case pct <= 15:
+		return "card utilisation, half the ideal ceiling"
+	case pct <= 30:
+		return "card utilisation, under the ideal ceiling"
+	default:
+		return "card utilisation, above the ideal 30%"
+	}
 }
 
 func splitAccounts(accounts []LoanAccount) (open, closed []advancedAccount) {
@@ -421,14 +554,42 @@ func splitAccounts(accounts []LoanAccount) (open, closed []advancedAccount) {
 			})
 			continue
 		}
-		detail := a.LoanType
-		if last4 != "" {
-			detail += " · ····" + last4
-		}
-		detail += " · closed, paid in full"
-		closed = append(closed, advancedAccount{Company: a.Company, Detail: detail})
+		// A chip, not a sentence: the company and the years it ran. The bureau
+		// shape carries no closing year, so the range is only as good as the
+		// months reported - and with none, the chip is the name alone rather
+		// than a span nobody told us.
+		closed = append(closed, advancedAccount{
+			Company: a.Company,
+			Detail:  reportedYearRange(a.PaymentHistory),
+		})
 	}
 	return open, closed
+}
+
+// reportedYearRange renders "2014-22" from the months an account reported, or
+// "" when it reported none.
+func reportedYearRange(history []PaymentMonth) string {
+	first, last := "", ""
+	for _, m := range history {
+		if len(m.Month) < 4 {
+			continue
+		}
+		y := m.Month[:4]
+		if first == "" || y < first {
+			first = y
+		}
+		if last == "" || y > last {
+			last = y
+		}
+	}
+	switch {
+	case first == "":
+		return ""
+	case first == last:
+		return first
+	default:
+		return first + "–" + last[2:]
+	}
 }
 
 func lastFour(accountNumber string) string {

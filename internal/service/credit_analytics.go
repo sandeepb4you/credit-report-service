@@ -120,6 +120,9 @@ type CreditAnalyticsService struct {
 // would let it.
 type ReportMailer interface {
 	SendCreditReport(toEmail, filename string, pdf []byte) error
+	// SendAdvancedReport carries its own covering letter: the bureau PDF's says
+	// how to open it, and this one has no password to explain.
+	SendAdvancedReport(toEmail, filename string, pdf []byte) error
 }
 
 // SetReportMailer wires report delivery by email.
