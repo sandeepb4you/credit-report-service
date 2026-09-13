@@ -218,7 +218,10 @@ type advancedReportView struct {
 
 	ProjectionKicker string
 	TargetRange      string
-	Actions          []advancedAction
+	// HoldNote replaces the arrow when the plan has no points to add: a file
+	// with nothing left to fix gets a sentence, not a projection.
+	HoldNote string
+	Actions  []advancedAction
 }
 
 type advancedFactor struct {
@@ -315,13 +318,25 @@ func buildAdvancedReportView(acc *models.Account, in *ReportInsights) advancedRe
 		v.ClosedAccounts = closed
 		v.ClosedAccountsHeadline = strings.ToUpper(
 			countWord(len(closed), "closed account")) + ", ALL PAID IN FULL"
-		// The month the file starts, which is this page's headline when the
-		// history reaches back far enough to be worth a page of its own.
-		if since := historyStart(in.LoanAccounts); !since.IsZero() {
+		// The day the file starts, from the earliest account OPENING date the
+		// bureau reported. Deliberately not derived from payment history: that is
+		// capped at ~36 months per tradeline, so a file open since February 2014
+		// printed as April 2018 — the bug this replaced.
+		if since := parseISODate(in.CreditHistorySince); !since.IsZero() {
 			v.HistorySince = since.Format("January 2006")
-			if oldest := oldestClosedCompany(in.LoanAccounts); oldest != "" {
-				v.HistoryNote = fmt.Sprintf(
-					"A %s account, since closed, still anchors your credit age today", oldest)
+			// The note is only true of the account that actually anchors the age.
+			// A closed account that opened after some still-open one anchors
+			// nothing, and saying it does is a claim the file contradicts.
+			if company, closedYear, openedOn := oldestClosedAccount(in.LoanAccounts); company != "" &&
+				openedOn == in.CreditHistorySince {
+				if closedYear != "" {
+					v.HistoryNote = fmt.Sprintf(
+						"A %s account, closed in %s, still anchors your credit age today",
+						company, closedYear)
+				} else {
+					v.HistoryNote = fmt.Sprintf(
+						"A %s account, since closed, still anchors your credit age today", company)
+				}
 			}
 		}
 	}
@@ -331,13 +346,7 @@ func buildAdvancedReportView(acc *models.Account, in *ReportInsights) advancedRe
 		v.StreakCount = fmt.Sprintf("%d", streak)
 	}
 
-	if sb := in.ScoreBuilder; sb != nil && sb.TargetScoreMax > 0 && len(sb.Strategies) > 0 {
-		v.ProjectionKicker = projectionKicker(sb)
-		if sb.TargetScoreMin == sb.TargetScoreMax {
-			v.TargetRange = fmt.Sprintf("%d", sb.TargetScoreMax)
-		} else {
-			v.TargetRange = fmt.Sprintf("%d–%d", sb.TargetScoreMin, sb.TargetScoreMax)
-		}
+	if sb := in.ScoreBuilder; sb != nil && len(sb.Strategies) > 0 {
 		for _, st := range sb.Strategies {
 			tag := strings.ToUpper(strings.TrimSpace(st.Tag))
 			if tag == "" {
@@ -350,8 +359,71 @@ func buildAdvancedReportView(acc *models.Account, in *ReportInsights) advancedRe
 				TagColour: actionTagColour(tag),
 			})
 		}
+
+		// What the page promises is what the list under it is worth — the sum of
+		// the estimated points on these very actions, not the band the score sits
+		// in. A file at 800 was printed "800 → 800–900", which is not a projection
+		// at all: 900 is the top of the scale, and every action on a protect plan
+		// is worth zero points by design because there is nothing left to fix.
+		gainMin, gainMax := estimatedGain(sb.Strategies)
+		switch {
+		case gainMax > 0 && in.CreditScore != nil:
+			score := int(*in.CreditScore)
+			v.ProjectionKicker = projectionKicker(sb)
+			v.TargetRange = scoreRange(score+gainMin, score+gainMax)
+		case gainMax > 0:
+			// Points to gain but no score to add them to: say what they are worth
+			// rather than inventing a destination.
+			v.ProjectionKicker = "What these actions are worth"
+			v.TargetRange = scoreRange(gainMin, gainMax) + " points"
+		default:
+			// Nothing on this plan adds points. That is the ordinary state of a
+			// strong file, and it is worth saying plainly instead of drawing an
+			// arrow to the top of the scale.
+			v.ProjectionKicker = "Where this file stands"
+			v.HoldNote = "These actions protect your score rather than raise it — " +
+				"at this level, holding it is the win."
+			if in.CreditScore != nil {
+				v.TargetRange = fmt.Sprintf("%d", *in.CreditScore)
+			}
+		}
 	}
+
 	return v
+}
+
+// estimatedGain adds up what the plan's own actions are estimated to be worth.
+//
+// Nil estimates are zero, not unknown-and-therefore-ignored: a strategy without
+// numbers ("dispute any report errors") is one whose payoff nobody can promise,
+// and rolling it into a range would be promising it.
+func estimatedGain(strategies []BuilderStrategy) (lo, hi int) {
+	for _, st := range strategies {
+		if st.EstimatedPointsMin != nil {
+			lo += *st.EstimatedPointsMin
+		}
+		if st.EstimatedPointsMax != nil {
+			hi += *st.EstimatedPointsMax
+		}
+	}
+	return lo, hi
+}
+
+// scoreRange renders "845–870", collapsing to one number when the ends meet and
+// clamping to the top of the scale — a projection past 900 is arithmetic
+// escaping the thing it describes.
+func scoreRange(lo, hi int) string {
+	const ceiling = 900
+	if lo > ceiling {
+		lo = ceiling
+	}
+	if hi > ceiling {
+		hi = ceiling
+	}
+	if lo >= hi {
+		return fmt.Sprintf("%d", hi)
+	}
+	return fmt.Sprintf("%d–%d", lo, hi)
 }
 
 // actionTagColour: teal for what the reader is already doing and should keep
@@ -365,42 +437,52 @@ func actionTagColour(tag string) string {
 	}
 }
 
-// historyStart is the earliest month any account reported, which is how far back
-// the file goes.
-func historyStart(accounts []LoanAccount) time.Time {
-	oldest := ""
-	for _, a := range accounts {
-		for _, m := range a.PaymentHistory {
-			if oldest == "" || m.Month < oldest {
-				oldest = m.Month
-			}
-		}
-	}
-	if oldest == "" {
+// parseISODate reads a YYYY-MM-DD the server produced, or the zero time.
+func parseISODate(s string) time.Time {
+	if s == "" {
 		return time.Time{}
 	}
-	t, err := time.Parse("2006-01", oldest)
+	t, err := time.Parse("2006-01-02", s)
 	if err != nil {
 		return time.Time{}
 	}
 	return t
 }
 
-// oldestClosedCompany names the closed account whose history reaches furthest
-// back - the one this page's note is about.
-func oldestClosedCompany(accounts []LoanAccount) string {
-	best, bestMonth := "", ""
+// oldestClosedAccount names the closed account that opened earliest — the one
+// the history page's note is about — and the year it closed, when the bureau
+// reported one.
+func oldestClosedAccount(accounts []LoanAccount) (company, closedYear, openedOn string) {
 	for _, a := range accounts {
-		if a.Active {
+		if a.Active || a.OpenedOn == "" {
 			continue
 		}
-		for _, m := range a.PaymentHistory {
-			if bestMonth == "" || m.Month < bestMonth {
-				bestMonth, best = m.Month, a.Company
+		if openedOn == "" || a.OpenedOn < openedOn {
+			openedOn, company = a.OpenedOn, a.Company
+			closedYear = ""
+			if len(a.ClosedOn) >= 4 {
+				closedYear = a.ClosedOn[:4]
 			}
 		}
 	}
-	return best
+	return company, closedYear, openedOn
+}
+
+// accountYearRange renders "2014–22" from a tradeline's own dates: the year it
+// opened, and the year it closed when the bureau reported one.
+func accountYearRange(openedOn, closedOn string) string {
+	if len(openedOn) < 4 {
+		return ""
+	}
+	from := openedOn[:4]
+	if len(closedOn) < 4 {
+		return from
+	}
+	to := closedOn[:4]
+	if to == from {
+		return from
+	}
+	return from + "–" + to[2:]
 }
 
 // accountDisplayName prefers the name on the account and falls back to the
@@ -554,42 +636,15 @@ func splitAccounts(accounts []LoanAccount) (open, closed []advancedAccount) {
 			})
 			continue
 		}
-		// A chip, not a sentence: the company and the years it ran. The bureau
-		// shape carries no closing year, so the range is only as good as the
-		// months reported - and with none, the chip is the name alone rather
-		// than a span nobody told us.
+		// A chip, not a sentence: the company and the years it ran, off the
+		// tradeline's own opening and closing dates. An account with neither is the
+		// name alone rather than a span nobody told us.
 		closed = append(closed, advancedAccount{
 			Company: a.Company,
-			Detail:  reportedYearRange(a.PaymentHistory),
+			Detail:  accountYearRange(a.OpenedOn, a.ClosedOn),
 		})
 	}
 	return open, closed
-}
-
-// reportedYearRange renders "2014-22" from the months an account reported, or
-// "" when it reported none.
-func reportedYearRange(history []PaymentMonth) string {
-	first, last := "", ""
-	for _, m := range history {
-		if len(m.Month) < 4 {
-			continue
-		}
-		y := m.Month[:4]
-		if first == "" || y < first {
-			first = y
-		}
-		if last == "" || y > last {
-			last = y
-		}
-	}
-	switch {
-	case first == "":
-		return ""
-	case first == last:
-		return first
-	default:
-		return first + "–" + last[2:]
-	}
 }
 
 func lastFour(accountNumber string) string {

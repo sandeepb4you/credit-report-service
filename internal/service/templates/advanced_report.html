@@ -297,9 +297,10 @@
   <div class="center" style="margin-top:30pt">
     <div class="kicker">{{.ProjectionKicker}}</div>
     <div class="arrowline">
-      {{if .ScoreLine}}<span class="from">{{.ScoreLine}}</span><span class="arr">→</span>{{end}}
+      {{if and .ScoreLine (not .HoldNote)}}<span class="from">{{.ScoreLine}}</span><span class="arr">→</span>{{end}}
       <span class="to">{{.TargetRange}}</span>
     </div>
+    {{if .HoldNote}}<div class="lede" style="margin-top:12pt">{{.HoldNote}}</div>{{end}}
   </div>
   <div class="rows" style="margin-top:34pt">
     {{range .Actions}}

@@ -234,6 +234,14 @@ type ReportInsights struct {
 	Outdated bool `json:"outdated"`
 	// CreatedAt is when the bureau pull ran — what a client shows as "checked on".
 	CreatedAt time.Time `json:"createdAt"`
+	// CreditHistorySince is the day the file starts: the earliest account opening
+	// date on it, open or closed. YYYY-MM-DD, or "" when no tradeline carried one.
+	//
+	// Not derivable from payment history, which is what a caller reaches for when
+	// this is missing — and gets wrong. The bureau reports roughly 36 months per
+	// tradeline, so a file that began in February 2014 reads as beginning in
+	// April 2018, which is what the advanced report printed until this existed.
+	CreditHistorySince string `json:"creditHistorySince,omitempty"`
 	// CreditAgeYears is how long the oldest open account has been open, the same
 	// figure the report card's credit-age factor is graded on. Exposed because
 	// deriving it a second time somewhere else is how one document ends up
@@ -380,6 +388,12 @@ type LoanAccount struct {
 	CurrentBalance        float64        `json:"currentBalance"`
 	OriginalLoanAmount    float64        `json:"originalLoanAmount"`
 	PaymentHistory        []PaymentMonth `json:"paymentHistory"`
+	// OpenedOn and ClosedOn are YYYY-MM-DD, or "" when the bureau did not say.
+	// Both come straight off the tradeline: they are the only truthful source
+	// for how long an account has existed, and the only one that reaches past
+	// the payment history's ~36-month window.
+	OpenedOn string `json:"openedOn,omitempty"`
+	ClosedOn string `json:"closedOn,omitempty"`
 }
 
 // PaymentMonth is one month's payment status in the 36-month history.
@@ -1015,6 +1029,17 @@ func (s *CreditAnalyticsService) accountForPull(
 	return acc, kyc, nil
 }
 
+// isoDateOrEmpty renders an Experian YYYYMMDD as YYYY-MM-DD, or "" when the
+// field is absent or unparseable. Empty rather than a zero date: "not reported"
+// and "1 January year zero" are different things to everything downstream.
+func isoDateOrEmpty(raw string) string {
+	t := parseExperianDate(raw)
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format("2006-01-02")
+}
+
 // buildPayload assembles the Digitap request from the account's profile and KYC
 // record, generating the per-request correlation id, OTP, and timestamp.
 func (s *CreditAnalyticsService) buildPayload(ctx context.Context, accountID int64, deviceIP string) (*digitapPayload, error) {
@@ -1624,7 +1649,11 @@ func buildScoreBuilder(ins *ReportInsights, offerings []models.BankOffering) *Sc
 		sb.TimelineMonthsMin, sb.TimelineMonthsMax = 6, 9
 	default:
 		sb.Journey, sb.Headline = "protect", "Excellent — protect and profit"
-		sb.TargetScoreMin, sb.TargetScoreMax = max(800, score), 900
+		// Target set below, from what this plan's own actions are estimated to
+		// be worth. It used to be `max(800, score), 900` — the BAND, not a
+		// target: a file at 800 was told it could reach "800–900", where 900 is
+		// the top of the scale and every action on this plan is worth zero
+		// points by design, because there is nothing left to fix.
 		// Already at target: the plan is to maintain, so no timeline.
 	}
 
@@ -1658,6 +1687,17 @@ func buildScoreBuilder(ins *ReportInsights, offerings []models.BankOffering) *Sc
 
 	// ---- Strategies (the toolkit) ----
 	sb.Strategies = buildStrategies(ins, sb.Journey, offerings)
+
+	// On the protect journey the target is whatever the toolkit is actually
+	// estimated to add — which is normally nothing, and "nothing" is the honest
+	// answer for a file with no improvable factor left. Equal min and max mean
+	// "hold what you have"; every caller has to read it that way rather than
+	// drawing an arrow from a score to itself.
+	if sb.Journey == "protect" {
+		gainMin, gainMax := estimatedGain(sb.Strategies)
+		sb.TargetScoreMin = min(900, score+gainMin)
+		sb.TargetScoreMax = min(900, score+gainMax)
+	}
 	return sb
 }
 
@@ -1952,9 +1992,14 @@ type caisAccountDetail struct {
 	AccountNumber                 string                 `json:"Account_Number"`
 	SubscriberName                string                 `json:"Subscriber_Name"`
 	OpenDate                      string                 `json:"Open_Date"`
-	HighestCredit                 string                 `json:"Highest_Credit_or_Original_Loan_Amount"`
-	RepaymentTenure               string                 `json:"Repayment_Tenure"`
-	WrittenOffSettledStatus       string                 `json:"Written_off_Settled_Status"`
+	// DateClosed is null on a live account and YYYYMMDD on a closed one. Both
+	// dates matter to anything that describes the FILE rather than the last
+	// three years: payment history is capped at ~36 months per tradeline, so a
+	// report whose oldest account opened in 2014 has no month before 2023 in it.
+	DateClosed              string `json:"Date_Closed"`
+	HighestCredit           string `json:"Highest_Credit_or_Original_Loan_Amount"`
+	RepaymentTenure         string `json:"Repayment_Tenure"`
+	WrittenOffSettledStatus string `json:"Written_off_Settled_Status"`
 }
 
 // caisAccountDetailList tolerates a real Digitap/Experian quirk: CAIS_Account_DETAILS
@@ -2184,6 +2229,8 @@ func parseReportInsights(raw json.RawMessage) (*ReportInsights, error) {
 			CurrentBalance:        roundTo2(balance),
 			OriginalLoanAmount:    roundTo2(originalLoan),
 			PaymentHistory:        history,
+			OpenedOn:              isoDateOrEmpty(acct.OpenDate),
+			ClosedOn:              isoDateOrEmpty(acct.DateClosed),
 		})
 
 		// Track oldest account open date for credit age.
@@ -2253,6 +2300,7 @@ func parseReportInsights(raw json.RawMessage) (*ReportInsights, error) {
 	if !oldestOpenDate.IsZero() {
 		years := time.Since(oldestOpenDate).Hours() / 24 / 365.25
 		insights.CreditAgeYears = &years
+		insights.CreditHistorySince = oldestOpenDate.Format("2006-01-02")
 	}
 
 	// ---- Report card ----
