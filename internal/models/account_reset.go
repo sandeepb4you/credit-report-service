@@ -7,9 +7,13 @@ package models
 // 1 paid order" reads very differently from a bare confirmation dialog, and an
 // admin about to reset the wrong account is most likely to notice it here.
 type AccountResetCounts struct {
-	Reports           int  `json:"reports"`
-	Orders            int  `json:"orders"`
-	PaidOrders        int  `json:"paidOrders"`
+	Reports    int `json:"reports"`
+	Orders     int `json:"orders"`
+	PaidOrders int `json:"paidOrders"`
+	// Prepaid plan runs (scheduled_score_checks), spent and unspent alike. A
+	// reset destroys the rest of a plan somebody paid for, so it is named here
+	// rather than folded into the order count it hangs off.
+	ScheduledChecks   int  `json:"scheduledChecks"`
 	BankStatements    int  `json:"bankStatements"`
 	CouponRedemptions int  `json:"couponRedemptions"`
 	PrefillLookups    int  `json:"prefillLookups"`

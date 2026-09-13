@@ -40,6 +40,7 @@ func signupResetPreview(
 		   (SELECT count(*) FROM credit_analytics_requests WHERE account_id = $1),
 		   (SELECT count(*) FROM orders                    WHERE account_id = $1),
 		   (SELECT count(*) FROM orders                    WHERE account_id = $1 AND status = $2),
+		   (SELECT count(*) FROM scheduled_score_checks    WHERE account_id = $1),
 		   (SELECT count(*) FROM bank_statements           WHERE account_id = $1),
 		   (SELECT count(*) FROM coupon_redemptions        WHERE account_id = $1),
 		   (SELECT count(*) FROM prefill_lookups           WHERE account_id = $1),
@@ -52,7 +53,7 @@ func signupResetPreview(
 		 FROM accounts a WHERE a.id = $1`,
 		accountID, models.OrderPaid,
 	).Scan(
-		&c.Reports, &c.Orders, &c.PaidOrders, &c.BankStatements,
+		&c.Reports, &c.Orders, &c.PaidOrders, &c.ScheduledChecks, &c.BankStatements,
 		&c.CouponRedemptions, &c.PrefillLookups, &c.OTPChallenges, &c.ActiveSessions,
 		&c.HasKYCRecord, &c.HasProfileName, &c.HasDateOfBirth, &c.HasReferralCredit,
 	)
@@ -141,8 +142,16 @@ func (r *AccountRepo) ResetToSignup(
 
 	// Coupon redemptions before orders: the redemption references order_uid, and
 	// clearing it is also what lets the same coupon be tested again.
+	//
+	// Scheduled plan runs before orders for a harder reason: scheduled_score_checks
+	// holds an order_id FK with NO ACTION, so leaving these rows makes the orders
+	// delete fail and takes the whole reset with it. That is not hypothetical — it
+	// is what a reset did to every account that had bought a plan, from the day
+	// migration 0023 added the table until this line existed. Any new table that
+	// references orders or accounts needs a line here too.
 	for _, stmt := range []string{
 		`DELETE FROM coupon_redemptions WHERE account_id = $1`,
+		`DELETE FROM scheduled_score_checks WHERE account_id = $1`,
 		`DELETE FROM payment_webhook_events
 		  WHERE order_uid IN (SELECT order_uid FROM orders WHERE account_id = $1)`,
 		`DELETE FROM orders WHERE account_id = $1`,
