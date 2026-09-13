@@ -8,7 +8,12 @@ import (
 )
 
 // brandName is the product name shown in transactional emails.
-const brandName = "Scorr.club"
+//
+// One constant for every one of them: it is the subject line of both OTP mails, the intro
+// sentence, the word in the header band, the HTML title and the footer, and an email that
+// calls the product something the app on the same phone does not is an email that reads as
+// a phishing attempt.
+const brandName = "myScorr"
 
 // otpKind is the copy that varies between the codes this service mails. The
 // layout is shared; only the words change, so a new flow adds a value here

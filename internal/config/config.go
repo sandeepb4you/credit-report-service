@@ -641,7 +641,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("db.min-idle", 2)
 
 	v.SetDefault("mail.port", 587)
-	v.SetDefault("mail.from", "Scorr.club <noreply@scorr.club>")
+	v.SetDefault("mail.from", "myScorr <noreply@myscorr.com>")
 
 	// Transactional SMS (phone sign-in OTP) via MSG91's v5 Flow API. The
 	// template ID and sender ID are not secrets and are committed so a fresh
