@@ -59,7 +59,7 @@
 
   /* ---- cover ---- */
   .cover .stack { position: absolute; left: 16mm; right: 16mm; top: 34%; text-align: center; }
-  .scoreline { display: flex; align-items: stretch; justify-content: center; gap: 10pt; }
+  .scoreline { display: flex; align-items: baseline; justify-content: center; }
   /* Solid gold rather than a gradient clipped to the glyphs: `background-clip:
      text` prints as a clipped fill, and the clip box shows up as a hairline
      rectangle around the number in some PDF readers. A gradient is not worth a
@@ -68,10 +68,6 @@
     font-size: 96pt; font-weight: 800; letter-spacing: -4pt; line-height: 1;
     color: #F7B733;
   }
-  /* The sample's thin gold rule beside the number. Its own element: a border on
-     the number is a border on a background-clipped box, which draws a rectangle
-     round the whole thing. */
-  .scorerule { width: 1.2pt; background: rgba(245,185,66,.6); }
   .band { margin-top: 12pt; font-size: 11pt; font-weight: 800; letter-spacing: 4pt; color: var(--teal); }
   .colophon {
     position: absolute; left: 16mm; right: 16mm; bottom: 24mm; text-align: center;
@@ -175,7 +171,7 @@
   <div class="stack">
     <div class="kicker amber">Your Experian score</div>
     <div class="scoreline" style="margin-top:18pt">
-      <span class="score">{{.ScoreText}}</span><span class="scorerule"></span>
+      <span class="score">{{.ScoreText}}</span>
     </div>
     <div class="band">{{.Band}}</div>
   </div>
