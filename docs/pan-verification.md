@@ -37,6 +37,28 @@ in someone else's database says nothing about whether this user is honest.
 Blocking there would strand legitimate users on the first screen after signup,
 with nothing they could do about it.
 
+### How the name is compared
+
+`nameMatches` tolerates the ordinary noise between a typed name and a bureau
+record: case, punctuation, spacing, up to `name-match-distance` edits (default
+2), a reordering, and a dropped middle name.
+
+When the whole name does not match, the submitted **first name** and then the
+submitted **surname** are each retried alone. That exists for a provider record
+holding one name — a mononym, or a record carrying only the given name — which
+the whole-name comparison cannot reach: "RAVI KUMAR" is further than the edit
+distance from "RAVI", and the subset rule needs two words on the shorter side.
+
+The retry does not loosen the multi-word case: "RAHUL SHARMA" against "RAHUL
+MEHTA" still fails, because "RAHUL" alone is no closer to "RAHUL MEHTA" than the
+full name was. Only records holding a single name are reached.
+
+A single-name record still verifies with **no surname to fill**, so the profile
+stays incomplete and `POST /credit-analytics/request` refuses the pull for a
+missing `last_name` until the app collects one. The app checks for this at its
+score gate and asks for the name; if that check is ever removed, the account is
+stuck with a verified PAN it cannot use.
+
 The attempt cap (`registration.pan.max-verification-attempts`, default 3) exists
 because PAN-plus-name is guessable for a known person, so an uncapped retry loop
 is a brute-force oracle billed to us per call. Submitting a **different** PAN

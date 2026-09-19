@@ -244,15 +244,56 @@ func panMatches(submitted, provider string) bool {
 	return visible >= 6
 }
 
-// nameMatches compares the submitted full name with the provider's, tolerating
-// the ordinary noise between how a person types their name and how a bureau
-// records it: case, punctuation, extra spaces, and up to maxDistance edits.
+// nameMatches compares the submitted full name with the provider's.
+//
+// The whole name is tried first. When that fails, the submitted FIRST name and
+// then the submitted SURNAME are each retried on their own, and either one
+// matching is a match.
+//
+// The retry is there for a provider record holding a single name -- a true
+// mononym, or a record that carries only the given name. The whole-name
+// comparison cannot reach those at all: "RAVI KUMAR" is further than
+// maxDistance from "RAVI", and the subset rule in nameMatchesWhole wants two
+// words on the shorter side before it will read a partial overlap as a match.
+// Records like that are not rare here, and each one failed a signup whose PAN
+// was correct -- then, because verification fills the profile from the
+// provider's one word, left the surname empty and stranded the account short of
+// a credit report it had already paid for.
+//
+// Note what this deliberately does NOT loosen. Retrying one name is not the
+// same as lowering the subset threshold: "RAHUL SHARMA" against "RAHUL MEHTA"
+// still fails, because "RAHUL" on its own is no closer to "RAHUL MEHTA" than the
+// full name was. The relaxation reaches exactly the records that hold one name
+// and nothing else, which is why it is written as a narrower retry rather than a
+// weaker rule.
+//
+// The PAN carries the weight in any case: it must match the one the provider
+// holds against this mobile number (see panMatches), and the name corroborates
+// that binding rather than establishing it alone.
+func nameMatches(submitted, provider string, maxDistance int) bool {
+	if nameMatchesWhole(submitted, provider, maxDistance) {
+		return true
+	}
+	// Split the NORMALIZED name, so punctuation ("R. K. SHARMA") divides the
+	// same way the comparison itself sees it.
+	parts := strings.Fields(normalizeName(submitted))
+	if len(parts) < 2 {
+		// One word submitted: the retries would repeat the comparison just made.
+		return false
+	}
+	return nameMatchesWhole(parts[0], provider, maxDistance) ||
+		nameMatchesWhole(parts[len(parts)-1], provider, maxDistance)
+}
+
+// nameMatchesWhole compares two names as wholes, tolerating the ordinary noise
+// between how a person types a name and how a bureau records it: case,
+// punctuation, extra spaces, and up to maxDistance edits.
 //
 // It also accepts a reordering (GOPAL RAMESH KUMAR vs KUMAR GOPAL RAMESH) and a
 // subset (a missing middle name), both of which are common enough in Indian
 // records that rejecting them would fail real users at signup. normalizeName
 // and levenshtein are shared with the OCR validator in pan_validator.go.
-func nameMatches(submitted, provider string, maxDistance int) bool {
+func nameMatchesWhole(submitted, provider string, maxDistance int) bool {
 	a := normalizeName(submitted)
 	b := normalizeName(provider)
 	if a == "" || b == "" {

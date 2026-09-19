@@ -59,6 +59,16 @@ func TestNameMatches(t *testing.T) {
 		{"dropped middle name", "RAHUL KUMAR SHARMA", "RAHUL SHARMA", true},
 		{"extra middle name", "RAHUL SHARMA", "RAHUL KUMAR SHARMA", true},
 
+		// A provider record carrying a single word: a true mononym, or a record
+		// that holds only the given name. The whole-name comparison cannot reach
+		// these -- "RAVI KUMAR" is two edits too far from "RAVI" and the subset
+		// rule needs two words on the shorter side -- so the single-name retry is
+		// what decides them. This is the case that stranded a real signup.
+		{"provider holds the first name only", "RAVI KUMAR", "RAVI", true},
+		{"provider holds the surname only", "RAVI KUMAR", "KUMAR", true},
+		{"provider mononym with a typo inside the distance", "RAVI KUMAR", "RAVII", true},
+		{"provider mononym agreeing with neither name", "RAVI KUMAR", "PRIYA", false},
+
 		{"different person", "RAHUL SHARMA", "PRIYA MEHTA", false},
 		{"shared first name only", "RAHUL SHARMA", "RAHUL MEHTA", false},
 		{"shared surname only", "RAHUL SHARMA", "PRIYA SHARMA", false},
