@@ -155,6 +155,16 @@ func (r *AccountRepo) ResetToSignup(
 		`DELETE FROM payment_webhook_events
 		  WHERE order_uid IN (SELECT order_uid FROM orders WHERE account_id = $1)`,
 		`DELETE FROM orders WHERE account_id = $1`,
+		// Referral money goes with the account: its own withdrawal queue and
+		// payout destination, credits it earned off others, and the credit
+		// someone else earned off its (now deleted) first purchase. The last
+		// of the three is why both columns are matched — deleting only the
+		// referrer side would leave money behind from a purchase that no
+		// longer exists.
+		`DELETE FROM referral_withdrawals WHERE account_id = $1`,
+		`DELETE FROM payout_bank_accounts WHERE account_id = $1`,
+		`DELETE FROM referral_earnings
+		  WHERE referrer_account_id = $1 OR referred_account_id = $1`,
 		`DELETE FROM kyc_records WHERE account_id = $1`,
 		`DELETE FROM prefill_lookups WHERE account_id = $1`,
 		`DELETE FROM bank_statements WHERE account_id = $1`,

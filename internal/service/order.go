@@ -45,6 +45,16 @@ type OrderService struct {
 	// scheduleLoc is the business day boundary for due dates (see
 	// config.ScheduledChecksConfig.Timezone).
 	scheduleLoc *time.Location
+	// earnings credits the referrer when a referred account's first order is
+	// paid. Interface (not *EarningsService) so tests that never buy can pass
+	// nil; fulfilment guards it.
+	earnings earningsCrediter
+}
+
+// earningsCrediter is the one OrderService method the referral-money feature
+// needs: credit whoever referred this buyer, once, on their first purchase.
+type earningsCrediter interface {
+	CreditForFirstPurchase(ctx context.Context, buyerAccountID int64, orderUID string) (bool, error)
 }
 
 func NewOrderService(
@@ -55,10 +65,11 @@ func NewOrderService(
 	cfg config.CashfreeConfig,
 	scheduled *repository.ScheduledCheckRepo,
 	scheduleLoc *time.Location,
+	earnings earningsCrediter,
 ) *OrderService {
 	return &OrderService{
 		orders: orders, accounts: accounts, coupons: coupons, gateway: gateway, cfg: cfg,
-		scheduled: scheduled, scheduleLoc: scheduleLoc,
+		scheduled: scheduled, scheduleLoc: scheduleLoc, earnings: earnings,
 	}
 }
 
@@ -534,6 +545,18 @@ func (s *OrderService) applyWebhook(ctx context.Context, env *webhookEnvelope) e
 func (s *OrderService) fulfillOrder(ctx context.Context, order *models.Order) {
 	log.Printf("[order] fulfilled %s: account %d purchased %s",
 		order.OrderUID, order.AccountID, order.ProductCode)
+
+	// Referral credit first, before the plan early-return below: it fires on
+	// the FIRST paid order of ANY product, not just plans. Best-effort like
+	// the schedule mint — the payment has happened, so a credit failure is
+	// logged loudly and retried on the next webhook/reconcile pass (the
+	// UNIQUE on referred_account_id makes repeats no-ops).
+	if s.earnings != nil {
+		if _, err := s.earnings.CreditForFirstPurchase(ctx, order.AccountID, order.OrderUID); err != nil {
+			slog.Error("referral credit failed; will retry on next fulfilment pass",
+				"order_uid", order.OrderUID, "account_id", order.AccountID, "error", err)
+		}
+	}
 
 	product, err := s.orders.FindProduct(ctx, order.ProductCode)
 	if err != nil {

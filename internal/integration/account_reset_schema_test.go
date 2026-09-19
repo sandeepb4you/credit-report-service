@@ -21,6 +21,9 @@ var resetClears = map[string]bool{
 	"bank_statements":           true,
 	"otp_challenges":            true,
 	"password_reset_tokens":     true,
+	"referral_earnings":         true,
+	"referral_withdrawals":      true,
+	"payout_bank_accounts":      true,
 }
 
 // TestAccountResetCoversEveryBlockingForeignKey is the test for the *class* of

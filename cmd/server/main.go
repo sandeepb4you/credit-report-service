@@ -213,8 +213,13 @@ func main() {
 		cfg.Registration.PAN,
 		cfg.Demo.Enabled,
 	)
+	// Referral money: credits whoever referred a buyer on their first paid
+	// order (hooked into fulfilment below), serves the user's dashboard, and
+	// runs the manual-payout queue. Stateless, so one instance serves both.
+	earningsSvc := service.NewEarningsService(
+		repository.NewEarningsRepo(pool), accountRepo, orderRepo, couponSvc)
 	orderSvc := service.NewOrderService(orderRepo, accountRepo, couponSvc, gateway, cfg.Cashfree,
-		scheduledRepo, scheduleLoc)
+		scheduledRepo, scheduleLoc, earningsSvc)
 	loanSwitchSvc := service.NewLoanSwitchService(loanRepo, analyticsRepo)
 	// Enrich analytics insights with interest-reduction opportunities so a single
 	// analytics call surfaces both levers: raise the score and cut interest.
@@ -337,6 +342,7 @@ func main() {
 	// own repo rather than borrowing the coupon service that mints the codes.
 	adminReferralH := handler.NewAdminReferralHandler(
 		service.NewReferralService(repository.NewReferralRepo(pool), accountRepo))
+	earningsH := handler.NewEarningsHandler(earningsSvc)
 	// Statement handler gets the per-upload size cap and the optional webhook
 	// shared-secret so it can reject oversized PDFs and unauthenticated callbacks.
 	bankStmtH := handler.NewBankStatementHandler(
@@ -368,7 +374,7 @@ func main() {
 	)
 
 	app := server.New(cfg, healthH, authH, analyticsH, kycH, orderH, couponH, loanH, scoreBuilderH, bankStmtH,
-		adminAccountH, adminReferralH, tokenSvc, accountRepo)
+		adminAccountH, adminReferralH, earningsH, tokenSvc, accountRepo)
 
 	go func() {
 		addr := ":" + itoa(cfg.Server.Port)

@@ -45,6 +45,7 @@ func New(
 	bankStmt *handler.BankStatementHandler,
 	adminAccounts *handler.AdminAccountHandler,
 	adminReferrals *handler.AdminReferralHandler,
+	earnings *handler.EarningsHandler,
 	tokens *service.TokenService,
 	// epochs backs the stale-token check on the permission gates; see
 	// middleware.checkEpoch.
@@ -244,6 +245,20 @@ func New(
 	cp.Get("/", middleware.RequirePermission(tokens, epochs, models.PermCouponManage), coupons.ListCoupons)
 	cp.Delete("/:code", middleware.RequirePermission(tokens, epochs, models.PermCouponManage), coupons.RevokeCoupon)
 
+	// ---- Referral earnings (user dashboard + manual-payout queue) ---------
+	//
+	// Attribution lives in the coupons group above; money lives here. Reads
+	// are the caller's own rows (masked where they name someone else), so
+	// plain RequireAuth. The payout itself is manual — a request goes PENDING
+	// and an admin marks it PAID after paying off-app.
+	rf := api.Group("/referrals", requireAuth)
+	rf.Get("/summary", earnings.Summary)
+	rf.Get("/mine", earnings.MyReferrals)
+	rf.Get("/bank-account", earnings.GetBank)
+	rf.Put("/bank-account", earnings.SaveBank)
+	rf.Get("/withdrawals", earnings.MyWithdrawals)
+	rf.Post("/withdrawals", earnings.RequestWithdrawal)
+
 	// ---- Credit analytics (Digitap proxy) -------------------------------
 	ca := api.Group("/credit-analytics", requireAuth)
 	ca.Post("/request", analytics.Request)
@@ -360,6 +375,31 @@ func New(
 	admin.Get("/referrals",
 		middleware.RequirePermission(tokens, epochs, models.PermReferralView),
 		adminReferrals.Report)
+
+	// The manual-payout queue carries every requester's full bank destination,
+	// so it is gated on its own permission rather than on kyc:verify or
+	// referral:view — verifying PANs, reading the referral graph and moving
+	// money are different jobs even when one person does all three.
+	admin.Get("/withdrawals",
+		middleware.RequirePermission(tokens, epochs, models.PermWithdrawalReview),
+		earnings.ReviewQueue)
+	admin.Post("/withdrawals/:id<int>/pay",
+		middleware.RequirePermission(tokens, epochs, models.PermWithdrawalReview),
+		earnings.MarkPaid)
+	admin.Post("/withdrawals/:id<int>/reject",
+		middleware.RequirePermission(tokens, epochs, models.PermWithdrawalReview),
+		earnings.Reject)
+
+	// The programme's economics — reward per conversion, minimum withdrawal.
+	// Priced under its own permission: changing what the programme promises is
+	// a different job from working the payout queue. PUT takes either or both
+	// fields; an omitted one is left alone.
+	admin.Get("/referral-settings",
+		middleware.RequirePermission(tokens, epochs, models.PermReferralManage),
+		earnings.GetSettings)
+	admin.Put("/referral-settings",
+		middleware.RequirePermission(tokens, epochs, models.PermReferralManage),
+		earnings.UpdateSettings)
 
 	return app
 }

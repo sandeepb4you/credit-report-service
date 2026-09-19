@@ -43,6 +43,16 @@ const (
 	PermBankOfferingManage = "bank-offering:manage" // curate score-builder bank offerings
 	PermPlanManage         = "plan:manage"          // price and retire the purchasable plans
 	PermReferralView       = "referral:view"        // read the referral graph across accounts
+	// Review the manual-payout queue: see every pending withdrawal with the
+	// full bank destination, and mark requests paid or rejected. Own
+	// permission rather than referral:view — reviewing PANs, reading the
+	// referral graph and moving money are three different jobs even when one
+	// person does all three.
+	PermWithdrawalReview = "withdrawal:review"
+	// Reprice the referral programme (reward per conversion, minimum
+	// withdrawal). Pricing, not payouts: changing what the programme promises
+	// is a different job from working the payout queue.
+	PermReferralManage = "referral:manage"
 )
 
 // rolePerms lists the permissions each role adds on top of the role beneath
@@ -67,6 +77,8 @@ var rolePerms = map[string][]string{
 		// user, and an agent seeing their own recruits would still be reading
 		// other agents' rows out of the same query.
 		PermReferralView,
+		PermWithdrawalReview,
+		PermReferralManage,
 	},
 }
 

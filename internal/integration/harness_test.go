@@ -263,9 +263,11 @@ func buildApp(cfg *config.Config, pool *pgxpool.Pool) *fiber.App {
 	// Orders are wired with the stub gateway (fabricated sessions, every webhook
 	// signature verifies) so the plan-purchase tests can walk the REAL
 	// buy → webhook → fulfilment → scheduled-checks mint path.
+	earningsSvc := service.NewEarningsService(
+		repository.NewEarningsRepo(pool), accountRepo, orderRepo, couponSvc)
 	orderSvc := service.NewOrderService(orderRepo, accountRepo, couponSvc,
 		payments.NewStubGateway("sandbox"), cfg.Cashfree,
-		scheduledRepo, cfg.ScheduledChecks.Location())
+		scheduledRepo, cfg.ScheduledChecks.Location(), earningsSvc)
 
 	return server.New(
 		cfg,
@@ -284,6 +286,7 @@ func buildApp(cfg *config.Config, pool *pgxpool.Pool) *fiber.App {
 		// key introduces. A nil here is why a plan purchase could break it unseen.
 		handler.NewAdminAccountHandler(service.NewAccountResetService(accountRepo)),
 		referralH,
+		handler.NewEarningsHandler(earningsSvc),
 		tokenSvc,
 		accountRepo,
 	)
