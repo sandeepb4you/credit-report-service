@@ -53,6 +53,12 @@ const (
 	// withdrawal). Pricing, not payouts: changing what the programme promises
 	// is a different job from working the payout queue.
 	PermReferralManage = "referral:manage"
+	// Read the operator's customer list: every account with its contact
+	// details, latest score, whether it has paid and what it has referred.
+	// Own permission rather than kyc:verify, for referral:view's reason —
+	// reviewing one PAN at a time is a different job from reading the whole
+	// customer book, and this one carries unmasked phone numbers.
+	PermAccountView = "account:view"
 )
 
 // rolePerms lists the permissions each role adds on top of the role beneath
@@ -79,6 +85,7 @@ var rolePerms = map[string][]string{
 		PermReferralView,
 		PermWithdrawalReview,
 		PermReferralManage,
+		PermAccountView,
 	},
 }
 

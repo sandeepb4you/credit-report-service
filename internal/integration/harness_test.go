@@ -284,7 +284,9 @@ func buildApp(cfg *config.Config, pool *pgxpool.Pool) *fiber.App {
 		// Wired with the real service: a reset deletes across a dozen tables in one
 		// transaction, and the failures worth catching are the ones a new foreign
 		// key introduces. A nil here is why a plan purchase could break it unseen.
-		handler.NewAdminAccountHandler(service.NewAccountResetService(accountRepo)),
+		handler.NewAdminAccountHandler(
+			service.NewAccountResetService(accountRepo),
+			service.NewAdminAccountsService(accountRepo)),
 		referralH,
 		handler.NewEarningsHandler(earningsSvc),
 		tokenSvc,

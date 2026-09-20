@@ -11,6 +11,10 @@ const (
 	AccountPending   = "PENDING" // created, no verified contact yet
 	AccountActive    = "ACTIVE"  // has at least one verified identity
 	AccountSuspended = "SUSPENDED"
+	// AccountInactive is never stored. It is a filter value meaning "any
+	// status other than ACTIVE", so the admin console's two-way split stays
+	// exhaustive as statuses are added.
+	AccountInactive = "INACTIVE"
 )
 
 // Auth identity providers.

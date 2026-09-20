@@ -369,6 +369,17 @@ func New(
 		middleware.RequirePermission(tokens, epochs, models.PermAccountReset),
 		adminAccounts.ResetAccount)
 
+	// The customer list reads across every account and carries unmasked
+	// contact details, so it takes its own permission for referral:view's
+	// reason rather than riding on the reset's. Registered after the literal
+	// /accounts/lookup above, which Fiber would otherwise never reach.
+	admin.Get("/accounts",
+		middleware.RequirePermission(tokens, epochs, models.PermAccountView),
+		adminAccounts.ListAccounts)
+	admin.Get("/accounts/:accountId<int>/detail",
+		middleware.RequirePermission(tokens, epochs, models.PermAccountView),
+		adminAccounts.AccountDetail)
+
 	// The referral report reads across every account, so it is gated on its own
 	// permission rather than on kyc:verify -- reviewing PANs and reading the
 	// whole referral graph are different jobs even when one person does both.
