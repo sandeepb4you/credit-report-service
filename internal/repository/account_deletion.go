@@ -21,8 +21,8 @@ import (
 //
 // What survives a purge, and why:
 //
-//	orders, payment_webhook_events   the financial record. Indian bookkeeping
-//	                                 and tax rules require it to outlive the
+//	orders, payment_webhook_events,  the financial record. Indian bookkeeping
+//	invoices                         and tax rules require it to outlive the
 //	                                 customer, and a payment later disputed
 //	                                 with Cashfree has to be answerable.
 //	referral_earnings                money. An earning credited to SOMEBODY
@@ -36,11 +36,12 @@ import (
 //
 // Pointing at nobody is half of it; the rows must also SAY nothing. The
 // webhook payload is rebuilt from an allowlist (Cashfree echoes the customer's
-// name, phone and email back in it), and a withdrawal's holder name is
-// replaced. Those two scrubs are what make the privacy policy's
-// "kept with your name, number and email removed" true — change what is
-// retained and that sentence, on myscorr.com/privacy-policy#retention and
-// /delete-account and in the app's DeleteAccountScreen, changes with it.
+// name, phone and email back in it), an invoice loses its billed-to columns and
+// its rendered PDF, and a withdrawal's holder name is replaced. Those scrubs
+// are what make the privacy policy's "kept with your name, number and email
+// removed" true — change what is retained and that sentence, on
+// myscorr.com/privacy-policy#retention and /delete-account and in the app's
+// DeleteAccountScreen, changes with it.
 //
 // Everything else goes, including every auth_identities row — that is what
 // makes the account unreachable. A phone account keeps its login in
@@ -391,6 +392,49 @@ func (r *AccountRepo) PurgeAccount(
 		return nil, err
 	}
 	res.WebhookEventsScrubbed = int(tag.RowsAffected())
+
+	// Invoices are kept for the same reason as the orders they bill (they ARE
+	// the tax record, and their numbers are a series that must not develop
+	// holes) and scrubbed for the same reason as the webhook log: the billed-to
+	// columns name the person. Nothing rule 46 needs for a B2C supply under
+	// Rs 50,000 is in them. The rendered PDF prints those same details, so it
+	// is deleted with the other objects, and pdf_uri cleared: re-rendering the
+	// scrubbed row is what an auditor's copy looks like from now on. A mail
+	// still waiting to go out is cancelled; there is nobody to send it to.
+	pdfRows, err := tx.Query(ctx,
+		`SELECT pdf_uri FROM invoices WHERE account_id = $1 AND pdf_uri IS NOT NULL`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	for pdfRows.Next() {
+		var uri string
+		if err := pdfRows.Scan(&uri); err != nil {
+			pdfRows.Close()
+			return nil, err
+		}
+		res.ObjectURIs = append(res.ObjectURIs, uri)
+	}
+	pdfRows.Close()
+	if err := pdfRows.Err(); err != nil {
+		return nil, err
+	}
+	tag, err = tx.Exec(ctx,
+		`UPDATE invoices SET billed_to_name = NULL, billed_to_email = NULL, billed_to_phone = NULL,
+		        pdf_uri = NULL, next_attempt_at = NULL,
+		        auto_email = CASE WHEN auto_email = 'PENDING' THEN 'CANCELLED' ELSE auto_email END,
+		        updated_at = now()
+		  WHERE account_id = $1`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	res.InvoicesScrubbed = int(tag.RowsAffected())
+	// The send log holds only digests of addresses, but a digest of a known
+	// address is still that address to anyone holding it. It exists to count,
+	// and there is nothing left to count for.
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM invoice_email_sends WHERE account_id = $1`, accountID); err != nil {
+		return nil, err
+	}
 
 	// A withdrawal not yet paid cannot be paid any more — the payout bank
 	// account it named was deleted above. Rejected with a reason, the same

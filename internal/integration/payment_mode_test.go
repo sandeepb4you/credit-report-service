@@ -64,6 +64,10 @@ func (g *modeGateway) GetOrder(_ context.Context, orderID string) (*payments.Ord
 	return &payments.OrderResult{CFOrderID: "cf-" + orderID, Status: status}, nil
 }
 
+func (g *modeGateway) GetPayment(_ context.Context, orderID string) (*payments.PaymentDetails, error) {
+	return &payments.PaymentDetails{CFPaymentID: "pay-" + orderID, Group: "upi", BankReference: "UTR" + g.mode}, nil
+}
+
 func (g *modeGateway) VerifyWebhookSignature(_ string, _ []byte, signature string) bool {
 	return signature == g.signature()
 }

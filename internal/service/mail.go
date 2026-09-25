@@ -36,6 +36,8 @@ type MailService struct {
 	cfg         config.MailConfig
 	dialer      *mail.Dialer
 	otpValidity time.Duration
+	// invoiceFrom overrides cfg.From for invoice mail only; see SetInvoiceFrom.
+	invoiceFrom string
 }
 
 // NewMailService builds the SMTP mailer. otpValidity is the OTP time-to-live,

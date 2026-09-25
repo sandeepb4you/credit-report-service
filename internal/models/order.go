@@ -121,7 +121,22 @@ type Order struct {
 
 	CreatedAt time.Time `json:"createdAt" db:"created_at"`
 	UpdatedAt time.Time `json:"updatedAt" db:"updated_at"`
+
+	// Invoice and Entitlement are filled by OrderService for the orders API,
+	// never read from the orders table.
+	Invoice *InvoiceSummary `json:"invoice,omitempty" db:"-"`
+	// Entitlement is what a PAID order still gives: UNUSED / USED for a
+	// one-time check (consumed_at), ACTIVE / ENDED for a plan (runs left).
+	Entitlement string `json:"entitlement,omitempty" db:"-"`
 }
+
+// Entitlement states of a paid order (Order.Entitlement).
+const (
+	EntitlementUnused = "UNUSED"
+	EntitlementUsed   = "USED"
+	EntitlementActive = "ACTIVE"
+	EntitlementEnded  = "ENDED"
+)
 
 // PaymentWebhookEvent is the row model for payment_webhook_events: a verbatim
 // record of each received gateway webhook, keyed for idempotency.

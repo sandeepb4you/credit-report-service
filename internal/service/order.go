@@ -56,6 +56,18 @@ type OrderService struct {
 	// paid. Interface (not *EarningsService) so tests that never buy can pass
 	// nil; fulfilment guards it.
 	earnings earningsCrediter
+	// invoices issues the tax invoice at fulfilment and describes it on the
+	// orders API. Optional like earnings: nil means no invoicing (tests that
+	// never look at one), and every use guards it.
+	invoices invoiceIssuer
+}
+
+// invoiceIssuer is what OrderService needs from InvoiceService.
+type invoiceIssuer interface {
+	Issue(ctx context.Context, order *models.Order, product *models.Product,
+		pd *payments.PaymentDetails) (*models.Invoice, error)
+	Summaries(ctx context.Context, accountID int64) (map[int64]*models.InvoiceSummary, error)
+	SummaryForOrder(ctx context.Context, orderID int64) *models.InvoiceSummary
 }
 
 // earningsCrediter is the one OrderService method the referral-money feature
@@ -78,6 +90,20 @@ func NewOrderService(
 		orders: orders, accounts: accounts, coupons: coupons, gateway: gateway, cfg: cfg,
 		scheduled: scheduled, scheduleLoc: scheduleLoc, earnings: earnings,
 	}
+}
+
+// SetInvoices wires invoicing into fulfilment and the orders API.
+func (s *OrderService) SetInvoices(inv invoiceIssuer) { s.invoices = inv }
+
+// PaymentDetails reads the successful payment on an order from the Cashfree
+// environment that took it: the invoice's payment lines. Implements the
+// invoice service's paymentLookup.
+func (s *OrderService) PaymentDetails(ctx context.Context, order *models.Order) (*payments.PaymentDetails, error) {
+	gateway := s.gatewayFor(order.PaymentMode)
+	if gateway == nil {
+		return nil, fmt.Errorf("no %q gateway configured for order %s", order.PaymentMode, order.OrderUID)
+	}
+	return gateway.GetPayment(ctx, order.OrderUID)
 }
 
 // SetTestPayments wires the sandbox gateway that internal builds pay through,
@@ -398,10 +424,17 @@ func (s *OrderService) GetOrder(ctx context.Context, accountID int64, orderUID s
 			log.Printf("[order] reconcile %s: %v", order.OrderUID, err)
 			return order, nil
 		}
-		return s.findOwnedOrder(ctx, accountID, orderUID)
-	}
-	if order.Status == models.OrderPaid {
+		order, err = s.findOwnedOrder(ctx, accountID, orderUID)
+		if err != nil {
+			return nil, err
+		}
+	} else if order.Status == models.OrderPaid {
 		s.ensurePlanFulfilled(ctx, order)
+	}
+	// The payment-success screen reads the invoice number off this response,
+	// so it is attached here too, not only on the list.
+	if order.Status == models.OrderPaid && s.invoices != nil {
+		order.Invoice = s.invoices.SummaryForOrder(ctx, order.ID)
 	}
 	return order, nil
 }
@@ -425,12 +458,67 @@ func (s *OrderService) ensurePlanFulfilled(ctx context.Context, order *models.Or
 	}
 	slog.Warn("plan fulfilment self-heal: PAID plan order had no scheduled checks; minting now",
 		"order_uid", order.OrderUID, "account_id", order.AccountID)
-	s.fulfillOrder(ctx, order)
+	s.fulfillOrder(ctx, order, nil)
 }
 
-// ListOrders returns the caller's order history, newest first.
+// ListOrders returns the caller's order history, newest first, each paid order
+// carrying its invoice summary and what it still entitles the account to.
+//
+// Both enrichments are best-effort: My Purchases without chips or invoice
+// numbers is still a correct list of purchases, and failing the whole history
+// because a side query did not answer would not be.
 func (s *OrderService) ListOrders(ctx context.Context, accountID int64) ([]models.Order, error) {
-	return s.orders.ListOrdersByAccount(ctx, accountID)
+	list, err := s.orders.ListOrdersByAccount(ctx, accountID)
+	if err != nil || len(list) == 0 {
+		return list, err
+	}
+	var invoices map[int64]*models.InvoiceSummary
+	if s.invoices != nil {
+		if invoices, err = s.invoices.Summaries(ctx, accountID); err != nil {
+			slog.Warn("orders: invoice summaries unavailable", "account_id", accountID, "error", err)
+		}
+	}
+	products := map[string]*models.Product{}
+	if all, err := s.orders.ListAllProducts(ctx); err == nil {
+		for i := range all {
+			products[all[i].Code] = &all[i]
+		}
+	}
+	remaining, err := s.scheduled.RemainingByOrder(ctx, accountID)
+	if err != nil {
+		slog.Warn("orders: plan runs unavailable", "account_id", accountID, "error", err)
+	}
+	for i := range list {
+		o := &list[i]
+		if o.Status != models.OrderPaid {
+			continue
+		}
+		o.Invoice = invoices[o.ID]
+		o.Entitlement = entitlementOf(o, products[o.ProductCode], remaining)
+	}
+	return list, nil
+}
+
+// entitlementOf is what a paid order still gives. Empty when it cannot be told
+// (a product the catalog no longer lists, or the plan-run query failed): the
+// app then draws no chip, rather than a wrong one.
+func entitlementOf(o *models.Order, p *models.Product, remaining map[int64]int) string {
+	if p == nil {
+		return ""
+	}
+	if p.IsPlan() {
+		if remaining == nil {
+			return ""
+		}
+		if remaining[o.ID] > 0 {
+			return models.EntitlementActive
+		}
+		return models.EntitlementEnded
+	}
+	if o.ConsumedAt != nil {
+		return models.EntitlementUsed
+	}
+	return models.EntitlementUnused
 }
 
 func (s *OrderService) findOwnedOrder(ctx context.Context, accountID int64, orderUID string) (*models.Order, error) {
@@ -466,7 +554,17 @@ func (s *OrderService) reconcile(ctx context.Context, order *models.Order) error
 			return err
 		}
 		if first {
-			s.fulfillOrder(ctx, order)
+			// The order endpoint carries no payment record, so the invoice's
+			// payment lines are read now while the gateway is in hand. Bounded
+			// and best-effort: the app is waiting on this call, and an invoice
+			// issued without them reads them again at first render.
+			var pd *payments.PaymentDetails
+			if s.invoices != nil {
+				pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				pd, _ = gateway.GetPayment(pctx, order.OrderUID)
+				cancel()
+			}
+			s.fulfillOrder(ctx, order, pd)
 		}
 	case models.OrderExpired, models.OrderTerminated:
 		if err := s.orders.UpdateOrderStatus(ctx, order.OrderUID, res.Status, nil); err != nil {
@@ -531,7 +629,17 @@ func (s *OrderService) ProcessWebhook(ctx context.Context, timestamp, signature,
 		return err
 	}
 
-	if err := s.applyWebhook(ctx, &env, mode); err != nil {
+	// The payment object again, whole, for the invoice's payment lines: the
+	// envelope above reads only the fields settlement needs.
+	var raw struct {
+		Data struct {
+			Payment json.RawMessage `json:"payment"`
+		} `json:"data"`
+	}
+	_ = json.Unmarshal(body, &raw)
+	pd := payments.DetailsFromWebhook(raw.Data.Payment)
+
+	if err := s.applyWebhook(ctx, &env, mode, pd); err != nil {
 		// Leave processed=false; Cashfree's retry (new idempotency key) or the
 		// GetOrder reconciliation path will settle the order.
 		return err
@@ -554,7 +662,9 @@ func (s *OrderService) verifyWebhook(timestamp string, body []byte, signature st
 	return "", false
 }
 
-func (s *OrderService) applyWebhook(ctx context.Context, env *webhookEnvelope, mode string) error {
+func (s *OrderService) applyWebhook(
+	ctx context.Context, env *webhookEnvelope, mode string, pd *payments.PaymentDetails,
+) error {
 	orderUID := env.Data.Order.OrderID
 	if orderUID == "" {
 		log.Printf("[order] webhook %s without order_id; ignoring", env.Type)
@@ -590,7 +700,7 @@ func (s *OrderService) applyWebhook(ctx context.Context, env *webhookEnvelope, m
 			return err
 		}
 		if first {
-			s.fulfillOrder(ctx, order)
+			s.fulfillOrder(ctx, order, pd)
 		}
 	case webhookPaymentFailed:
 		if err := s.orders.UpdateOrderStatus(ctx, orderUID, models.OrderFailed,
@@ -636,7 +746,7 @@ func (s *OrderService) applyWebhook(ctx context.Context, env *webhookEnvelope, m
 //
 // MarkOrderPaid stamps fulfilled_at on the same transition, recording when the
 // entitlement was granted; consumed_at records when it was spent.
-func (s *OrderService) fulfillOrder(ctx context.Context, order *models.Order) {
+func (s *OrderService) fulfillOrder(ctx context.Context, order *models.Order, pd *payments.PaymentDetails) {
 	log.Printf("[order] fulfilled %s: account %d purchased %s",
 		order.OrderUID, order.AccountID, order.ProductCode)
 
@@ -658,6 +768,19 @@ func (s *OrderService) fulfillOrder(ctx context.Context, order *models.Order) {
 			"order_uid", order.OrderUID, "product_code", order.ProductCode, "error", err)
 		return
 	}
+
+	// The tax invoice, for every product. Best-effort in the same way as the
+	// two grants around it (the money has moved whatever happens here), and
+	// Issue is idempotent on the order, so a re-entry returns the invoice
+	// already issued. What issue cannot do quickly (render, mail) it hands to
+	// the delivery worker; a failure here is picked up by that worker's heal.
+	if s.invoices != nil {
+		if _, err := s.invoices.Issue(ctx, order, product, pd); err != nil {
+			slog.Error("invoice issue failed at fulfilment; the deliverer's heal will retry",
+				"order_uid", order.OrderUID, "account_id", order.AccountID, "error", err)
+		}
+	}
+
 	if !product.IsPlan() {
 		return
 	}

@@ -169,6 +169,7 @@ func (s *AccountDeletionSweeper) purgeOne(ctx context.Context, requestID, accoun
 		"had_kyc_record", res.HadKYCRecord,
 		"retained_orders", res.RetainedOrders,
 		"webhook_events_scrubbed", res.WebhookEventsScrubbed,
+		"invoices_scrubbed", res.InvoicesScrubbed,
 		"withdrawals_redacted", res.WithdrawalsRedacted,
 		"pending_withdrawals_cancelled", res.PendingWithdrawalsCancelled,
 		"referral_codes_revoked", res.ReferralCodesRevoked,

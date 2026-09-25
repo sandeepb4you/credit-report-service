@@ -271,6 +271,8 @@ func New(
 	o.Post("/", orders.Create)
 	o.Get("/", orders.List)
 	o.Get("/:orderId", orders.Get)
+	o.Get("/:orderId/invoice", orders.Invoice)
+	o.Post("/:orderId/invoice/email", orders.EmailInvoice)
 
 	// ---- Coupons ---------------------------------------------------------
 	//

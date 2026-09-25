@@ -38,4 +38,11 @@ func (s *StubGateway) GetOrder(_ context.Context, orderID string) (*OrderResult,
 	}, nil
 }
 
+// GetPayment fabricates a UPI payment, so a local run's invoice has payment
+// lines to render. The reference is obviously not a UTR.
+func (s *StubGateway) GetPayment(_ context.Context, orderID string) (*PaymentDetails, error) {
+	log.Printf("[CASHFREE-STUB] get payments %s", orderID)
+	return &PaymentDetails{CFPaymentID: "stub-pay-" + orderID, Group: "upi", BankReference: "STUB000000"}, nil
+}
+
 func (s *StubGateway) VerifyWebhookSignature(string, []byte, string) bool { return true }

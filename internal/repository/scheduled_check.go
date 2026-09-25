@@ -94,6 +94,30 @@ func (r *ScheduledCheckRepo) HasForOrder(ctx context.Context, orderID int64) (bo
 	return exists, err
 }
 
+// RemainingByOrder counts, per plan order, the runs not yet spent (PENDING
+// or RUNNING) — what My Purchases reads as a plan still being "Active".
+func (r *ScheduledCheckRepo) RemainingByOrder(ctx context.Context, accountID int64) (map[int64]int, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT order_id, count(*) FROM scheduled_score_checks
+		  WHERE account_id = $1 AND status IN ($2, $3)
+		  GROUP BY order_id`,
+		accountID, models.ScheduledCheckPending, models.ScheduledCheckRunning)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]int{}
+	for rows.Next() {
+		var orderID int64
+		var n int
+		if err := rows.Scan(&orderID, &n); err != nil {
+			return nil, err
+		}
+		out[orderID] = n
+	}
+	return out, rows.Err()
+}
+
 // CountPending is the account's remaining quota: how many prepaid runs are
 // still owed. Quota is COUNTED, never tracked in a counter column — the rows
 // are the truth.

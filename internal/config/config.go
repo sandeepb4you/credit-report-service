@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -33,6 +34,7 @@ type Config struct {
 	Statement       StatementConfig       `mapstructure:"statement"`
 	S3              S3Config              `mapstructure:"s3"`
 	Renderer        RendererConfig        `mapstructure:"renderer"`
+	Invoice         InvoiceConfig         `mapstructure:"invoice"`
 	Demo            DemoConfig            `mapstructure:"demo"`
 	Sentry          SentryConfig          `mapstructure:"sentry"`
 
@@ -42,6 +44,107 @@ type Config struct {
 	// emitted by the caller once logging is configured. Never contains a
 	// secret's value -- only its shape.
 	Warnings []string `mapstructure:"-"`
+}
+
+// InvoiceConfig is the supplier half of every tax invoice: who is selling, from
+// where, under which GSTIN, and at what rate.
+//
+// Config rather than constants because none of it is the code's to know. The
+// legal name and registered office are the company's (they match the website's
+// footer today), the GSTIN and SAC are its tax registration, and the rate is
+// the government's. A change to any of them must not need a release, and must
+// not rewrite an invoice already issued — which is why each invoice snapshots
+// these at issue rather than reading them at render.
+//
+// An empty GSTIN or SAC means no tax invoices. Live orders are still taken and
+// fulfilled; they are simply not invoiced, and the boot log says so. That is
+// the fail-closed choice: a document headed TAX INVOICE carrying a placeholder
+// GSTIN is a false document, and one with no GSTIN is not a tax invoice at all.
+// Sandbox orders get SPECIMEN invoices either way, so the feature can be seen
+// end to end before the registration details arrive.
+type InvoiceConfig struct {
+	LegalName string `mapstructure:"legal-name"`
+	Address   string `mapstructure:"address"`
+	// StateName and StateCode are the supplier's state, e.g. Karnataka / 29. The
+	// code is the first two digits of any GSTIN registered there.
+	StateName string `mapstructure:"state-name"`
+	StateCode string `mapstructure:"state-code"`
+	GSTIN     string `mapstructure:"gstin"`
+	// SAC is the services accounting code printed on each line. To be confirmed
+	// with the company's CA; there is deliberately no default.
+	SAC string `mapstructure:"sac"`
+	// GSTRatePercent is the combined rate. Prices are GST-inclusive, so this
+	// decides the split of what was charged, never the amount charged.
+	GSTRatePercent float64 `mapstructure:"gst-rate-percent"`
+	// Series is the number prefix: MSC/26-27/000184. Three letters, because the
+	// whole number must fit rule 46's sixteen characters.
+	Series string `mapstructure:"series"`
+	// MailFrom overrides mail.from for invoice emails (e.g. billing@). The SMTP
+	// account must be allowed to send as it, or the provider rewrites it.
+	MailFrom     string `mapstructure:"mail-from"`
+	SupportEmail string `mapstructure:"support-email"`
+	Website      string `mapstructure:"website"`
+}
+
+// gstinPattern is the GSTIN's shape: state code, PAN, entity number, 'Z', and a
+// check character.
+var gstinPattern = regexp.MustCompile(`^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$`)
+
+// gstinChecksumOK verifies the GSTIN's fifteenth character, a mod-36 check
+// over the first fourteen (the GSTN's Luhn variant, weights 2,1,2,1... from the
+// right). The shape check alone passes a placeholder like the design's
+// 29XXXXX0000X1ZX, and a GSTIN is exactly the value an operator will paste from
+// a document; this is what stops a sample or a typo reaching an invoice.
+func gstinChecksumOK(g string) bool {
+	const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	if len(g) != 15 {
+		return false
+	}
+	factor, sum := 2, 0
+	for i := 13; i >= 0; i-- {
+		cp := strings.IndexByte(alphabet, g[i])
+		if cp < 0 {
+			return false
+		}
+		d := factor * cp
+		factor = 3 - factor
+		sum += d/36 + d%36
+	}
+	return alphabet[(36-sum%36)%36] == g[14]
+}
+
+// Issuable reports whether live orders can be given tax invoices.
+func (c InvoiceConfig) Issuable() bool {
+	return c.GSTIN != "" && c.SAC != ""
+}
+
+// validate returns the problems worth an operator's attention. A malformed
+// GSTIN is not a boot failure — payments must keep working — but it is cleared,
+// so live orders go un-invoiced (and say so) rather than print a bad number on
+// every invoice until somebody notices.
+func (c *InvoiceConfig) validate() []string {
+	var warns []string
+	c.GSTIN = strings.ToUpper(strings.TrimSpace(c.GSTIN))
+	if c.GSTIN != "" {
+		switch {
+		case !gstinPattern.MatchString(c.GSTIN) || !gstinChecksumOK(c.GSTIN):
+			warns = append(warns, "invoice.gstin is not a valid GSTIN; live orders will not be invoiced")
+			c.GSTIN = ""
+		case c.GSTIN[:2] != c.StateCode:
+			warns = append(warns, fmt.Sprintf("invoice.gstin is registered in state %s but invoice.state-code is %s; "+
+				"live orders will not be invoiced", c.GSTIN[:2], c.StateCode))
+			c.GSTIN = ""
+		}
+	}
+	if len(c.Series) != 3 {
+		warns = append(warns, fmt.Sprintf("invoice.series must be 3 characters, got %q; using MSC", c.Series))
+		c.Series = "MSC"
+	}
+	if c.GSTRatePercent <= 0 || c.GSTRatePercent >= 100 {
+		warns = append(warns, fmt.Sprintf("invoice.gst-rate-percent %v is out of range; using 18", c.GSTRatePercent))
+		c.GSTRatePercent = 18
+	}
+	return warns
 }
 
 // RendererConfig points at the headless-Chromium sidecar that prints the
@@ -532,6 +635,7 @@ func Load(profile string) (*Config, error) {
 	if err := cfg.Cashfree.validate(); err != nil {
 		return nil, err
 	}
+	cfg.Warnings = append(cfg.Warnings, cfg.Invoice.validate()...)
 
 	return &cfg, nil
 }
@@ -818,6 +922,22 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("renderer.url", "")
 	v.SetDefault("renderer.timeout", "45s")
+
+	// Tax invoices. The legal name and address are the company's public
+	// details (the website footer carries the same); GSTIN and SAC have no
+	// default on purpose -- see InvoiceConfig.
+	v.SetDefault("invoice.legal-name", "Reachout Tech Private Limited")
+	v.SetDefault("invoice.address", "22, 4th Floor, 1st Main, Royal Placid, Haralur, HSR Layout, "+
+		"Bangalore South, Karnataka 560102")
+	v.SetDefault("invoice.state-name", "Karnataka")
+	v.SetDefault("invoice.state-code", "29")
+	v.SetDefault("invoice.gstin", "")
+	v.SetDefault("invoice.sac", "")
+	v.SetDefault("invoice.gst-rate-percent", 18)
+	v.SetDefault("invoice.series", "MSC")
+	v.SetDefault("invoice.mail-from", "")
+	v.SetDefault("invoice.support-email", "alerts@myscorr.com")
+	v.SetDefault("invoice.website", "myscorr.com")
 	v.SetDefault("statement.parser", "pdf")
 	v.SetDefault("statement.max-file-size", "10MB")
 	v.SetDefault("statement.worker-concurrency", 4)

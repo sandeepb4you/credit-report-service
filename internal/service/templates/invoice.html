@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{{if .Specimen}}Specimen invoice{{else}}Tax invoice{{end}} {{.Number}}</title>
+<!--
+  The myScorr tax invoice: one A4 page, printed by the renderer sidecar.
+
+  Layout is the "Option B" design (all-3-invoices.html) for all three plans; the
+  differences between plans are data, not markup. Every value comes from the
+  invoices row, which is a snapshot taken at issue (see migration 0032), so this
+  template must not reach for anything live.
+
+  Departures from the design, each deliberate:
+    * The brandmark is the shipped logo's geometry (Brandmark.kt / favicon.svg),
+      not the variant the design drew with a smaller inner arc.
+    * The feature list is the plan's catalog checklist, not the design's typed
+      lists, which promised score alerts and loan matches the app does not have.
+    * No UPI app name next to "UPI": Cashfree does not report it.
+    * Fonts are embedded (.Fonts) and every stack ends in Inter, the one face
+      here with a rupee sign in it.
+-->
+<style>
+{{.Fonts}}
+:root{--ink:#12202E;--muted:#5B6B7B;--faint:#8E9AA8;--line:#E4E9EF;--teal:#0E8A78;--teal-d:#0B6E60;
+--amber:#F5A623;--mint:#2FCE8F;--lt:#EAF2F0}
+*{box-sizing:border-box;margin:0;padding:0}
+@page{size:A4;margin:0}
+html,body{background:#fff}
+body{font-family:'Inter',sans-serif;color:var(--ink);-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.mono{font-family:'IBM Plex Mono','Inter',monospace}
+.r{text-align:right}
+.page{width:210mm;height:297mm;overflow:hidden;padding:14mm 14mm 12mm;display:flex;flex-direction:column;position:relative}
+.inv{border-radius:18px;overflow:hidden;border:1px solid var(--line);font-size:12.5px;flex:1;display:flex;flex-direction:column}
+.band{background:var(--teal);color:#fff;padding:26px 36px 26px}
+.band.specimen{background:#5B6B7B}
+.row{display:flex;justify-content:space-between;align-items:center}
+.brand{display:flex;align-items:center;gap:9px}
+.brand b{font-family:'Bricolage Grotesque','Inter',sans-serif;font-weight:800;font-size:23px;letter-spacing:-0.4px;color:#fff}
+.it{font-size:11px;letter-spacing:1.6px;font-weight:700;text-align:right;line-height:1.5}
+.it small{display:block;font-size:9px;letter-spacing:1px;opacity:.8;font-weight:600}
+.paid{margin-top:22px;display:flex;justify-content:space-between;align-items:flex-end}
+.amt{font-family:'Bricolage Grotesque','Inter',sans-serif;font-weight:800;font-size:48px;letter-spacing:-1.2px;line-height:1}
+.st{display:inline-flex;align-items:center;gap:7px;background:rgba(255,255,255,.16);border-radius:99px;padding:6px 12px;font-size:11.5px;font-weight:700;margin-top:10px}
+.st i{width:8px;height:8px;border-radius:50%;background:var(--mint);display:inline-block}
+.meta{text-align:right;font-size:11.5px;line-height:1.75;opacity:.95}
+.body{padding:26px 36px 22px;flex:1;display:flex;flex-direction:column}
+.plan{border:1.5px solid var(--amber);border-radius:14px;padding:20px 20px 18px;position:relative}
+.badge{position:absolute;top:-10px;left:16px;background:var(--amber);color:#3A2A00;font-size:10px;font-weight:700;letter-spacing:.6px;padding:4px 10px;border-radius:99px;text-transform:uppercase}
+.plan .top{display:flex;justify-content:space-between;align-items:baseline;gap:16px}
+.nm{font-family:'Bricolage Grotesque','Inter',sans-serif;font-weight:700;font-size:20px}
+.pd{color:var(--muted);font-size:11.5px;margin-top:3px}
+.feat{display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px 16px;margin-top:14px;color:var(--muted);font-size:11.5px}
+.feat span::before{content:'\2713  ';color:var(--teal);font-weight:700}
+.chips{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;background:var(--lt);color:var(--teal-d);font-size:11px;font-weight:600;border-radius:99px;padding:5px 11px}
+.chip.save{background:#FDF1E3;color:#B8760A}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:18px}
+.card{background:#F7F9FB;border-radius:12px;padding:13px 16px;line-height:1.6;overflow-wrap:anywhere}
+.lab{font-size:9.5px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px}
+table{width:100%;border-collapse:collapse}
+.tax{margin-top:16px;border:1px solid var(--line);border-radius:12px;overflow:hidden;border-collapse:separate;border-spacing:0}
+.tax th{background:#F7F9FB;font-size:9.5px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.7px;text-align:left;padding:10px 16px;border-bottom:1px solid var(--line)}
+.tax td{padding:9px 16px;border-bottom:1px solid var(--line)}
+.tax th.r{text-align:right}
+.tax tr.tot td{border-bottom:none;background:var(--ink);color:#fff;font-weight:700;font-size:14px}
+.tax td small{display:block;color:var(--muted);font-size:10.5px;margin-top:2px}
+.words{margin-top:12px;font-size:11.5px;color:var(--muted)}
+.words b{color:var(--ink)}
+.payrow{margin-top:14px;display:grid;grid-template-columns:repeat({{len .PayCells}},1fr);gap:12px}
+.payrow > div{border:1px solid var(--line);border-radius:12px;padding:12px 14px;overflow-wrap:anywhere}
+.spacer{flex:1}
+.foot{margin-top:16px;padding-top:12px;border-top:1px solid var(--line);display:flex;justify-content:space-between;gap:20px;color:var(--muted);font-size:10px;line-height:1.65}
+.watermark{position:absolute;left:0;right:0;top:44%;text-align:center;font-family:'Bricolage Grotesque','Inter',sans-serif;
+  font-weight:800;font-size:120px;letter-spacing:8px;color:rgba(18,32,46,.06);transform:rotate(-28deg);pointer-events:none}
+</style>
+</head>
+<body>
+<div class="page">
+{{if .Specimen}}<div class="watermark">SPECIMEN</div>{{end}}
+<div class="inv">
+  <div class="band{{if .Specimen}} specimen{{end}}">
+    <div class="row">
+      <div class="brand"><svg width="34" height="34" viewBox="0 0 34 34"><path d="M5 24 A13 13 0 0 1 29 24" fill="none" stroke="#F5A623" stroke-width="4.5" stroke-linecap="round"/><path d="M5 24 A13 13 0 0 1 17 11.04" fill="none" stroke="#2FCE8F" stroke-width="4.5" stroke-linecap="round"/><circle cx="17" cy="24" r="3.4" fill="#fff"/></svg><b>myScorr</b></div>
+      {{if .Specimen}}
+      <div class="it">SPECIMEN<small>NOT A TAX INVOICE · TEST PAYMENT</small></div>
+      {{else}}
+      <div class="it">TAX INVOICE<small>ORIGINAL FOR RECIPIENT</small></div>
+      {{end}}
+    </div>
+    <div class="paid">
+      <div><div class="amt">{{.Amount}}</div><div class="st"><i></i>{{if .PaidVia}}Paid via {{.PaidVia}}{{else}}Paid{{end}}</div></div>
+      <div class="meta">Invoice <span class="mono">{{.Number}}</span><br>{{.IssuedOn}}<br>Place of supply: {{.PlaceOfSupply}}</div>
+    </div>
+  </div>
+  <div class="body">
+    <div class="plan">
+      {{if .Plan.Badge}}<span class="badge">{{.Plan.Badge}}</span>{{end}}
+      <div class="top"><span class="nm">{{.Plan.PlanName}}</span><span class="mono" style="font-weight:600;font-size:14px">{{.Plan.PriceLabel}}</span></div>
+      {{if .Plan.Tagline}}<div class="pd">{{.Plan.Tagline}}</div>{{end}}
+      {{if .Plan.Features}}<div class="feat">{{range .Plan.Features}}<span>{{.}}</span>{{end}}</div>{{end}}
+      {{if .Plan.Chips}}<div class="chips">{{range .Plan.Chips}}<span class="chip{{if .Saving}} save{{end}}">{{.Text}}</span>{{end}}</div>{{end}}
+    </div>
+
+    <div class="two">
+      <div class="card"><div class="lab">Billed to</div>{{if .BilledToName}}<b>{{.BilledToName}}</b><br>{{end}}{{range .BilledToLines}}{{.}}<br>{{end}}</div>
+      <div class="card"><div class="lab">Billed by</div><b>{{.SupplierName}}</b><br>{{.SupplierAddress}}<br>{{if .SupplierGSTIN}}GSTIN <span class="mono">{{.SupplierGSTIN}}</span>{{else}}GSTIN not yet registered{{end}}</div>
+    </div>
+
+    <table class="tax">
+      <tr><th>Description</th><th class="r">Amount</th></tr>
+      <tr><td>{{.LineTitle}}{{if .SAC}} · SAC <span class="mono">{{.SAC}}</span>{{end}} · Qty 1<small>{{if .DiscountNote}}{{.DiscountNote}} · {{end}}Taxable value</small></td><td class="r mono">{{.Taxable}}</td></tr>
+      {{range .Taxes}}<tr><td>{{.Label}}{{if .Note}}<small>{{.Note}}</small>{{end}}</td><td class="r mono">{{.Amount}}</td></tr>{{end}}
+      <tr class="tot"><td>Total paid (GST incl.)</td><td class="r mono">{{.Amount}}</td></tr>
+    </table>
+    <div class="words">Amount in words: <b>{{.Words}}</b> · Reverse charge: No</div>
+
+    {{if .PayCells}}
+    <div class="payrow">
+      {{range .PayCells}}<div><div class="lab">{{.Label}}</div>{{if .Mono}}<span class="mono">{{.Value}}</span>{{else}}{{.Value}}{{end}}</div>{{end}}
+    </div>
+    {{end}}
+
+    <div class="spacer"></div>
+    <div class="foot">
+      <span>{{if .Specimen}}A specimen from a test payment: no money was charged and this is not a tax invoice.{{else}}This is a computer-generated invoice and does not require a physical signature.{{end}}<br>Credit score checks are soft enquiries and never affect your score.<br>Refund policy: 100% refund if we can't fetch your report.</span>
+      <span class="r">Billing queries<br><b style="color:var(--ink)">{{.SupportEmail}}</b><br>{{.Website}}</span>
+    </div>
+  </div>
+</div>
+</div>
+</body>
+</html>

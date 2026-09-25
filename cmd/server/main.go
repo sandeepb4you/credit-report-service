@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/mail"
 	"os"
 	"os/signal"
 	"strings"
@@ -316,6 +317,30 @@ func main() {
 	// the upload endpoint reports document storage unavailable.
 	kycSvc.SetDocumentStore(pdfStore)
 
+	// Tax invoices: issued inside fulfilment, printed by the same renderer as
+	// the advanced report, kept in the same bucket, and mailed by a worker so
+	// the payment webhook never waits on a browser or an SMTP server. Without
+	// a GSTIN live orders are not invoiced at all (sandbox orders still get
+	// specimens) -- see config.InvoiceConfig for why that is the safe failure.
+	mailSvc.SetInvoiceFrom(cfg.Invoice.MailFrom)
+	invoiceFrom := cfg.Invoice.MailFrom
+	if invoiceFrom == "" {
+		invoiceFrom = cfg.Mail.From
+	}
+	invoiceSvc := service.NewInvoiceService(repository.NewInvoiceRepo(pool), orderRepo, accountRepo,
+		cfg.Invoice, scheduleLoc, bareAddress(invoiceFrom))
+	invoiceSvc.SetRenderer(advancedRenderer)
+	invoiceSvc.SetStore(pdfStore)
+	invoiceSvc.SetMailer(mailSvc)
+	invoiceSvc.SetPaymentLookup(orderSvc)
+	orderSvc.SetInvoices(invoiceSvc)
+	if !cfg.Invoice.Issuable() {
+		slog.Warn("invoice.gstin / invoice.sac are empty; live orders will NOT be invoiced " +
+			"(sandbox orders get SPECIMEN invoices)")
+	}
+	invoiceDeliverer := service.NewInvoiceDeliverer(invoiceSvc, time.Minute)
+	invoiceDeliverer.Start(rootCtx)
+
 	// Bank-statement analysis: text-layer PDF parser + async worker pool.
 	// Parser follows the same empty-credentials-⇒-stub convention as the other
 	// external-capability packages: "stub" returns a canned statement so the
@@ -368,6 +393,7 @@ func main() {
 	analyticsH := handler.NewCreditAnalyticsHandler(analyticsSvc)
 	kycH := handler.NewKycHandler(kycSvc, serverMaxBytes(cfg.Registration.PAN.DocumentMaxSize))
 	orderH := handler.NewOrderHandler(orderSvc)
+	orderH.SetInvoices(invoiceSvc)
 	couponH := handler.NewCouponHandler(couponSvc)
 	loanH := handler.NewLoanSwitchHandler(loanSwitchSvc)
 	scoreBuilderH := handler.NewScoreBuilderHandler(scoreBuilderSvc)
@@ -448,6 +474,9 @@ func main() {
 	// boot — but a half-finished BATCH would leave the rest of it waiting an
 	// hour for no reason.
 	deletionSweeper.Stop()
+	// An invoice mail half-sent at shutdown is still PENDING and goes out
+	// after the next boot.
+	invoiceDeliverer.Stop()
 	shutdownCtx, cancelShut := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelShut()
 	if err := app.ShutdownWithContext(shutdownCtx); err != nil {
@@ -519,4 +548,14 @@ func itoa(n int) string {
 		buf[i] = '-'
 	}
 	return string(buf[i:])
+}
+
+// bareAddress is the address inside a From header: "myScorr <billing@x.com>"
+// -> "billing@x.com". The app shows it on the "Invoice sent" confirmation, so
+// the user can search their mailbox for the sender.
+func bareAddress(from string) string {
+	if a, err := mail.ParseAddress(from); err == nil {
+		return a.Address
+	}
+	return strings.TrimSpace(from)
 }

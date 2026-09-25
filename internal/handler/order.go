@@ -17,6 +17,8 @@ import (
 // endpoints.
 type OrderHandler struct {
 	svc *service.OrderService
+	// invoices serves the two invoice routes; see SetInvoices.
+	invoices *service.InvoiceService
 }
 
 func NewOrderHandler(svc *service.OrderService) *OrderHandler {

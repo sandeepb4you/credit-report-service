@@ -73,6 +73,9 @@ type AccountPurgeResult struct {
 	// customer's name, phone and email; a withdrawal carries the bank account
 	// holder's name. Counted so the audit line shows the scrub happened.
 	WebhookEventsScrubbed int `json:"webhookEventsScrubbed"`
+	// InvoicesScrubbed kept their numbers and amounts and lost their billed-to
+	// name, email and phone, and their stored PDF.
+	InvoicesScrubbed int `json:"invoicesScrubbed"`
 	WithdrawalsRedacted   int `json:"withdrawalsRedacted"`
 	// PendingWithdrawalsCancelled were requested but never paid. The payout
 	// bank account they would have been paid to is deleted by the same purge,

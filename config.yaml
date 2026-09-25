@@ -240,6 +240,33 @@ renderer:
   # A user is waiting on this, so it is bounded well short of the HTTP timeout.
   timeout: 45s
 
+invoice:
+  # Tax invoices, issued when an order is paid and emailed when the account has
+  # an address. Printed by the same renderer as the advanced report.
+  #
+  # gstin and sac are EMPTY ON PURPOSE, and while either is empty live orders
+  # are not invoiced at all (the boot log warns). A TAX INVOICE with a
+  # placeholder GSTIN is a false document. Sandbox orders get SPECIMEN invoices
+  # from a separate TST series regardless, so the flow can be checked first.
+  #
+  # Set in the deployment's environment once the CA confirms them:
+  #   INVOICE_GSTIN=29XXXXX0000X1ZX   (must start with state-code)
+  #   INVOICE_SAC=998399              (the design's placeholder; confirm it)
+  legal-name: "Reachout Tech Private Limited"
+  address: "22, 4th Floor, 1st Main, Royal Placid, Haralur, HSR Layout, Bangalore South, Karnataka 560102"
+  state-name: "Karnataka"
+  state-code: "29"
+  gstin: ""
+  sac: ""
+  # Prices are GST-inclusive: the rate splits what was charged, it never adds to it.
+  gst-rate-percent: 18
+  # MSC/26-27/000184. Three characters: the whole number must fit in sixteen.
+  series: "MSC"
+  # Empty -> mail.from. The SMTP account must be allowed to send as it.
+  mail-from: ""
+  support-email: "alerts@myscorr.com"
+  website: "myscorr.com"
+
 statement:
   # Bank-statement analysis. Override via env:
   #   STATEMENT_PARSER=stub, STATEMENT_MAX_FILE_SIZE=10MB, ...

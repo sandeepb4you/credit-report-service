@@ -120,6 +120,16 @@ func (c *CashfreeClient) GetOrder(ctx context.Context, orderID string) (*OrderRe
 	return toOrderResult(&resp), nil
 }
 
+// ---- Get Payments for an Order (GET /orders/{order_id}/payments) ---------
+
+func (c *CashfreeClient) GetPayment(ctx context.Context, orderID string) (*PaymentDetails, error) {
+	var resp []cfPayment
+	if err := c.do(ctx, http.MethodGet, "/orders/"+orderID+"/payments", "", nil, &resp); err != nil {
+		return nil, err
+	}
+	return successfulPayment(resp)
+}
+
 // ---- Webhook signature -----------------------------------------------------
 
 // VerifyWebhookSignature implements Cashfree's scheme: the signature is

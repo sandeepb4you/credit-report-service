@@ -80,6 +80,9 @@ type harness struct {
 	pool    *pgxpool.Pool
 	accts   *repository.AccountRepo
 	baseCtx context.Context
+	// inv is the invoicing wiring: the service, its delivery worker (never
+	// started; tests run Pass themselves) and the fakes behind it.
+	inv *invoiceWiring
 }
 
 // newHarness migrates a clean schema and builds the app over it.
@@ -124,7 +127,7 @@ func newHarness(t *testing.T, pay ...paymentSetup) *harness {
 	if len(pay) > 0 {
 		setup = &pay[0]
 	}
-	h.app = buildApp(cfg, pool, setup)
+	h.app, h.inv = buildApp(cfg, pool, setup)
 	return h
 }
 
@@ -170,6 +173,13 @@ func testConfig(dsn string) *config.Config {
 		// Empty prefill credentials select the offline Digitap stub.
 		Digitap:   config.DigitapConfig{},
 		Multipart: config.MultipartConfig{MaxFileSize: "8MB", MaxRequestSize: "8MB"},
+		// A well-formed GSTIN for the supplier's state, so live orders in the
+		// payment-mode tests are invoiced; it is nobody's registration.
+		Invoice: config.InvoiceConfig{
+			LegalName: "Reachout Tech Private Limited", Address: "22, HSR Layout, Bangalore 560102",
+			StateName: "Karnataka", StateCode: "29", GSTIN: "29ABCDE1234F1ZW", SAC: "998399",
+			GSTRatePercent: 18, Series: "MSC", SupportEmail: "alerts@myscorr.com", Website: "myscorr.com",
+		},
 	}
 }
 
@@ -228,7 +238,7 @@ func stripSearchPath(dsn string) string {
 // S3, Cashfree and a worker pool for tests that call none of them. Routing and
 // the auth/permission middleware are the real ones, which is the part that
 // matters: the admin report's permission gate is under test, not mocked out.
-func buildApp(cfg *config.Config, pool *pgxpool.Pool, pay *paymentSetup) *fiber.App {
+func buildApp(cfg *config.Config, pool *pgxpool.Pool, pay *paymentSetup) (*fiber.App, *invoiceWiring) {
 	accountRepo := repository.NewAccountRepo(pool)
 	sessionRepo := repository.NewSessionRepo(pool)
 	couponRepo := repository.NewCouponRepo(pool)
@@ -293,6 +303,22 @@ func buildApp(cfg *config.Config, pool *pgxpool.Pool, pay *paymentSetup) *fiber.
 		orderSvc.SetTestPayments(gateway, "")
 	}
 
+	// Invoicing, with the three outbound seams faked: a renderer that returns
+	// bytes instead of driving a browser, an in-memory bucket, and a mailer
+	// that records instead of sending. The template itself is exercised by
+	// the service package's own tests.
+	inv := &invoiceWiring{renderer: &fakeRenderer{}, store: newMemStore(), mailer: &recordingMailer{}}
+	inv.svc = service.NewInvoiceService(repository.NewInvoiceRepo(pool), orderRepo, accountRepo,
+		cfg.Invoice, cfg.ScheduledChecks.Location(), "billing@myscorr.com")
+	inv.svc.SetRenderer(inv.renderer)
+	inv.svc.SetStore(inv.store)
+	inv.svc.SetMailer(inv.mailer)
+	inv.svc.SetPaymentLookup(orderSvc)
+	orderSvc.SetInvoices(inv.svc)
+	inv.deliverer = service.NewInvoiceDeliverer(inv.svc, time.Hour)
+	orderH := handler.NewOrderHandler(orderSvc)
+	orderH.SetInvoices(inv.svc)
+
 	return server.New(
 		cfg,
 		handler.NewHealthHandler(),
@@ -300,7 +326,7 @@ func buildApp(cfg *config.Config, pool *pgxpool.Pool, pay *paymentSetup) *fiber.
 		handler.NewCreditAnalyticsHandler(analyticsSvc),
 		// 10MB doc cap, mirroring the registration.pan.document-max-size default.
 		handler.NewKycHandler(kycSvc, 10_000_000),
-		handler.NewOrderHandler(orderSvc),
+		orderH,
 		handler.NewCouponHandler(couponSvc),
 		nil, // loans
 		nil, // score builder
@@ -315,7 +341,7 @@ func buildApp(cfg *config.Config, pool *pgxpool.Pool, pay *paymentSetup) *fiber.
 		handler.NewEarningsHandler(earningsSvc),
 		tokenSvc,
 		accountRepo,
-	)
+	), inv
 }
 
 // ---- HTTP helpers ---------------------------------------------------------

@@ -42,6 +42,9 @@ type Gateway interface {
 	// GetOrder fetches the current order state, for reconciliation when a
 	// webhook may have been missed.
 	GetOrder(ctx context.Context, orderID string) (*OrderResult, error)
+	// GetPayment returns the successful payment on an order, for the invoice's
+	// payment lines. ErrNoSuccessfulPayment when there is none.
+	GetPayment(ctx context.Context, orderID string) (*PaymentDetails, error)
 	// VerifyWebhookSignature checks the HMAC signature of a webhook delivery
 	// against the raw (unparsed) request body.
 	VerifyWebhookSignature(timestamp string, body []byte, signature string) bool
