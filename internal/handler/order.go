@@ -153,12 +153,20 @@ func (h *OrderHandler) Create(c *fiber.Ctx) error {
 		return apperr.NewValidationWith("Validation failed",
 			map[string]string{"productCode": "productCode is required"})
 	}
-	res, err := h.svc.CreateOrder(c.Context(), accountID, req.ProductCode, req.CouponCode)
+	// Present only on internal builds (the APK shared on WhatsApp), which pay
+	// in sandbox. The store app and the web never send it and pay live. The
+	// service checks it against cashfree.test-mode-key and refuses a wrong one.
+	testKey := strings.TrimSpace(c.Get(testPaymentsKeyHeader))
+	res, err := h.svc.CreateOrder(c.Context(), accountID, req.ProductCode, req.CouponCode, testKey)
 	if err != nil {
 		return err
 	}
 	return c.Status(fiber.StatusCreated).JSON(res)
 }
+
+// testPaymentsKeyHeader carries an internal build's test-payments key on
+// POST /api/orders. See config.CashfreeConfig.TestModeKey.
+const testPaymentsKeyHeader = "X-Test-Payments-Key"
 
 // ---- GET /api/orders ------------------------------------------------------
 

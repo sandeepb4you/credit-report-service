@@ -137,6 +137,33 @@ type CashfreeConfig struct {
 	ReturnURL    string        `mapstructure:"return-url"` // browser redirect after payment
 	NotifyURL    string        `mapstructure:"notify-url"` // public URL of our webhook endpoint
 	Timeout      time.Duration `mapstructure:"timeout"`
+
+	// Sandbox is a second credential pair, for internal builds while Mode is
+	// production. ClientID/ClientSecret above always mean "the credentials for
+	// Mode", so a deployment that has only ever run in sandbox needs nothing
+	// here — its one gateway already is the sandbox one. Going live means
+	// moving the TEST keys into this block and the live keys into the fields
+	// above.
+	Sandbox CashfreeCredentials `mapstructure:"sandbox"`
+
+	// TestModeKey is the shared secret an internal build presents on
+	// POST /orders to be put through the SANDBOX gateway. The store app and
+	// the web app are built without it and so always pay in Mode.
+	//
+	// Why a key and not simply a flag the app sends: the order's environment
+	// decides whether real money moves, and anything a client merely asserts,
+	// a client can assert falsely. A flag would let anyone edit a request from
+	// the store app, pay with sandbox money, and receive a real bureau pull.
+	// The key is baked only into the APK shared with the internal WhatsApp
+	// group (build-apk.sh in the app repo), so extracting it needs that APK.
+	// Empty disables test payments entirely.
+	TestModeKey string `mapstructure:"test-mode-key"`
+}
+
+// CashfreeCredentials is one Cashfree App ID / Secret Key pair.
+type CashfreeCredentials struct {
+	ClientID     string `mapstructure:"client-id"`
+	ClientSecret string `mapstructure:"client-secret"`
 }
 
 // LogConfig holds structured-logging settings (log/slog). Level is one of
@@ -502,8 +529,34 @@ func Load(profile string) (*Config, error) {
 	if err := cfg.validateLocalOnly(profile); err != nil {
 		return nil, err
 	}
+	if err := cfg.Cashfree.validate(); err != nil {
+		return nil, err
+	}
 
 	return &cfg, nil
+}
+
+// validate refuses a payments configuration that would take money wrongly.
+//
+// The hard failure is production mode without credentials. An empty client-id
+// selects the stub gateway, and the stub accepts ANY webhook signature — the
+// right behaviour on a laptop with no keys, and in production a way for anyone
+// to POST a "payment succeeded" webhook and have an order fulfilled. So a live
+// deployment with no live keys does not start rather than start as that.
+func (c CashfreeConfig) validate() error {
+	switch c.Mode {
+	case "sandbox", "production":
+	default:
+		return fmt.Errorf("cashfree.mode must be sandbox or production, got %q", c.Mode)
+	}
+	if c.Mode == "production" && (c.ClientID == "" || c.ClientSecret == "") {
+		return fmt.Errorf("cashfree.mode is production but cashfree.client-id/client-secret " +
+			"are empty; refusing to start on the stub gateway, which accepts any webhook")
+	}
+	if (c.Sandbox.ClientID == "") != (c.Sandbox.ClientSecret == "") {
+		return fmt.Errorf("cashfree.sandbox needs both client-id and client-secret, or neither")
+	}
+	return nil
 }
 
 // googleSMTPHosts are Google's SMTP endpoints. An app password for one of these
@@ -826,6 +879,8 @@ func allKeys() []string {
 		"cashfree.mode", "cashfree.base-url", "cashfree.client-id",
 		"cashfree.client-secret", "cashfree.api-version",
 		"cashfree.return-url", "cashfree.notify-url", "cashfree.timeout",
+		"cashfree.sandbox.client-id", "cashfree.sandbox.client-secret",
+		"cashfree.test-mode-key",
 		"s3.bucket", "s3.region", "s3.presign-ttl",
 		"renderer.url", "renderer.timeout",
 		"statement.parser", "statement.max-file-size",

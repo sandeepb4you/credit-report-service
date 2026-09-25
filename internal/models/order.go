@@ -92,6 +92,13 @@ type Order struct {
 	Currency       string  `json:"currency"       db:"currency"`
 	Status         string  `json:"status"         db:"status"`
 
+	// PaymentMode is the Cashfree environment the order was created in —
+	// "sandbox" or "production" — and everything that happens to the order
+	// afterwards (reconcile, webhook, referral credit) is routed by it rather
+	// than by the server's current config. See migration 0031. Serialized so
+	// the app and the admin console can tell a test purchase from a real one.
+	PaymentMode string `json:"paymentMode" db:"payment_mode"`
+
 	CFOrderID        *string    `json:"cfOrderId"        db:"cf_order_id"`
 	PaymentSessionID *string    `json:"paymentSessionId" db:"payment_session_id"`
 	CFPaymentID      *string    `json:"-"                db:"cf_payment_id"`

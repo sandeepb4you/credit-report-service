@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,6 +38,12 @@ type OrderService struct {
 	coupons  *CouponService
 	gateway  payments.Gateway
 	cfg      config.CashfreeConfig
+	// testGateway is the sandbox gateway internal builds pay through, and
+	// testModeKey the secret they present to reach it (SetTestPayments). Nil /
+	// empty means test payments are off. In a deployment whose default mode is
+	// already sandbox, testGateway is the same gateway as the default one.
+	testGateway payments.Gateway
+	testModeKey string
 	// scheduled is where a plan purchase's batch of prepaid report runs is
 	// minted at fulfilment. A constructor argument like the analytics service's
 	// order repo, and for the same reason: forgetting to wire it would mean
@@ -71,6 +78,51 @@ func NewOrderService(
 		orders: orders, accounts: accounts, coupons: coupons, gateway: gateway, cfg: cfg,
 		scheduled: scheduled, scheduleLoc: scheduleLoc, earnings: earnings,
 	}
+}
+
+// SetTestPayments wires the sandbox gateway that internal builds pay through,
+// and the key they must present to use it. See config.CashfreeConfig.TestModeKey
+// for why this is a key rather than a flag the app could simply send.
+func (s *OrderService) SetTestPayments(gateway payments.Gateway, key string) {
+	s.testGateway = gateway
+	s.testModeKey = key
+}
+
+// gatewayFor returns the gateway for an environment, or nil if none is
+// configured for it. Every operation on an existing order goes through this
+// with the order's own PaymentMode, never with the server's current default:
+// an order is settled by the environment that created it.
+func (s *OrderService) gatewayFor(mode string) payments.Gateway {
+	if s.gateway != nil && s.gateway.Mode() == mode {
+		return s.gateway
+	}
+	if s.testGateway != nil && s.testGateway.Mode() == mode {
+		return s.testGateway
+	}
+	return nil
+}
+
+// gatewayForNewOrder picks the environment a new order is created in.
+//
+// No key: the deployment's default -- live, for the store app and the web.
+// The right key: the sandbox gateway. A WRONG key is refused rather than
+// quietly treated as live: a key is only ever sent by an internal build, and
+// a misbuilt one that fell through to live would charge a tester real money
+// for a purchase they believe is a test.
+func (s *OrderService) gatewayForNewOrder(testKey string) (payments.Gateway, error) {
+	if testKey == "" {
+		return s.gateway, nil
+	}
+	if s.testModeKey == "" ||
+		subtle.ConstantTimeCompare([]byte(testKey), []byte(s.testModeKey)) != 1 {
+		slog.Warn("order refused: test-payments key not recognised")
+		return nil, apperr.NewForbidden(
+			"This build's test-payments key is not recognised. Install the latest internal build.")
+	}
+	if s.testGateway == nil {
+		return nil, apperr.NewServiceUnavailable("Test payments are not configured on this server")
+	}
+	return s.testGateway, nil
 }
 
 // PurchaseResult is returned from CreateOrder. The frontend initialises the
@@ -174,9 +226,17 @@ func (s *OrderService) UpdatePlan(
 	return p, nil
 }
 
+// testKey is the internal build's test-payments key, or "" -- see
+// gatewayForNewOrder. It is resolved before anything is written, so a refused
+// key leaves no order and claims no coupon.
 func (s *OrderService) CreateOrder(
-	ctx context.Context, accountID int64, productCode, couponCode string,
+	ctx context.Context, accountID int64, productCode, couponCode, testKey string,
 ) (*PurchaseResult, error) {
+	gateway, err := s.gatewayForNewOrder(testKey)
+	if err != nil {
+		return nil, err
+	}
+
 	product, err := s.orders.FindProduct(ctx, productCode)
 	if errors.Is(err, repository.ErrNotFound) {
 		return nil, apperr.NewValidationWith("Validation failed",
@@ -220,6 +280,7 @@ func (s *OrderService) CreateOrder(
 		Amount:      product.Amount,
 		Currency:    product.Currency,
 		Status:      models.OrderCreationRequested,
+		PaymentMode: gateway.Mode(),
 	}
 	if couponCode = strings.TrimSpace(couponCode); couponCode == "" {
 		if err := s.orders.CreateOrder(ctx, order); err != nil {
@@ -229,7 +290,7 @@ func (s *OrderService) CreateOrder(
 		return nil, err
 	}
 
-	res, err := s.gateway.CreateOrder(ctx, payments.CreateOrderParams{
+	res, err := gateway.CreateOrder(ctx, payments.CreateOrderParams{
 		OrderID:       order.OrderUID,
 		Amount:        order.Amount,
 		Currency:      order.Currency,
@@ -273,7 +334,10 @@ func (s *OrderService) CreateOrder(
 		CouponCode:       order.CouponCode,
 		Currency:         order.Currency,
 		Status:           order.Status,
-		Mode:             s.gateway.Mode(),
+		// The app, the web and iOS each open checkout in whatever this says, so
+		// it is the ORDER's environment -- which is what makes an internal build
+		// open the sandbox checkout without being built any differently.
+		Mode: gateway.Mode(),
 	}, nil
 }
 
@@ -386,7 +450,12 @@ func (s *OrderService) findOwnedOrder(ctx context.Context, accountID int64, orde
 
 // reconcile pulls the order state from the gateway and applies it locally.
 func (s *OrderService) reconcile(ctx context.Context, order *models.Order) error {
-	res, err := s.gateway.GetOrder(ctx, order.OrderUID)
+	gateway := s.gatewayFor(order.PaymentMode)
+	if gateway == nil {
+		return fmt.Errorf("no %q gateway configured to reconcile order %s",
+			order.PaymentMode, order.OrderUID)
+	}
+	res, err := gateway.GetOrder(ctx, order.OrderUID)
 	if err != nil {
 		return err
 	}
@@ -429,8 +498,13 @@ type webhookEnvelope struct {
 
 // ProcessWebhook verifies, records, and applies a Cashfree webhook delivery.
 // body must be the raw request bytes — the signature is computed over them.
+//
+// Cashfree's live and sandbox environments post to the same URL, each signed
+// with its own secret. The signature therefore says which environment sent the
+// delivery, and applyWebhook refuses one whose environment is not the order's.
 func (s *OrderService) ProcessWebhook(ctx context.Context, timestamp, signature, idempotencyKey string, body []byte) error {
-	if !s.gateway.VerifyWebhookSignature(timestamp, body, signature) {
+	mode, ok := s.verifyWebhook(timestamp, body, signature)
+	if !ok {
 		return apperr.NewUnauthorized("Invalid webhook signature")
 	}
 
@@ -457,7 +531,7 @@ func (s *OrderService) ProcessWebhook(ctx context.Context, timestamp, signature,
 		return err
 	}
 
-	if err := s.applyWebhook(ctx, &env); err != nil {
+	if err := s.applyWebhook(ctx, &env, mode); err != nil {
 		// Leave processed=false; Cashfree's retry (new idempotency key) or the
 		// GetOrder reconciliation path will settle the order.
 		return err
@@ -468,7 +542,19 @@ func (s *OrderService) ProcessWebhook(ctx context.Context, timestamp, signature,
 	return nil
 }
 
-func (s *OrderService) applyWebhook(ctx context.Context, env *webhookEnvelope) error {
+// verifyWebhook checks the signature against each configured environment and
+// reports which one it belongs to. The default gateway is tried first; a
+// deployment in sandbox mode has one gateway and so one answer.
+func (s *OrderService) verifyWebhook(timestamp string, body []byte, signature string) (string, bool) {
+	for _, gw := range []payments.Gateway{s.gateway, s.testGateway} {
+		if gw != nil && gw.VerifyWebhookSignature(timestamp, body, signature) {
+			return gw.Mode(), true
+		}
+	}
+	return "", false
+}
+
+func (s *OrderService) applyWebhook(ctx context.Context, env *webhookEnvelope, mode string) error {
 	orderUID := env.Data.Order.OrderID
 	if orderUID == "" {
 		log.Printf("[order] webhook %s without order_id; ignoring", env.Type)
@@ -481,6 +567,14 @@ func (s *OrderService) applyWebhook(ctx context.Context, env *webhookEnvelope) e
 	}
 	if err != nil {
 		return err
+	}
+	// A sandbox-signed delivery must never settle a live order. Sandbox
+	// "payments" cost nothing to make, so this is the line that keeps a test
+	// build from being a way to get paid-for reports free.
+	if order.PaymentMode != mode {
+		slog.Warn("webhook refused: signed by a different Cashfree environment than the order's",
+			"order_uid", orderUID, "order_mode", order.PaymentMode, "webhook_mode", mode)
+		return apperr.NewUnauthorized("Webhook environment does not match the order")
 	}
 
 	switch strings.ToUpper(env.Type) {
@@ -551,7 +645,7 @@ func (s *OrderService) fulfillOrder(ctx context.Context, order *models.Order) {
 	// the schedule mint — the payment has happened, so a credit failure is
 	// logged loudly and retried on the next webhook/reconcile pass (the
 	// UNIQUE on referred_account_id makes repeats no-ops).
-	if s.earnings != nil {
+	if s.earnings != nil && s.creditsReferral(order) {
 		if _, err := s.earnings.CreditForFirstPurchase(ctx, order.AccountID, order.OrderUID); err != nil {
 			slog.Error("referral credit failed; will retry on next fulfilment pass",
 				"order_uid", order.OrderUID, "account_id", order.AccountID, "error", err)
@@ -595,6 +689,19 @@ func (s *OrderService) fulfillOrder(ctx context.Context, order *models.Order) {
 		"order_uid", order.OrderUID, "account_id", order.AccountID,
 		"product_code", product.Code, "checks", n, "interval_months", interval,
 		"first_due_on", today.Format("2006-01-02"))
+}
+
+// creditsReferral reports whether a paid order should earn its buyer's referrer
+// the reward. The reward is real money paid out by bank transfer, so it follows
+// real money in: a sandbox order in a LIVE deployment is a tester's purchase and
+// earns nothing, or a test build becomes a way to farm referral payouts. While
+// the whole deployment is still in sandbox there is no real money anywhere, and
+// crediting keeps the referral flow testable end to end.
+func (s *OrderService) creditsReferral(order *models.Order) bool {
+	if order.PaymentMode == "production" {
+		return true
+	}
+	return s.gateway != nil && s.gateway.Mode() == "sandbox"
 }
 
 // businessToday is the current date in the business timezone, carried as a

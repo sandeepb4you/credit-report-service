@@ -112,7 +112,7 @@ func (r *OrderRepo) FindProduct(ctx context.Context, code string) (*models.Produ
 // ---- orders ---------------------------------------------------------------
 
 const orderCols = `id, order_uid, account_id, product_code, amount, discount_amount,
-    coupon_code, currency, status,
+    coupon_code, currency, status, payment_mode,
     cf_order_id, payment_session_id, cf_payment_id, payment_method, failure_reason,
     order_expiry_time, paid_at, fulfilled_at, consumed_at, consumed_report_id,
     created_at, updated_at`
@@ -139,11 +139,11 @@ func (r *OrderRepo) insertOrder(ctx context.Context, q querier, o *models.Order)
 	row := q.QueryRow(ctx,
 		`INSERT INTO orders
 		     (order_uid, account_id, product_code, amount, discount_amount,
-		      coupon_code, currency, status)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		      coupon_code, currency, status, payment_mode)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		 RETURNING id, created_at, updated_at`,
 		o.OrderUID, o.AccountID, o.ProductCode, o.Amount, o.DiscountAmount,
-		o.CouponCode, o.Currency, o.Status,
+		o.CouponCode, o.Currency, o.Status, o.PaymentMode,
 	)
 	if err := row.Scan(&o.ID, &o.CreatedAt, &o.UpdatedAt); err != nil {
 		return classifyPgErr(err)

@@ -162,6 +162,33 @@ func main() {
 		gateway = payments.NewCashfreeClient(cfg.Cashfree)
 	}
 
+	// The sandbox gateway internal builds pay through. In a deployment whose
+	// default is already sandbox it IS the default gateway; once the default
+	// is production it is a second client over the cashfree.sandbox keys, and
+	// without those keys test payments are simply off (an internal build's
+	// order is refused with 503 rather than charged live).
+	var testGateway payments.Gateway
+	switch {
+	case cfg.Cashfree.Mode == "sandbox":
+		testGateway = gateway
+	case cfg.Cashfree.Sandbox.ClientID != "":
+		sandboxCfg := cfg.Cashfree
+		sandboxCfg.Mode = "sandbox"
+		sandboxCfg.BaseURL = "" // derived from Mode; a live base-url override must not carry over
+		sandboxCfg.ClientID = cfg.Cashfree.Sandbox.ClientID
+		sandboxCfg.ClientSecret = cfg.Cashfree.Sandbox.ClientSecret
+		testGateway = payments.NewCashfreeClient(sandboxCfg)
+	}
+	testMode := "disabled"
+	switch {
+	case cfg.Cashfree.TestModeKey == "":
+		testMode = "disabled (no cashfree.test-mode-key)"
+	case testGateway != nil:
+		testMode = testGateway.Mode()
+	}
+	slog.Info("payments configured",
+		"default_mode", gateway.Mode(), "internal_builds", testMode)
+
 	// SMS sender for the phone sign-in OTP: real MSG91 client when an auth key
 	// is set, otherwise the log-only stub (dev fallback, like the mail stub).
 	//
@@ -220,6 +247,7 @@ func main() {
 		repository.NewEarningsRepo(pool), accountRepo, orderRepo, couponSvc)
 	orderSvc := service.NewOrderService(orderRepo, accountRepo, couponSvc, gateway, cfg.Cashfree,
 		scheduledRepo, scheduleLoc, earningsSvc)
+	orderSvc.SetTestPayments(testGateway, cfg.Cashfree.TestModeKey)
 	loanSwitchSvc := service.NewLoanSwitchService(loanRepo, analyticsRepo)
 	// Enrich analytics insights with interest-reduction opportunities so a single
 	// analytics call surfaces both levers: raise the score and cut interest.

@@ -88,7 +88,16 @@ type harness struct {
 // them: the referral report groups over every account in a window, so one test's
 // leftovers would show up in another's totals as a flake that only appears when
 // the suite runs in a particular order.
-func newHarness(t *testing.T) *harness {
+// paymentSetup overrides the stub gateway the harness normally wires orders
+// with. Only the payment-mode tests use it: they need two gateways that sign
+// with DIFFERENT secrets, which the stub (every signature verifies) cannot be.
+type paymentSetup struct {
+	gateway     payments.Gateway
+	testGateway payments.Gateway
+	testKey     string
+}
+
+func newHarness(t *testing.T, pay ...paymentSetup) *harness {
 	t.Helper()
 	ctx := context.Background()
 
@@ -111,7 +120,11 @@ func newHarness(t *testing.T) *harness {
 	t.Cleanup(pool.Close)
 
 	h := &harness{t: t, pool: pool, baseCtx: ctx, accts: repository.NewAccountRepo(pool)}
-	h.app = buildApp(cfg, pool)
+	var setup *paymentSetup
+	if len(pay) > 0 {
+		setup = &pay[0]
+	}
+	h.app = buildApp(cfg, pool, setup)
 	return h
 }
 
@@ -215,7 +228,7 @@ func stripSearchPath(dsn string) string {
 // S3, Cashfree and a worker pool for tests that call none of them. Routing and
 // the auth/permission middleware are the real ones, which is the part that
 // matters: the admin report's permission gate is under test, not mocked out.
-func buildApp(cfg *config.Config, pool *pgxpool.Pool) *fiber.App {
+func buildApp(cfg *config.Config, pool *pgxpool.Pool, pay *paymentSetup) *fiber.App {
 	accountRepo := repository.NewAccountRepo(pool)
 	sessionRepo := repository.NewSessionRepo(pool)
 	couponRepo := repository.NewCouponRepo(pool)
@@ -265,9 +278,20 @@ func buildApp(cfg *config.Config, pool *pgxpool.Pool) *fiber.App {
 	// buy → webhook → fulfilment → scheduled-checks mint path.
 	earningsSvc := service.NewEarningsService(
 		repository.NewEarningsRepo(pool), accountRepo, orderRepo, couponSvc)
+	var gateway payments.Gateway = payments.NewStubGateway("sandbox")
+	if pay != nil {
+		gateway = pay.gateway
+	}
 	orderSvc := service.NewOrderService(orderRepo, accountRepo, couponSvc,
-		payments.NewStubGateway("sandbox"), cfg.Cashfree,
+		gateway, cfg.Cashfree,
 		scheduledRepo, cfg.ScheduledChecks.Location(), earningsSvc)
+	if pay != nil {
+		orderSvc.SetTestPayments(pay.testGateway, pay.testKey)
+	} else {
+		// The ordinary sandbox deployment: one gateway, which is also the one
+		// internal builds use.
+		orderSvc.SetTestPayments(gateway, "")
+	}
 
 	return server.New(
 		cfg,
