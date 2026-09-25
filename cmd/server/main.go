@@ -256,6 +256,17 @@ func main() {
 	// fires at boot, so runs missed while the process was down start now.
 	scheduledRunner := service.NewScheduledCheckRunner(scheduledRepo, analyticsSvc, cfg.ScheduledChecks)
 	scheduledRunner.Start(rootCtx)
+	// User-initiated account deletion: erases the accounts whose fourteen-day
+	// grace period has run out. Hourly, because the deadline is a date rather
+	// than a moment, and the first pass fires at boot so requests that came due
+	// while the process was down are honoured now rather than an hour from now.
+	//
+	// It takes the same object store as the report PDFs because a purge has to
+	// take the encrypted reports and uploaded PAN cards out of the bucket with
+	// the rows. With the stub configured it says so, loudly, per object — that
+	// is personal data the service would otherwise quietly keep.
+	deletionSweeper := service.NewAccountDeletionSweeper(accountRepo, pdfStore, time.Hour)
+	deletionSweeper.Start(rootCtx)
 	// The read side of the same store, plus the mailer, for the download and
 	// email-delivery endpoints.
 	analyticsSvc.SetReportPDFStore(pdfStore)
@@ -404,6 +415,11 @@ func main() {
 	// Let an in-flight scheduled-check sweep wind down; claims it didn't reach
 	// go stale and the next boot's reclaim returns them to PENDING.
 	scheduledRunner.Stop()
+	// Let an in-flight purge finish. Each one is a single transaction, so an
+	// ungraceful stop rolls it back and the row stays PENDING for the next
+	// boot — but a half-finished BATCH would leave the rest of it waiting an
+	// hour for no reason.
+	deletionSweeper.Stop()
 	shutdownCtx, cancelShut := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelShut()
 	if err := app.ShutdownWithContext(shutdownCtx); err != nil {

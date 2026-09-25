@@ -23,6 +23,11 @@ type Mailer interface {
 	// needs to recognise that from the subject line, not discover it after
 	// opening a mail that looks like a routine signup verification.
 	SendPasswordResetOTP(toEmail, otp string) error
+	// SendAccountDeletionOTP delivers the code that authorises erasing an
+	// account. Separate for the same reason as the reset code, only more so:
+	// this is the one mail in the service whose "if that wasn't you" line asks
+	// the reader to do something rather than to ignore it.
+	SendAccountDeletionOTP(toEmail, otp string) error
 }
 
 // MailService is the SMTP-backed Mailer. When Host is empty, it logs the OTP
@@ -47,6 +52,10 @@ func (m *MailService) SendOTP(toEmail, otp string) error {
 
 func (m *MailService) SendPasswordResetOTP(toEmail, otp string) error {
 	return m.sendOTP(toEmail, otp, otpKindPasswordReset)
+}
+
+func (m *MailService) SendAccountDeletionOTP(toEmail, otp string) error {
+	return m.sendOTP(toEmail, otp, otpKindAccountDeletion)
 }
 
 // sendOTP is the one delivery path for every code this service mails. kind

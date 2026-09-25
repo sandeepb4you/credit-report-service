@@ -30,6 +30,17 @@ const (
 	phoneStatusWindow   = time.Minute
 )
 
+// Rate limit for POST /auth/account-deletion/send, the public route that
+// sends an SMS to a number the caller merely typed. Sized for the page that
+// uses it — one request, plus a resend or two after a typo — over a window
+// long enough that a script cannot simply pace itself under a per-minute cap.
+// Constants rather than config, like the pair above: this is a guard rail on
+// somebody else's phone, not a knob.
+const (
+	accountDeletionSendMaxPerIP = 10
+	accountDeletionSendWindow   = 15 * time.Minute
+)
+
 // New assembles the Fiber app. It is configured with the central error handler
 // and the multipart body limits from config; all routes are mounted under /api.
 func New(
@@ -175,6 +186,36 @@ func New(
 	a.Post("/password/forgot", auth.ForgotPassword)
 	a.Post("/password/verify-otp", auth.VerifyPasswordResetOTP)
 	a.Post("/password/reset", auth.ResetPassword)
+
+	// Account deletion from the public web page (https://myscorr.com/delete-account):
+	// send a code to the phone or email on the account, exchange it for a
+	// single-use grant, redeem the grant to schedule the purge 14 days out.
+	//
+	// Public for the same reason forgot-password is, only more so: Google Play
+	// requires an account to be erasable by someone who has already uninstalled
+	// the app, so there can be no bearer token and the OTP is the entire
+	// authentication. The grace period is what makes that acceptable — a stolen
+	// code buys a fortnight's warning, not an irreversible deletion.
+	//
+	// Only /send is rate-limited, and per IP rather than per identifier: it is
+	// the one of the three that makes an outbound SMS, so it is the one a
+	// script can turn into somebody else's phone ringing all night. The cap is
+	// deliberately tighter than the phone-status one — nobody legitimately asks
+	// to delete accounts in bulk from one address — while still leaving room
+	// for a household behind one NAT and for a user who mistypes their number
+	// twice. /verify and /confirm are guarded by the OTP attempt cap and the
+	// single-use grant instead, which is a better guard than an IP bucket.
+	a.Post("/account-deletion/send", limiter.New(limiter.Config{
+		Max:        accountDeletionSendMaxPerIP,
+		Expiration: accountDeletionSendWindow,
+		LimitReached: func(c *fiber.Ctx) error {
+			return fiber.NewError(fiber.StatusTooManyRequests,
+				"Too many requests from this device; try again later")
+		},
+	}), auth.SendAccountDeletionOTP)
+	a.Post("/account-deletion/verify", auth.VerifyAccountDeletionOTP)
+	a.Post("/account-deletion/confirm", auth.ConfirmAccountDeletion)
+
 	// Refresh is public: the refresh token (body for mobile, httpOnly cookie
 	// for web) is itself the credential, and the expired access token that
 	// prompted the call would fail RequireAuth.

@@ -53,6 +53,25 @@ var (
 			"Someone may know your email address, so consider signing in and " +
 			"reviewing your signed-in devices.",
 	}
+
+	// otpKindAccountDeletion carries the sharpest disclaimer of the three, and
+	// it is the only one that tells the user to ACT rather than to ignore the
+	// mail. Ignoring an unexpected signup or reset code costs nothing; ignoring
+	// this one lets a deletion nobody asked for run to completion in fourteen
+	// days. The "sign in to cancel" sentence is the whole safety net behind the
+	// grace period, so it belongs in the same mail as the code.
+	otpKindAccountDeletion = otpKind{
+		slug:    "account_deletion",
+		subject: "Confirm deleting your %s account",
+		heading: "Delete your account",
+		intro: "Someone asked to permanently delete your %s account. " +
+			"Enter the code below to confirm. Your account will then be scheduled " +
+			"for deletion, and you can still stop it by signing in before the date " +
+			"we show you.",
+		disclaimer: "If that wasn't you, do not enter this code — and sign in to your " +
+			"account to make sure nothing is scheduled. Someone may know your " +
+			"contact details, so review your signed-in devices while you are there.",
+	}
 )
 
 // otpEmailData is the template context for the OTP verification email.

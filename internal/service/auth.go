@@ -507,6 +507,22 @@ func (s *AuthService) issueSession(
 	if err != nil {
 		return nil, err
 	}
+
+	// Signing in is what cancels a scheduled deletion, and this is the only
+	// place every sign-in path passes through — phone OTP, password, Google
+	// and the email-signup completion all land here. Putting it anywhere else
+	// would mean one route silently not honouring the promise the web page and
+	// the confirmation mail both make.
+	//
+	// Deliberately NOT in Refresh: renewing a token is something an app does
+	// by itself, in the background, on a phone in a drawer. Only a deliberate
+	// re-authentication should count as "I am still here, stop the deletion".
+	//
+	// Cannot fail the sign-in: CancelAccountDeletion logs and swallows. A user
+	// locked out because the cancel errored would have no way left to stop the
+	// deletion at all.
+	s.CancelAccountDeletion(ctx, acc.ID, models.DeletionCancelledBySignIn)
+
 	return &AuthResult{
 		Token:            tok.Token,
 		ExpiresAt:        tok.ExpiresAt,

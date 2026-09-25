@@ -11,6 +11,12 @@ const (
 	AccountPending   = "PENDING" // created, no verified contact yet
 	AccountActive    = "ACTIVE"  // has at least one verified identity
 	AccountSuspended = "SUSPENDED"
+	// AccountDeleted marks a purged account: the row survives only because
+	// orders.account_id points at it and the financial record has to outlive
+	// the person, so every personal column has been nulled and every identity
+	// row dropped. Nothing can sign in to one, and nothing should read one as
+	// a customer. See service.AccountDeletionService.
+	AccountDeleted = "DELETED"
 	// AccountInactive is never stored. It is a filter value meaning "any
 	// status other than ACTIVE", so the admin console's two-way split stays
 	// exhaustive as statuses are added.
@@ -48,6 +54,17 @@ const (
 	// caller into whichever account owns that number. These challenges are bound
 	// to the account that requested them and can only ever add to it.
 	OtpPurposeAddIdentity = "add_identity"
+
+	// OtpPurposeDeleteAccount proves control of a contact point before that
+	// contact's account is scheduled for deletion, from the public web page.
+	//
+	// Its own purpose for the reason every other one is: a code issued to
+	// authorise destruction must not be redeemable as a sign-in, and a login
+	// code the user happens to be holding must not destroy their account. The
+	// challenge is raised against an account that already exists, so unlike
+	// OtpPurposeLogin it is never find-or-create — an unknown identifier sends
+	// nothing at all.
+	OtpPurposeDeleteAccount = "delete_account"
 )
 
 // Account is the row model for the accounts table: one per user. Nullable
