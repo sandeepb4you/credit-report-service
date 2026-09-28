@@ -354,17 +354,28 @@ func main() {
 	} else {
 		statementParser = statement.NewPDFParser()
 	}
-	// Digitap Bank-Data client (redirect/upload flow). Stub when client-id is
-	// empty, like every other external-capability package. A prod deployment
+	// Digitap Bank-Data client (redirect/upload flow). Its credentials fall back
+	// to the Credit Analytics pair (see ResolveStatementCredentials); stub when
+	// both are empty or statement.digitap.client-id is "stub". A prod deployment
 	// also needs statement.digitap.callback-url (the public webhook); warn when
 	// it's missing so the operator knows the poll fallback is all that's left.
+	stmtID, stmtSecret, stmtForcedStub := cfg.ResolveStatementCredentials()
 	bankDataClient := bankdata.New(bankdata.Config{
-		BaseURL:      cfg.Statement.Digitap.BaseURL,
-		ClientID:     cfg.Statement.Digitap.ClientID,
-		ClientSecret: cfg.Statement.Digitap.ClientSecret,
-		Timeout:      cfg.Statement.Digitap.Timeout,
+		BaseURL:       cfg.Statement.Digitap.BaseURL,
+		ClientID:      stmtID,
+		ClientSecret:  stmtSecret,
+		Timeout:       cfg.Statement.Digitap.Timeout,
+		ReportSubtype: cfg.Statement.Digitap.ReportSubtype,
 	})
-	if cfg.Statement.Provider == "digitap" && cfg.Statement.Digitap.CallbackURL == "" {
+	switch {
+	case stmtForcedStub:
+		slog.Warn("statement.digitap.client-id is 'stub'; Statement Check runs offline and every upload succeeds with a canned report")
+	case bankDataClient.IsStub():
+		slog.Warn("no Digitap credentials for Statement Check (own or Credit Analytics); it runs offline and every upload succeeds with a canned report")
+	case strings.TrimSpace(cfg.Statement.Digitap.ClientID) == "":
+		slog.Info("Statement Check uses the Credit Analytics Digitap credentials", "base_url", cfg.Statement.Digitap.BaseURL)
+	}
+	if !bankDataClient.IsStub() && cfg.Statement.Digitap.CallbackURL == "" {
 		slog.Warn("statement.digitap.callback-url is empty; the Digitap webhook will not be reachable — relying on GET /:id poll fallback")
 	}
 	// Service and pool are mutually dependent (the service submits jobs; the
@@ -374,6 +385,12 @@ func main() {
 	bankStmtSvc := service.NewBankStatementService(
 		statementParser, bankStmtRepo, bankDataClient,
 		cfg.Statement.Digitap.CallbackURL, cfg.Statement.DefaultReturnURL,
+		service.DigitapOptions{
+			AcceptancePolicy: cfg.Statement.Digitap.AcceptancePolicy,
+			StatementMonths:  cfg.Statement.Digitap.StatementMonths,
+			MultiAccount:     cfg.Statement.Digitap.MultiAccount,
+			DailyLimit:       cfg.Statement.Digitap.DailyLimit,
+		},
 	)
 	bankStmtPool := service.NewWorkerPool(bankStmtSvc,
 		cfg.Statement.WorkerConcurrency, cfg.Statement.WorkerBuffer, cfg.Statement.ProcessTimeout)

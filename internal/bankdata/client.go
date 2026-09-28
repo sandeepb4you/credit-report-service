@@ -6,7 +6,7 @@
 //	POST /bank-data/generateurl     — mint a Digitap UI URL for the user
 //	POST /bank-data/statuscheck     — poll whether the report is ready
 //	POST /bank-data/retrievereport  — fetch the generated JSON/XLSX report
-//	POST /bank-data/institutionlist — list supported banks (not wired yet)
+//	POST /bank-data/institutions    — list supported banks (not wired yet)
 //
 // When no client credentials are configured (ClientID == ""), New returns a
 // stub client that never does I/O and replies with a synthesized success
@@ -32,6 +32,9 @@ type Config struct {
 	ClientID     string
 	ClientSecret string
 	Timeout      time.Duration
+	// ReportSubtype is sent as report_subtype on Retrieve Report. Empty omits
+	// it, which makes Digitap apply the subtype in our SLA.
+	ReportSubtype string
 }
 
 // Client calls the Digitap Bank Data API. The zero value is not usable;
@@ -81,34 +84,59 @@ func (c *Client) StatusCheck(ctx context.Context, requestID string) (*StatusChec
 }
 
 // RetrieveReport calls POST /bank-data/retrievereport and returns the raw
-// report payload (Result). type2 gives the categorised JSON report.
+// report payload (Result), always as JSON.
+//
+// On success the whole response body is the report (§6.5), so Result carries
+// the body verbatim rather than any one key of it — a report that happens to
+// have a top-level "result" field would otherwise lose its siblings. On an
+// error envelope Result is left empty; check IsError.
 func (c *Client) RetrieveReport(ctx context.Context, txnID string) (*RetrieveReportResponse, int, error) {
 	req := RetrieveReportRequest{
 		TxnID:         txnID,
 		ReportType:    ReportTypeJSON,
-		ReportSubtype: ReportSubtypeT2,
+		ReportSubtype: c.cfg.ReportSubtype,
 	}
 	return call(ctx, c, PathRetrieveReport, req, func(raw []byte) (*RetrieveReportResponse, error) {
 		var r RetrieveReportResponse
 		if err := json.Unmarshal(raw, &r); err != nil {
 			return nil, err
 		}
-		// The report body is sometimes inlined rather than wrapped under
-		// "result"; in that case carry the raw bytes through as Result.
-		if len(r.Result) == 0 && len(raw) > 0 {
-			r.Result = raw
+		if r.IsError() {
+			r.Result = nil
+			return &r, nil
 		}
+		r.Result = json.RawMessage(raw)
 		return &r, nil
 	})
 }
 
-// InstitutionList calls POST /bank-data/institutionlist. Not wired into the
-// service yet but exposed for completeness.
+// InstitutionList calls POST /bank-data/institutions for the banks the
+// statement-upload UI supports. Not wired into the service: the hosted UI
+// shows its own bank picker, so we only need an id to pin one bank.
 func (c *Client) InstitutionList(ctx context.Context) (*InstitutionListResponse, int, error) {
-	return call(ctx, c, PathInstitutionList, struct{}{}, func(raw []byte) (*InstitutionListResponse, error) {
+	req := InstitutionListRequest{Type: InstitutionTypeStatement}
+	return call(ctx, c, PathInstitutionList, req, func(raw []byte) (*InstitutionListResponse, error) {
 		var r InstitutionListResponse
 		return &r, json.Unmarshal(raw, &r)
 	})
+}
+
+// ParseExpires reads Generate URL's "expires". The doc's sample,
+// "2020-04-10T07:01:35.054", carries no zone at all, which RFC 3339 rejects;
+// it is read as UTC — the zone Digitap's other timestamps use — and a value
+// that does carry an offset keeps it. ok is false for anything unreadable.
+func ParseExpires(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		"2006-01-02T15:04:05.999999999",
+		"2006-01-02 15:04:05.999999999",
+	} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
 // call is the shared POST wrapper (free function — Go disallows generic

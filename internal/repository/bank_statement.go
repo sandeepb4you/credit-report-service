@@ -26,10 +26,18 @@ func NewBankStatementRepo(pool *pgxpool.Pool) *BankStatementRepo {
 // bankStatementCols is the lightweight column set returned by list/detail/latest
 // and by the raw endpoint. It excludes pdf_bytes (large, never useful to the
 // client) but includes extracted_text so /raw can show what was parsed.
-const bankStatementCols = `id, account_id, provider, filename, mime_type, status,
-    extracted_text, analysis, error_message,
+//
+// The nullable text columns are COALESCEd because the model holds them as
+// plain strings and pgx will not scan NULL into one: a processing row (no
+// text, no error yet) or a digitap row (no MIME type, no txn yet) would
+// otherwise fail every read with a scan error rather than return the row.
+const bankStatementCols = `id, account_id, provider, filename,
+    COALESCE(mime_type, '') AS mime_type, status,
+    COALESCE(extracted_text, '') AS extracted_text, analysis,
+    COALESCE(error_message, '') AS error_message,
     transaction_count, period_start, period_end,
-    request_id, txn_id, redirect_url, url_expires_at,
+    COALESCE(request_id, '') AS request_id, COALESCE(txn_id, '') AS txn_id,
+    COALESCE(redirect_url, '') AS redirect_url, url_expires_at,
     created_at, completed_at`
 
 // Create inserts a freshly-uploaded statement row in 'processing' status and
@@ -206,20 +214,38 @@ func (r *BankStatementRepo) FindLatestByAccount(ctx context.Context, accountID i
 // ReclaimStaleProcessing flips any rows still 'processing' after staleAfter to
 // 'failed'. Called by the worker pool on startup so a crash mid-analysis
 // doesn't leave rows hung forever. Returns the number of rows reclaimed.
+//
+// Local rows only. A 'processing' digitap row is not work this process owned:
+// it is a user somewhere in Digitap's upload UI, or Digitap parsing what they
+// uploaded, and neither stops because we restarted. Reclaiming those failed
+// every upload that had been open longer than staleAfter at each deploy.
 func (r *BankStatementRepo) ReclaimStaleProcessing(ctx context.Context, staleAfter time.Time) (int64, error) {
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE bank_statements
 		    SET status        = $2,
 		        error_message = $3,
 		        completed_at  = now()
-		  WHERE status = $1 AND created_at < $4`,
+		  WHERE status = $1 AND created_at < $4 AND provider = $5`,
 		models.BankStatementStatusProcessing,
 		models.BankStatementStatusFailed,
 		"analysis interrupted by server restart",
 		staleAfter,
+		models.BankStatementProviderLocal,
 	)
 	if err != nil {
 		return 0, err
 	}
 	return tag.RowsAffected(), nil
+}
+
+// CountDigitapSince counts the digitap uploads an account has started since
+// the given time, whatever became of them. The daily cap reads it: each one
+// minted a billed Digitap transaction, including those later cancelled.
+func (r *BankStatementRepo) CountDigitapSince(ctx context.Context, accountID int64, since time.Time) (int, error) {
+	var n int
+	err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM bank_statements
+		  WHERE account_id = $1 AND provider = $2 AND created_at >= $3`,
+		accountID, models.BankStatementProviderDigitap, since).Scan(&n)
+	return n, err
 }

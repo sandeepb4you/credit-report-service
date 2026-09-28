@@ -47,9 +47,10 @@ func stubGenerateURL(payload any) []byte {
 	// so the stub flow is internally consistent end-to-end.
 	reqID := nextStubID("req")
 	b, _ := json.Marshal(GenerateURLResponse{
-		Status:    "success",
-		URL:       "https://digitap-stub.example/bank-data/ui?request_id=" + reqID,
-		Expires:   "2099-12-31T23:59:59Z",
+		Status: "success",
+		URL:    "https://digitap-stub.example/bank-data/ui?request_id=" + reqID,
+		// The doc's own shape: no zone. Keeps ParseExpires honest in dev.
+		Expires:   "2099-12-31T23:59:59.000",
 		RequestID: reqID,
 	})
 	return b
@@ -77,9 +78,9 @@ func stubStatusCheck(payload any) []byte {
 }
 
 func stubRetrieveReport(payload any) []byte {
-	// A canned type2-style categorised report. The shape mirrors what the
-	// statement/stub.go analyzer produces so a digitap row and a local row look
-	// similar in dev. Callers treat this as opaque JSON.
+	// A canned report. NOT Digitap's schema — the v1.20 doc does not publish
+	// one — so nothing may map fields out of it; callers store it as opaque
+	// JSON. Replace with a real UAT report once one has been pulled.
 	report := map[string]any{
 		"summary": map[string]any{
 			"total_credits":     171000.00,
@@ -98,20 +99,17 @@ func stubRetrieveReport(payload any) []byte {
 			{"category": "card", "count": 1, "total": 1500.00},
 		},
 	}
-	b, _ := json.Marshal(RetrieveReportResponse{
-		Status: "success",
-		Result: mustMarshal(report),
-	})
-	return b
+	// Inline, as the real API answers (§6.5): the body is the report itself.
+	return mustMarshal(report)
 }
 
 func stubInstitutionList() []byte {
 	b, _ := json.Marshal(InstitutionListResponse{
 		Status: "success",
 		Institutions: []Institution{
-			{ID: "1", Name: "HDFC Bank"},
-			{ID: "2", Name: "ICICI Bank"},
-			{ID: "3", Name: "State Bank of India"},
+			{ID: 1, Name: "HDFC Bank", InstType: "bank"},
+			{ID: 2, Name: "ICICI Bank", InstType: "bank"},
+			{ID: 3, Name: "State Bank of India", InstType: "bank"},
 		},
 	})
 	return b

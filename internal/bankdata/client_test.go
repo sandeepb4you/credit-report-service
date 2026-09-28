@@ -68,11 +68,11 @@ func TestStub_RetrieveReport_HasResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RetrieveReport error: %v", err)
 	}
-	if resp.Status != "success" {
-		t.Errorf("status = %q, want success", resp.Status)
+	if resp.IsError() {
+		t.Fatalf("stub answered with an error envelope: %+v", resp)
 	}
 	if len(resp.Result) == 0 {
-		t.Fatalf("expected a non-empty report payload under result")
+		t.Fatalf("expected a non-empty report payload")
 	}
 	// The stub result is a JSON object; confirm it decodes and carries the
 	// expected top-level keys the UI relies on.

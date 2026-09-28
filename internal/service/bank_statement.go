@@ -66,7 +66,29 @@ type BankStatementService struct {
 	// defaultReturnURL is where Digitap sends the user's browser after the
 	// upload UI; passed through to Generate URL if the client omits it.
 	defaultReturnURL string
+	// digitap holds the Generate URL options and the per-account cap.
+	digitap DigitapOptions
+	// now is the clock, swappable in tests.
+	now func() time.Time
 }
+
+// DigitapOptions are the Generate URL knobs and the spend control. The zero
+// value asks Digitap for its configured defaults and applies no cap.
+type DigitapOptions struct {
+	AcceptancePolicy string
+	// StatementMonths > 0 sends start_month/end_month for the last N whole
+	// months plus the current one; capped at 12 (Digitap refuses older).
+	StatementMonths int
+	MultiAccount    bool
+	// DailyLimit is how many uploads one account may start per rolling 24h.
+	DailyLimit int
+}
+
+// ErrDigitapDailyLimit is returned by InitiateDigitap when the account has
+// started DailyLimit uploads in the last 24 hours. The handler answers 429.
+type ErrDigitapDailyLimit struct{ Msg string }
+
+func (e *ErrDigitapDailyLimit) Error() string { return e.Msg }
 
 // NewBankStatementService builds the service without its pool. Call SetPool
 // before Submit so queued jobs have somewhere to land.
@@ -75,6 +97,7 @@ func NewBankStatementService(
 	repo *repository.BankStatementRepo,
 	bankdataClient *bankdata.Client,
 	callbackURL, defaultReturnURL string,
+	digitap DigitapOptions,
 ) *BankStatementService {
 	return &BankStatementService{
 		parser:           parser,
@@ -82,6 +105,8 @@ func NewBankStatementService(
 		bankdata:         bankdataClient,
 		callbackURL:      callbackURL,
 		defaultReturnURL: defaultReturnURL,
+		digitap:          digitap,
+		now:              time.Now,
 	}
 }
 
@@ -228,7 +253,10 @@ func (s *BankStatementService) GetLatest(ctx context.Context, accountID int64) (
 // Analysis is omitted to keep list responses small; fetch by id for the full
 // breakdown.
 type StatementSummary struct {
-	ID               int64      `json:"id"`
+	ID int64 `json:"id"`
+	// Provider is 'local' or 'digitap'; the two carry differently shaped
+	// analyses, so the client decides from this how to render a row.
+	Provider         string     `json:"provider"`
 	Filename         string     `json:"filename"`
 	Status           string     `json:"status"`
 	TransactionCount *int       `json:"transactionCount,omitempty"`
@@ -270,7 +298,7 @@ func (s *BankStatementService) List(ctx context.Context, accountID int64, page, 
 	items := make([]StatementSummary, 0, len(rows))
 	for _, r := range rows {
 		items = append(items, StatementSummary{
-			ID: r.ID, Filename: r.Filename, Status: r.Status,
+			ID: r.ID, Provider: r.Provider, Filename: r.Filename, Status: r.Status,
 			TransactionCount: r.TransactionCount,
 			PeriodStart:      r.PeriodStart, PeriodEnd: r.PeriodEnd,
 			CreatedAt: r.CreatedAt, CompletedAt: r.CompletedAt,
@@ -301,12 +329,6 @@ type (
 // transaction-complete callback. See bankdata.CallbackTypeTransactionComplete.
 const BankDataCallbackTransactionComplete = bankdata.CallbackTypeTransactionComplete
 
-// us). We mint the UI url via Generate URL, Digitap calls us back on completion
-// (or the client polls), and we fetch the categorised report. Digitap computes
-// salary/categories itself, so for these rows we store their report JSON
-// verbatim in the analysis column rather than running our heuristics.
-// ===========================================================================
-
 // DigitapInitiateResponse is the result of starting a Digitap flow: the row id
 // (for polling) and the UI url + expiry the client should redirect the user to.
 type DigitapInitiateResponse struct {
@@ -317,32 +339,58 @@ type DigitapInitiateResponse struct {
 }
 
 // InitiateDigitap calls Generate URL and persists a 'processing' digitap row.
-// The client redirects the user to RedirectURL; when done, Digitap POSTs our
-// callback (txn_completed_cburl), and the client polls GET /:id in the meantime.
-// returnUrl is optional and overrides the configured default.
+// The client opens RedirectURL; when the user is done, Digitap POSTs our
+// callback (txn_completed_cburl), and the client polls GET /:id meanwhile.
+//
+// embedded is the Android WebView flow, which hears of completion through the
+// DigitapBS.onFinish bridge — the doc requires return_url to be absent there
+// (Appendix F), so both the client's returnURL and the default are dropped.
+// Otherwise returnURL, when given, overrides the configured default.
 func (s *BankStatementService) InitiateDigitap(
 	ctx context.Context,
 	accountID int64,
 	returnURL string,
+	embedded bool,
 ) (*DigitapInitiateResponse, error) {
 	if s.bankdata == nil {
 		// The digitap flow is optional; if it isn't wired, say so explicitly.
 		return nil, apperr.NewServiceUnavailable("Digitap bank-statement flow is not configured")
 	}
-	if returnURL == "" {
+	now := s.now()
+	if limit := s.digitap.DailyLimit; limit > 0 {
+		n, err := s.repo.CountDigitapSince(ctx, accountID, now.Add(-24*time.Hour))
+		if err != nil {
+			return nil, err
+		}
+		if n >= limit {
+			return nil, &ErrDigitapDailyLimit{
+				Msg: "You've checked several statements today. Please try again tomorrow."}
+		}
+	}
+	switch {
+	case embedded:
+		returnURL = ""
+	case returnURL == "":
 		returnURL = s.defaultReturnURL
 	}
 
 	// client_ref_num is our correlation id, surfaced back in the callback body.
-	// Prefixed so it's recognizable in Digitap's logs.
-	refNum := "BS-" + strconv.FormatInt(time.Now().UnixMilli(), 10) + "-" + randHex(6)
+	// Prefixed so it's recognizable in Digitap's logs. Alphanumeric and dashes,
+	// well under the 50-character limit (§4.4).
+	refNum := "BS-" + strconv.FormatInt(now.UnixMilli(), 10) + "-" + randHex(6)
 
-	resp, status, err := s.bankdata.GenerateURL(ctx, bankdata.GenerateURLRequest{
+	req := bankdata.GenerateURLRequest{
 		ClientRefNum:      refNum,
 		TxnCompletedCBURL: s.callbackURL,
-		Destination:       "statementupload",
+		Destination:       bankdata.DestinationStatementUpload,
 		ReturnURL:         returnURL,
-	})
+		AcceptancePolicy:  s.digitap.AcceptancePolicy,
+	}
+	req.StartMonth, req.EndMonth = statementMonthRange(now, s.digitap.StatementMonths)
+	if s.digitap.MultiAccount {
+		req.MultiAccountSupportRequired = "1"
+	}
+	resp, status, err := s.bankdata.GenerateURL(ctx, req)
 	if err != nil {
 		return nil, apperr.NewBadGateway("Digitap bank-data request failed")
 	}
@@ -352,7 +400,7 @@ func (s *BankStatementService) InitiateDigitap(
 	}
 
 	var expiresAt *time.Time
-	if t, err := time.Parse(time.RFC3339, resp.Expires); err == nil {
+	if t, ok := bankdata.ParseExpires(resp.Expires); ok {
 		expiresAt = &t
 	}
 	row, err := s.repo.CreateDigitap(ctx, accountID, resp.RequestID, resp.URL, expiresAt)
@@ -369,9 +417,28 @@ func (s *BankStatementService) InitiateDigitap(
 	}, nil
 }
 
+// statementMonthRange is Generate URL's start_month/end_month for the last n
+// whole months plus the current one, in YYYY-MM — "Full Months+" in the doc's
+// Appendix D, whose end date is today rather than the end of the month. The
+// current month is included so a statement downloaded this morning is inside
+// the range. n <= 0 sends neither (Digitap's configured default); n is capped
+// at 12 because a start older than a year is StartDateNotSupported.
+func statementMonthRange(now time.Time, n int) (string, string) {
+	if n <= 0 {
+		return "", ""
+	}
+	if n > 12 {
+		n = 12
+	}
+	first := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	return first.AddDate(0, -n, 0).Format("2006-01"), first.Format("2006-01")
+}
+
 // HandleCallback processes a transaction-complete callback from Digitap. It
-// locates the row by request_id, records the txn_id, and triggers the sync
-// (status-check + retrieve-report). Idempotent: a second callback for an
+// locates the row by request_id and triggers the sync (status-check +
+// retrieve-report). The callback is unauthenticated, so it is only ever a
+// prompt to ask: its status field decides nothing, and a forged "Failure"
+// cannot fail somebody's upload. Idempotent: a second callback for an
 // already-completed row is a no-op. Unknown request_ids are logged and ignored
 // (Digitap may redeliver for a flow we no longer have).
 func (s *BankStatementService) HandleCallback(ctx context.Context, event bankdata.CallbackEvent) error {
@@ -389,18 +456,58 @@ func (s *BankStatementService) HandleCallback(ctx context.Context, event bankdat
 	if row.Status != models.BankStatementStatusProcessing {
 		return nil
 	}
-	if event.TxnID != "" {
-		_ = s.repo.SetTxnID(ctx, row.ID, event.TxnID)
-		row.TxnID = event.TxnID
-	}
-	// A Failure callback (e.g. user cancelled) is terminal; fail the row
-	// without a status-check round-trip.
-	if strings.EqualFold(event.Status, "Failure") {
-		s.fail(ctx, row.ID, "statement upload was cancelled or failed at Digitap")
-		return nil
-	}
 	return s.SyncDigitap(ctx, row)
 }
+
+// digitapOutcome is what a status check says about a request as a whole.
+type digitapOutcome int
+
+const (
+	digitapPending digitapOutcome = iota // nothing terminal yet; ask again later
+	digitapReady                         // a report is ready to retrieve
+	digitapFailed                        // every transaction ended without one
+)
+
+// pickDigitapOutcome reads a request's transactions as one answer. A request
+// can own several: a multi-account upload, or a user who hit an error, went
+// back and uploaded again from the same link. So:
+//   - any ReportGenerated wins (the last listed), even beside earlier
+//     failures — that retry is exactly what the upload UI invites;
+//   - anything still moving means wait, rather than failing on an earlier
+//     attempt while a later one is being parsed;
+//   - only when every transaction has failed is the request failed, reported
+//     through the last one.
+//
+// An empty list is pending: the link has been minted and not yet used.
+func pickDigitapOutcome(txns []bankdata.TxnStatus) (digitapOutcome, *bankdata.TxnStatus) {
+	var ready, lastFailed *bankdata.TxnStatus
+	pending := false
+	for i := range txns {
+		t := &txns[i]
+		switch {
+		case t.Code == bankdata.CodeReportGenerated:
+			ready = t
+		case strings.EqualFold(t.Status, bankdata.TxnStatusFailure),
+			strings.EqualFold(t.Status, bankdata.TxnStatusError):
+			lastFailed = t
+		default:
+			pending = true
+		}
+	}
+	switch {
+	case ready != nil:
+		return digitapReady, ready
+	case pending || lastFailed == nil:
+		return digitapPending, nil
+	default:
+		return digitapFailed, lastFailed
+	}
+}
+
+// digitapUnusedLinkGrace is how long past its expiry an unused upload link is
+// given before the row is failed. Digitap's clock and ours need not agree, and
+// a status check a few minutes late costs nothing.
+const digitapUnusedLinkGrace = 10 * time.Minute
 
 // SyncDigitap is the shared retrieve step called by both the webhook and the
 // poll fallback: ask Digitap for the status, and if the report is ready, fetch
@@ -415,27 +522,32 @@ func (s *BankStatementService) SyncDigitap(ctx context.Context, row *models.Bank
 		slog.Warn("digitap status-check failed", "request_id", row.RequestID, "error", err)
 		return err
 	}
-	// Find the first terminal txn for this request_id.
-	var txn *bankdata.TxnStatus
-	for i := range status.TxnStatus {
-		t := status.TxnStatus[i]
-		if t.Code == bankdata.CodeReportGenerated ||
-			t.Status == "Failure" || t.Status == "Error" {
-			txn = &t
-			break
-		}
+	if status.Status == "error" {
+		// An API-level error (TxnNotFound, NoActiveTxn, RateLimited...) is about
+		// the call, not the upload. Leave the row for the next poll.
+		slog.Warn("digitap status-check error",
+			"request_id", row.RequestID, "code", status.Code, "msg", status.Msg)
+		return fmt.Errorf("digitap status-check: %s", orMsg(status.Msg, status.Code))
 	}
-	if txn == nil {
-		// Still in progress (or no txns yet). Leave the row 'processing'; the
-		// next poll/callback will retry.
+
+	outcome, txn := pickDigitapOutcome(status.TxnStatus)
+	switch outcome {
+	case digitapPending:
+		// A link nobody used never produces a transaction, so nothing would
+		// ever end the row. Once it has expired, end it here.
+		if len(status.TxnStatus) == 0 && row.URLExpiresAt != nil &&
+			s.now().After(row.URLExpiresAt.Add(digitapUnusedLinkGrace)) {
+			s.fail(ctx, row.ID, digitapFailureMessage(bankdata.CodeTxnExpired, ""))
+		}
 		return nil
-	}
-	if txn.Code != bankdata.CodeReportGenerated {
-		reason := "statement analysis failed at Digitap"
-		if txn.Msg != "" {
-			reason = txn.Msg
+	case digitapFailed:
+		if txn.TxnID != "" {
+			_ = s.repo.SetTxnID(ctx, row.ID, txn.TxnID)
 		}
-		s.fail(ctx, row.ID, reason)
+		slog.Info("digitap statement upload failed",
+			"id", row.ID, "request_id", row.RequestID, "txn_id", txn.TxnID,
+			"code", txn.Code, "msg", txn.Msg)
+		s.fail(ctx, row.ID, digitapFailureMessage(txn.Code, txn.Msg))
 		return nil
 	}
 
@@ -450,14 +562,26 @@ func (s *BankStatementService) SyncDigitap(ctx context.Context, row *models.Bank
 			"request_id", row.RequestID, "txn_id", txn.TxnID, "error", err)
 		return err
 	}
+	if report.IsError() {
+		// TxnNotCompleted is "not yet", and the rest (RateLimited,
+		// InternalError, InvalidReportType) are ours or Digitap's to fix, never
+		// the user's upload — which Digitap has just said succeeded. So none of
+		// them fail the row; the next poll or redelivered callback retries.
+		slog.Warn("digitap retrieve-report error",
+			"request_id", row.RequestID, "txn_id", txn.TxnID,
+			"code", report.Code, "msg", report.ErrorText())
+		if report.Code == bankdata.CodeTxnNotCompleted {
+			return nil
+		}
+		return fmt.Errorf("digitap retrieve-report: %s", orMsg(report.ErrorText(), report.Code))
+	}
 	if len(report.Result) == 0 {
-		s.fail(ctx, row.ID, "Digitap returned an empty report")
+		s.fail(ctx, row.ID, "We couldn't read the analysis for this statement. Please try again.")
 		return nil
 	}
 	// Store Digitap's report JSON verbatim. The transaction_count is unknown
-	// (their schema nests it under result); leave the column null rather than
-	// guess, and skip the period bounds (digitap rows have no parsed-text
-	// layer to derive them from).
+	// (their schema is not in the v1.20 doc); leave the column null rather
+	// than guess, and skip the period bounds for the same reason.
 	if err := s.repo.UpdateResult(ctx, row.ID, "", report.Result, 0, nil, nil); err != nil {
 		slog.Error("failed to persist digitap report",
 			"id", row.ID, "request_id", row.RequestID, "error", err)
@@ -466,23 +590,70 @@ func (s *BankStatementService) SyncDigitap(ctx context.Context, row *models.Bank
 	return nil
 }
 
+// digitapFailureMessage is the sentence stored on a failed row, which the app
+// shows as is. Digitap's own messages are written for an integrator — "(Error
+// Code: 088)", "for the given customer id" — so the codes a user can act on
+// get a sentence saying what to do; anything else falls back to Digitap's
+// message, which beats a generic line, and then to one.
+//
+// Codes are matched as the doc prints them, spaces and odd casing included
+// ("Tamper error", "Usercancelled", "Txn_expired"): §4.8 and §5.5 spell some
+// of the same outcomes differently, and it is not clear which the API sends.
+func digitapFailureMessage(code, msg string) string {
+	switch code {
+	case bankdata.CodeUserCancelled, "Usercancelled":
+		return "You cancelled the upload before it finished."
+	case bankdata.CodeTxnExpired, "Txn_expired":
+		return "The upload link expired. Start again to get a new one."
+	case "NoFileUploaded":
+		return "No statement was uploaded."
+	case "TxnDateRange", "Txn date range", "StatementDateRange", "TxnExactDateRange":
+		return "The statement doesn't cover the months we need. Download one for the last 6 months and try again."
+	case "IncompleteMonths", "Mpassbook date range error", "Missing transaction error":
+		return "The statement is missing some transactions. Download the complete statement from your bank and try again."
+	case "StatementIsScannedImage":
+		return "That looks like a scanned copy. Upload the PDF downloaded from your net banking."
+	case "Tamper error", "PDFScoreLessConfidenceError":
+		return "This doesn't look like an original bank statement. Upload the PDF exactly as your bank issued it."
+	case "Invalid file password", "No file password":
+		return "The statement's password was missing or wrong."
+	case "NoValidAccType", "Invalid bank account type":
+		return "That account type isn't supported. Try a savings or current account statement."
+	}
+	if strings.TrimSpace(msg) != "" {
+		return msg
+	}
+	return "We couldn't analyse this statement. Please try again."
+}
+
 // mapDigitapError translates the documented Generate-URL error codes to typed
 // app errors. Most are 502 (upstream/our-config issue); InvalidInstitution and
-// the date-range codes are 400 (bad client input).
+// the date-range codes are 400 (a request we built wrongly).
+//
+// None of them is anything the user did or can fix — every field on a Generate
+// URL request is ours — so the message says only that the check is unavailable,
+// and Digitap's own words ("Client is not permitted to access this URL") go to
+// the log, where the operator who can fix them will look. They used to be the
+// message, which put an integrator's error on a customer's screen.
 func mapDigitapError(code, msg string, status int) error {
+	slog.Warn("digitap generate-url rejected", "code", code, "msg", msg, "upstream_status", status)
 	switch code {
-	case "AccessDenied", "SignatureDoesNotMatch", "InvalidEncryption",
-		"ClientNotConfigured", "NotSignedUp", "InternalError":
-		// Our credentials / Digitap's side — surface as bad gateway.
-		return apperr.NewBadGateway("Digitap rejected the request: " + orMsg(msg, code))
+	case "RateLimited":
+		return apperr.NewServiceUnavailable("Statement Check is busy right now. Please try again in a few minutes.")
 	case "InvalidInstitution", "InstitutionCurrentlyNotSupported",
 		"InvalidStmtStartDate", "InvalidStmtEndDate", "DateRangeTooLarge",
 		"InvalidClientRefNum", "InvalidDestination":
-		return apperr.NewValidation("invalid bank-statement request: " + orMsg(msg, code))
+		return apperr.NewValidation(digitapUnavailableMessage)
 	default:
-		return apperr.NewBadGateway("Digitap error: " + orMsg(msg, code))
+		// AccessDenied, SignatureDoesNotMatch, ClientNotConfigured, NotSignedUp,
+		// InternalError and anything undocumented: our credentials or their side.
+		return apperr.NewBadGateway(digitapUnavailableMessage)
 	}
 }
+
+// digitapUnavailableMessage is what a user sees when Digitap refuses to start
+// an upload for a reason on our side or theirs.
+const digitapUnavailableMessage = "Statement Check isn't available right now. Please try again later."
 
 func orMsg(msg, code string) string {
 	if msg != "" {

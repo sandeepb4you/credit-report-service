@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -222,9 +223,10 @@ func (h *BankStatementHandler) GetLatest(c *fiber.Ctx) error {
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        request  body      object  false  "{ ""returnUrl"": ""https://app/..."" } — optional; defaults to the configured return URL"
+// @Param        request  body      object  false  "{ ""returnUrl"": ""https://app/..."", ""embedded"": false } — both optional. returnUrl defaults to the configured return URL; embedded=true (the Android WebView, which is told of completion by the DigitapBS JavaScript bridge) sends no return URL at all"
 // @Success      200  {object}  service.DigitapInitiateResponse
 // @Failure      401  {object}  apperr.ErrorBody  "Not authenticated"
+// @Failure      429  {object}  apperr.ErrorBody  "The account has started statement.digitap.daily-limit uploads in the last 24 hours"
 // @Failure      502  {object}  apperr.ErrorBody  "Digitap rejected the request"
 // @Failure      503  {object}  apperr.ErrorBody  "Digitap flow not configured"
 // @Router       /bank-statements/digitap/initiate [post]
@@ -235,11 +237,16 @@ func (h *BankStatementHandler) InitiateDigitap(c *fiber.Ctx) error {
 	}
 	var in struct {
 		ReturnURL string `json:"returnUrl"`
+		Embedded  bool   `json:"embedded"`
 	}
 	// Body is optional; an empty/absent body means "use the default return URL".
 	_ = c.BodyParser(&in)
-	res, err := h.svc.InitiateDigitap(c.Context(), accountID, strings.TrimSpace(in.ReturnURL))
+	res, err := h.svc.InitiateDigitap(c.Context(), accountID, strings.TrimSpace(in.ReturnURL), in.Embedded)
 	if err != nil {
+		var limited *service.ErrDigitapDailyLimit
+		if errors.As(err, &limited) {
+			return fiber.NewError(fiber.StatusTooManyRequests, limited.Msg)
+		}
 		return err
 	}
 	return c.JSON(res)

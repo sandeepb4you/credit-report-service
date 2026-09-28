@@ -44,6 +44,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"credit-report-service/internal/bankdata"
 	"credit-report-service/internal/config"
 	"credit-report-service/internal/db"
 	"credit-report-service/internal/digitap"
@@ -54,6 +55,7 @@ import (
 	"credit-report-service/internal/server"
 	"credit-report-service/internal/service"
 	"credit-report-service/internal/sms"
+	"credit-report-service/internal/statement"
 )
 
 const (
@@ -230,6 +232,9 @@ func stripSearchPath(dsn string) string {
 	}()
 }
 
+// testStatementDailyLimit is the Statement Check cap the harness runs with.
+const testStatementDailyLimit = 3
+
 // buildApp wires the slice of the service the signup and referral flows touch.
 //
 // Handlers outside that slice are passed as nil. server.New only stores them
@@ -330,7 +335,15 @@ func buildApp(cfg *config.Config, pool *pgxpool.Pool, pay *paymentSetup) (*fiber
 		handler.NewCouponHandler(couponSvc),
 		nil, // loans
 		nil, // score builder
-		nil, // bank statements
+		// The Digitap flow only: the bank-data client is its offline stub and no
+		// worker pool is wired, so the local-parse upload (the one path that
+		// needs the pool) stays out of reach, as before.
+		handler.NewBankStatementHandler(
+			service.NewBankStatementService(
+				statement.NewStub(), repository.NewBankStatementRepo(pool),
+				bankdata.New(bankdata.Config{}), "", "https://myscorr.com/statement-done",
+				service.DigitapOptions{StatementMonths: 6, DailyLimit: testStatementDailyLimit},
+			), 10_000_000, ""),
 		// Wired with the real service: a reset deletes across a dozen tables in one
 		// transaction, and the failures worth catching are the ones a new foreign
 		// key introduces. A nil here is why a plan purchase could break it unseen.

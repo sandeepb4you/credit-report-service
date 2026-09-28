@@ -104,3 +104,33 @@ func TestResolvePrefillCredentials_StubYieldsEmptyID(t *testing.T) {
 		t.Errorf("clientID = %q, want empty so digitap.NewPrefill selects the stub", id)
 	}
 }
+
+// Statement Check borrows the Credit Analytics pair the same way prefill does.
+// The case that matters most is the sentinel: with working Credit Analytics
+// credentials, it is the only way to keep statement uploads offline.
+func TestResolveStatementCredentials(t *testing.T) {
+	ca := DigitapConfig{ClientID: "ca-id", ClientSecret: "ca-secret"}
+	cases := []struct {
+		name       string
+		own        BankDataConfig
+		wantID     string
+		wantSecret string
+		wantStub   bool
+	}{
+		{"empty borrows the credit-analytics pair", BankDataConfig{}, "ca-id", "ca-secret", false},
+		{"an explicit pair wins", BankDataConfig{ClientID: "bd-id", ClientSecret: "bd-secret"}, "bd-id", "bd-secret", false},
+		{"the sentinel forces the stub", BankDataConfig{ClientID: " STUB "}, "", "", true},
+	}
+	for _, tc := range cases {
+		cfg := &Config{Digitap: ca, Statement: StatementConfig{Digitap: tc.own}}
+		id, secret, stub := cfg.ResolveStatementCredentials()
+		if id != tc.wantID || secret != tc.wantSecret || stub != tc.wantStub {
+			t.Errorf("%s: got (%q, %q, %v), want (%q, %q, %v)",
+				tc.name, id, secret, stub, tc.wantID, tc.wantSecret, tc.wantStub)
+		}
+	}
+	// Nothing anywhere: empty, which bankdata.New reads as the offline stub.
+	if id, _, _ := (&Config{}).ResolveStatementCredentials(); id != "" {
+		t.Errorf("no credentials at all resolved to %q", id)
+	}
+}

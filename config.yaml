@@ -288,8 +288,11 @@ statement:
   # Optional guard on the public Digitap webhook (?secret=). Off in dev; set it
   # in prod — the API defines no HMAC in v1.20.
   callback-secret: ""
-  # Default browser return URL after the Digitap UI, when the client omits it.
-  default-return-url: ""
+  # Default browser return URL after the Digitap UI, when the client omits it
+  # (web and iOS; the Android WebView sends embedded=true and gets none).
+  # Digitap fills the two %s with the txn id and true/false. The page only says
+  # "go back to the app" — the app polls the server for the actual result.
+  default-return-url: "https://myscorr.com/statement-done?txn=%s&status=%s"
 
   digitap:
     # Digitap Bank Data PDF UI API (v1.20). Separate creds from digitap.* above
@@ -303,6 +306,17 @@ statement:
     # the flow. Set it (e.g. via ngrok or the load balancer) in prod.
     callback-url: ""
     timeout: 30s
+    # Retrieve Report subtype (json type1/type2/type3). Empty = our SLA's
+    # default at Digitap. Set only a subtype Digitap has confirmed for us.
+    report-subtype: ""
+    # Generate URL acceptance_policy; empty = what Digitap configured for us.
+    acceptance-policy: ""
+    # Ask for the last N whole months plus the current one. 0 = Digitap's default.
+    statement-months: 6
+    # Let one upload carry several accounts / banks.
+    multi-account: false
+    # Uploads one account may start per rolling 24h. Each is billed to us. 0 = off.
+    daily-limit: 5
 
 log:
   # Structured logging (log/slog). Override via LOG_LEVEL / LOG_FORMAT.

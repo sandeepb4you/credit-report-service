@@ -218,6 +218,23 @@ type BankDataConfig struct {
 	ClientSecret string        `mapstructure:"client-secret"`
 	CallbackURL  string        `mapstructure:"callback-url"` // public URL Digitap POSTs the callback to
 	Timeout      time.Duration `mapstructure:"timeout"`
+	// ReportSubtype is Retrieve Report's report_subtype (type1|type2|type3...).
+	// Empty lets Digitap apply our SLA's default; a subtype outside the
+	// contract is InvalidReportType, so only set one Digitap has confirmed.
+	ReportSubtype string `mapstructure:"report-subtype"`
+	// AcceptancePolicy is Generate URL's acceptance_policy. Empty = the policy
+	// configured on our account at Digitap.
+	AcceptancePolicy string `mapstructure:"acceptance-policy"`
+	// StatementMonths, when > 0, asks for the last N whole calendar months plus
+	// the current one (start_month/end_month). 0 = Digitap's configured default
+	// range. Digitap refuses a start older than a year, so it is capped at 12.
+	StatementMonths int `mapstructure:"statement-months"`
+	// MultiAccount lets one upload carry several accounts and banks (§1.2 B).
+	MultiAccount bool `mapstructure:"multi-account"`
+	// DailyLimit caps how many uploads one account may start per rolling 24h.
+	// The check is free to users and every Digitap transaction is billed to
+	// us, so this is the spend control. 0 disables it.
+	DailyLimit int `mapstructure:"daily-limit"`
 }
 
 // DemoConfig holds flags that relax real-world gating so the product can be
@@ -399,6 +416,29 @@ func (d DigitapConfig) ResolvePrefillCredentials() (clientID, clientSecret strin
 		return d.Prefill.ClientID, d.Prefill.ClientSecret, false
 	}
 	return d.ClientID, d.ClientSecret, false
+}
+
+// ResolveStatementCredentials picks the credentials the Bank Data (statement
+// upload) client uses, with the same precedence as ResolvePrefillCredentials:
+// statement.digitap.client-id "stub" forces the offline stub, an explicit pair
+// wins, and an empty one borrows the Credit Analytics pair — one Digitap
+// account can carry both products, and this one does.
+//
+// The base URL is NOT borrowed: Bank Data lives on its own host and path
+// (svcdemo.digitap.work/bank-data), not Credit Analytics' apidemo host.
+//
+// Borrowing has a cost worth knowing: every environment with Credit Analytics
+// credentials now makes live, billable Statement Check calls. Set the sentinel
+// to keep one offline.
+func (c *Config) ResolveStatementCredentials() (clientID, clientSecret string, forcedStub bool) {
+	own := c.Statement.Digitap
+	if strings.EqualFold(strings.TrimSpace(own.ClientID), PrefillStubSentinel) {
+		return "", "", true
+	}
+	if strings.TrimSpace(own.ClientID) != "" {
+		return own.ClientID, own.ClientSecret, false
+	}
+	return c.Digitap.ClientID, c.Digitap.ClientSecret, false
 }
 
 // PrefillConfig configures the Digitap Mobile to Prefill API (spec v1.4), used
@@ -956,6 +996,11 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("statement.digitap.client-secret", "")
 	v.SetDefault("statement.digitap.callback-url", "")
 	v.SetDefault("statement.digitap.timeout", "30s")
+	v.SetDefault("statement.digitap.report-subtype", "")
+	v.SetDefault("statement.digitap.acceptance-policy", "")
+	v.SetDefault("statement.digitap.statement-months", 6)
+	v.SetDefault("statement.digitap.multi-account", false)
+	v.SetDefault("statement.digitap.daily-limit", 5)
 
 	// Demo mode: OFF by default. Enable only for demos/UAT where the real KYC
 	// verification provider is unavailable. Set via DEMO_ENABLED=true.
@@ -1009,7 +1054,9 @@ func allKeys() []string {
 		"statement.provider", "statement.default-return-url", "statement.callback-secret",
 		"statement.digitap.base-url", "statement.digitap.client-id",
 		"statement.digitap.client-secret", "statement.digitap.callback-url",
-		"statement.digitap.timeout",
+		"statement.digitap.timeout", "statement.digitap.report-subtype",
+		"statement.digitap.acceptance-policy", "statement.digitap.statement-months",
+		"statement.digitap.multi-account", "statement.digitap.daily-limit",
 		"demo.enabled",
 	}
 }

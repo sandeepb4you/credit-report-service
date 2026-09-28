@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"credit-report-service/internal/apperr"
 	"credit-report-service/internal/bankdata"
@@ -31,6 +33,12 @@ func TestMapDigitapError(t *testing.T) {
 		{"InvalidClientRefNum", true},
 		{"InvalidDestination", true},
 		{"", false}, // unknown code -> default 502
+	}
+	// Whatever the code, Digitap's integrator-facing text never reaches the user.
+	for _, tc := range cases {
+		if err := mapDigitapError(tc.code, "Client is not permitted to access this URL", 403); strings.Contains(err.Error(), "permitted") {
+			t.Errorf("code %q leaked the upstream message: %v", tc.code, err)
+		}
 	}
 	for _, tc := range cases {
 		err := mapDigitapError(tc.code, "msg", 400)
@@ -96,4 +104,90 @@ func TestBankDataReExport(t *testing.T) {
 		t.Errorf("callback constant alias drifted")
 	}
 	var _ BankDataCallbackEvent = bankdata.CallbackEvent{}
+}
+
+// TestPickDigitapOutcome pins how a request's transactions are read as one
+// answer. The cases that matter are the mixed ones: a retry that succeeded
+// after a failure, and a failure beside an attempt still being parsed — the
+// old first-terminal-wins scan failed the row on both.
+func TestPickDigitapOutcome(t *testing.T) {
+	ok := bankdata.TxnStatus{TxnID: "ok", Status: "Success", Code: bankdata.CodeReportGenerated}
+	failed := bankdata.TxnStatus{TxnID: "bad", Status: "Failure", Code: "Tamper error"}
+	errored := bankdata.TxnStatus{TxnID: "err", Status: "Error", Code: "InternalError"}
+	moving := bankdata.TxnStatus{TxnID: "mv", Status: "InProgress", Code: bankdata.CodeTxnProcessing}
+	opened := bankdata.TxnStatus{TxnID: "op", Status: "Success", Code: bankdata.CodeTxnInitiated}
+
+	cases := []struct {
+		name    string
+		txns    []bankdata.TxnStatus
+		want    digitapOutcome
+		wantTxn string
+	}{
+		{"unused link", nil, digitapPending, ""},
+		{"opened, nothing uploaded", []bankdata.TxnStatus{opened}, digitapPending, ""},
+		{"parsing", []bankdata.TxnStatus{moving}, digitapPending, ""},
+		{"ready", []bankdata.TxnStatus{ok}, digitapReady, "ok"},
+		{"failed then retried", []bankdata.TxnStatus{failed, ok}, digitapReady, "ok"},
+		{"ready then failed", []bankdata.TxnStatus{ok, failed}, digitapReady, "ok"},
+		{"failed while retry parses", []bankdata.TxnStatus{failed, moving}, digitapPending, ""},
+		{"only failure", []bankdata.TxnStatus{failed}, digitapFailed, "bad"},
+		{"all failed: the last reports", []bankdata.TxnStatus{failed, errored}, digitapFailed, "err"},
+	}
+	for _, tc := range cases {
+		got, txn := pickDigitapOutcome(tc.txns)
+		if got != tc.want {
+			t.Errorf("%s: outcome = %v, want %v", tc.name, got, tc.want)
+			continue
+		}
+		gotTxn := ""
+		if txn != nil {
+			gotTxn = txn.TxnID
+		}
+		if gotTxn != tc.wantTxn {
+			t.Errorf("%s: txn = %q, want %q", tc.name, gotTxn, tc.wantTxn)
+		}
+	}
+}
+
+func TestStatementMonthRange(t *testing.T) {
+	at := time.Date(2026, 9, 28, 15, 0, 0, 0, time.UTC)
+	cases := []struct {
+		n          int
+		start, end string
+	}{
+		{0, "", ""},
+		{-1, "", ""},
+		{6, "2026-03", "2026-09"},
+		{1, "2026-08", "2026-09"},
+		{12, "2025-09", "2026-09"},
+		{24, "2025-09", "2026-09"}, // capped: Digitap refuses a start over a year back
+	}
+	for _, tc := range cases {
+		s, e := statementMonthRange(at, tc.n)
+		if s != tc.start || e != tc.end {
+			t.Errorf("n=%d: %q..%q, want %q..%q", tc.n, s, e, tc.start, tc.end)
+		}
+	}
+	// Month arithmetic from the 31st must not overflow into the next month.
+	s, _ := statementMonthRange(time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC), 1)
+	if s != "2026-02" {
+		t.Errorf("from 31 March, 1 month back = %q, want 2026-02", s)
+	}
+}
+
+// TestDigitapFailureMessage: codes a user can act on get our sentence, never
+// Digitap's integrator-facing one; the rest fall back to Digitap's message.
+func TestDigitapFailureMessage(t *testing.T) {
+	for _, code := range []string{"UserCancelled", "TxnExpired", "Txn_expired", "Tamper error", "StatementIsScannedImage"} {
+		got := digitapFailureMessage(code, "Requested transaction expired. (Error Code: 088)")
+		if strings.Contains(got, "Error Code") || got == "" {
+			t.Errorf("%s: leaked the upstream message: %q", code, got)
+		}
+	}
+	if got := digitapFailureMessage("SomethingNew", "Digitap says why"); got != "Digitap says why" {
+		t.Errorf("unknown code: %q, want Digitap's message", got)
+	}
+	if got := digitapFailureMessage("SomethingNew", "  "); got == "" {
+		t.Errorf("unknown code, no message: want a generic sentence")
+	}
 }
