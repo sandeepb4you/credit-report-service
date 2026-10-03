@@ -7,7 +7,7 @@ import (
 
 // StubSender is the local-development sender, selected by sms.provider: "stub"
 // or by an empty MSG91 auth key. It sends nothing at all, mirroring the
-// empty-SMTP mail stub and the Cashfree stub gateway.
+// empty-SMTP mail stub and the Razorpay stub gateway.
 type StubSender struct{}
 
 func NewStubSender() *StubSender { return &StubSender{} }

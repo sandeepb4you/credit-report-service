@@ -31,7 +31,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # ---- runtime --------------------------------------------------------------
 FROM alpine:3.22
 
-# ca-certificates: outbound TLS to Digitap, Cashfree, Utho, Google, SMTP.
+# ca-certificates: outbound TLS to Digitap, Razorpay, Utho, Google, SMTP.
 # tzdata: IST-relative timestamps resolve correctly.
 RUN apk add --no-cache ca-certificates tzdata \
  && adduser -D -u 10001 app

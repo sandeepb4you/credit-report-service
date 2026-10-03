@@ -1,7 +1,6 @@
 package payments
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -14,17 +13,18 @@ var ErrNoSuccessfulPayment = errors.New("no successful payment on this order")
 // PaymentDetails is the successful payment behind a PAID order — as much of it
 // as a tax invoice prints, and deliberately no more.
 //
-// What is NOT here matters as much as what is. Cashfree's payment_method
-// carries the payer's UPI id (a person's handle, which the account-deletion
-// scrub exists to remove from the webhook log) and, for a wallet, their phone.
-// Neither is copied out: the invoice says "UPI" and the UTR, which is what the
+// What is NOT here matters as much as what is. Razorpay's payment entity
+// carries the payer's email, phone and UPI id (a person's handle, which the
+// account-deletion scrub exists to remove from the webhook log). None of them
+// is copied out: the invoice says "UPI" and the UTR, which is what the
 // customer's bank statement shows and what a dispute is traced by.
 type PaymentDetails struct {
-	CFPaymentID string
-	// Group is Cashfree's payment_group: upi, credit_card, debit_card,
-	// net_banking, wallet, pay_later, ...
+	// PaymentID is the gateway's payment id (pay_...).
+	PaymentID string
+	// Group is the payment group in our vocabulary: upi, credit_card,
+	// debit_card, net_banking, wallet, emi, pay_later, ...
 	Group string
-	// BankReference is the UTR for UPI, the bank's reference otherwise.
+	// BankReference is the UTR (RRN) for UPI, the bank's reference otherwise.
 	BankReference  string
 	CardNetwork    string
 	CardLast4      string
@@ -33,12 +33,12 @@ type PaymentDetails struct {
 }
 
 // Label is the "Payment mode" line: "UPI", "Card · Visa ending 4417",
-// "Net banking · HDFC Bank", "Wallet · Phonepe".
+// "Net banking · HDFC", "Wallet · Phonepe".
 //
-// No UPI app name, although the design shows "UPI · PhonePe": Cashfree does not
-// report which app paid, only the payer's handle, and naming an app from the
-// handle's suffix is a guess that would sometimes print the wrong company on a
-// tax document.
+// No UPI app name, although the design shows "UPI · PhonePe": the gateway does
+// not report which app paid, only the payer's handle, and naming an app from
+// the handle's suffix is a guess that would sometimes print the wrong company
+// on a tax document.
 func (d PaymentDetails) Label() string {
 	switch {
 	case d.Group == "upi":
@@ -57,6 +57,8 @@ func (d PaymentDetails) Label() string {
 		return "Net banking"
 	case d.Group == "wallet" && d.WalletProvider != "":
 		return "Wallet · " + titleWord(d.WalletProvider)
+	case d.Group == "emi":
+		return "EMI"
 	case d.Group == "":
 		return ""
 	default:
@@ -65,103 +67,99 @@ func (d PaymentDetails) Label() string {
 }
 
 // Reference is the label and value of the one payment reference an invoice
-// prints: the UTR for UPI when there is one, Cashfree's payment id otherwise.
+// prints: the UTR for UPI when there is one, the gateway's payment id otherwise.
 func (d PaymentDetails) Reference() (label, value string) {
 	if d.Group == "upi" && d.BankReference != "" {
 		return "UTR", d.BankReference
 	}
-	if d.CFPaymentID != "" {
-		return "Payment ID", d.CFPaymentID
+	if d.PaymentID != "" {
+		return "Payment ID", d.PaymentID
 	}
 	return "", ""
 }
 
-// LabelForGroup is the label when only the payment_group is known — an order
+// LabelForGroup is the label when only the payment group is known — an order
 // settled before its payment record could be read.
 func LabelForGroup(group string) string {
 	return PaymentDetails{Group: strings.ToLower(group)}.Label()
 }
 
-// cfPayment is one Cashfree payment entity, as GET /orders/{id}/payments lists
-// it and as a PAYMENT_SUCCESS webhook carries it under data.payment.
-type cfPayment struct {
-	CFPaymentID   json.RawMessage `json:"cf_payment_id"`
-	PaymentStatus string          `json:"payment_status"`
-	PaymentGroup  string          `json:"payment_group"`
-	BankReference string          `json:"bank_reference"`
-	PaymentMethod struct {
-		Card *struct {
-			CardNetwork string `json:"card_network"`
-			CardNumber  string `json:"card_number"`
-		} `json:"card"`
-		Netbanking *struct {
-			BankName string `json:"netbanking_bank_name"`
-		} `json:"netbanking"`
-		App *struct {
-			Provider string `json:"provider"`
-		} `json:"app"`
-	} `json:"payment_method"`
+// rzpPayment is one Razorpay payment entity, as GET /orders/{id}/payments lists
+// it and as a webhook carries it under payload.payment.entity. Only the fields
+// read here are declared; the entity's email, contact and vpa are deliberately
+// not, so they cannot be copied anywhere by accident.
+type rzpPayment struct {
+	ID          string `json:"id"`
+	OrderID     string `json:"order_id"`
+	Status      string `json:"status"` // created | authorized | captured | refunded | failed
+	Method      string `json:"method"` // upi | card | netbanking | wallet | emi | paylater | cardless_emi
+	Bank        string `json:"bank"`
+	Wallet      string `json:"wallet"`
+	CreatedAt   int64  `json:"created_at"`
+	ErrorReason string `json:"error_reason"`
+	ErrorDesc   string `json:"error_description"`
+	Card        *struct {
+		Network string `json:"network"`
+		Last4   string `json:"last4"`
+		Type    string `json:"type"` // credit | debit | prepaid
+	} `json:"card"`
+	AcquirerData struct {
+		RRN               string `json:"rrn"`
+		BankTransactionID string `json:"bank_transaction_id"`
+	} `json:"acquirer_data"`
 }
 
-func (p cfPayment) details() *PaymentDetails {
-	d := &PaymentDetails{
-		CFPaymentID:   rawString(p.CFPaymentID),
-		Group:         strings.ToLower(p.PaymentGroup),
-		BankReference: strings.TrimSpace(p.BankReference),
-	}
-	if c := p.PaymentMethod.Card; c != nil {
-		d.CardNetwork = c.CardNetwork
-		// Cashfree masks the number (XXXXXXXXXXXX4417); only the last four are
-		// kept, and only when they are digits rather than more mask.
-		if n := strings.TrimSpace(c.CardNumber); len(n) >= 4 && isDigits(n[len(n)-4:]) {
-			d.CardLast4 = n[len(n)-4:]
+// group maps Razorpay's method onto the payment-group vocabulary the orders
+// table and the invoice labels already use.
+func (p rzpPayment) group() string {
+	switch strings.ToLower(p.Method) {
+	case "card":
+		if p.Card != nil && p.Card.Type != "" {
+			return strings.ToLower(p.Card.Type) + "_card"
 		}
+		return "card"
+	case "netbanking":
+		return "net_banking"
+	case "paylater":
+		return "pay_later"
+	default:
+		return strings.ToLower(p.Method)
 	}
-	if nb := p.PaymentMethod.Netbanking; nb != nil {
-		d.BankName = strings.TrimSpace(nb.BankName)
+}
+
+func (p rzpPayment) details() *PaymentDetails {
+	d := &PaymentDetails{
+		PaymentID:      p.ID,
+		Group:          p.group(),
+		BankName:       strings.TrimSpace(p.Bank),
+		WalletProvider: strings.TrimSpace(p.Wallet),
 	}
-	if app := p.PaymentMethod.App; app != nil {
-		d.WalletProvider = strings.TrimSpace(app.Provider)
+	// The UPI RRN is the 12-digit reference the payer's bank statement shows —
+	// the UTR. Net banking has the bank's own transaction id instead.
+	if ref := strings.TrimSpace(p.AcquirerData.RRN); ref != "" {
+		d.BankReference = ref
+	} else {
+		d.BankReference = strings.TrimSpace(p.AcquirerData.BankTransactionID)
+	}
+	if c := p.Card; c != nil {
+		d.CardNetwork = c.Network
+		if n := strings.TrimSpace(c.Last4); len(n) == 4 && isDigits(n) {
+			d.CardLast4 = n
+		}
 	}
 	return d
 }
 
-// DetailsFromWebhook reads the payment a PAYMENT_SUCCESS webhook describes.
-// raw is the webhook's data.payment object. Nil when it carries nothing usable.
-func DetailsFromWebhook(raw json.RawMessage) *PaymentDetails {
-	if len(raw) == 0 {
-		return nil
-	}
-	var p cfPayment
-	if err := json.Unmarshal(raw, &p); err != nil || p.PaymentGroup == "" {
-		return nil
-	}
-	return p.details()
-}
-
-// successfulPayment picks the captured payment out of an order's attempts. An
+// capturedPayment picks the captured payment out of an order's attempts. An
 // order can carry several — a declined card, then a UPI payment that went
 // through — and only the one that succeeded belongs on the invoice.
-func successfulPayment(list []cfPayment) (*PaymentDetails, error) {
-	for _, p := range list {
-		if strings.EqualFold(p.PaymentStatus, "SUCCESS") {
-			return p.details(), nil
+func capturedPayment(list []rzpPayment) (*rzpPayment, error) {
+	for i := range list {
+		if strings.EqualFold(list[i].Status, "captured") {
+			return &list[i], nil
 		}
 	}
 	return nil, ErrNoSuccessfulPayment
-}
-
-// rawString reads a JSON value that Cashfree has sent as both a string and a
-// number across API versions (cf_payment_id).
-func rawString(b json.RawMessage) string {
-	if len(b) == 0 || string(b) == "null" {
-		return ""
-	}
-	var s string
-	if err := json.Unmarshal(b, &s); err == nil {
-		return s
-	}
-	return strings.TrimSpace(string(b))
 }
 
 func isDigits(s string) bool {
@@ -174,8 +172,8 @@ func isDigits(s string) bool {
 }
 
 // titleWord upper-cases the first letter: "visa" -> "Visa", "phonepe" ->
-// "Phonepe". Cashfree's values are lower-case identifiers, not display names,
-// and a wrong capital inside a brand is less bad than a table of brands here.
+// "Phonepe". The gateway's values are identifiers, not display names, and a
+// wrong capital inside a brand is less bad than a table of brands here.
 func titleWord(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {

@@ -25,7 +25,7 @@ func NewOrderHandler(svc *service.OrderService) *OrderHandler {
 	return &OrderHandler{svc: svc}
 }
 
-// Cashfree order_id charset (also matches our UUIDs).
+// Our order uid charset (UUIDs).
 var orderUIDRE = regexp.MustCompile(`^[A-Za-z0-9_-]{3,45}$`)
 
 // ---- GET /api/products ----------------------------------------------------
@@ -129,7 +129,7 @@ type createOrderReq struct {
 // Create godoc
 //
 // @Summary      Create an order and start checkout
-// @Description  Creates an order for the given product against the authenticated account and registers it with Cashfree. The response carries `paymentSessionId` and `mode`, which the frontend passes to the Cashfree JS SDK to open checkout.
+// @Description  Creates an order for the given product against the authenticated account and registers it with Razorpay. The response carries `keyId`, `gatewayOrderId` and `amountMinor`, which the frontend passes to Razorpay Checkout; `mode` says which environment the order was created in.
 // @Tags         orders
 // @Accept       json
 // @Produce      json
@@ -157,7 +157,7 @@ func (h *OrderHandler) Create(c *fiber.Ctx) error {
 	}
 	// Present only on internal builds (the APK shared on WhatsApp), which pay
 	// in sandbox. The store app and the web never send it and pay live. The
-	// service checks it against cashfree.test-mode-key and refuses a wrong one.
+	// service checks it against razorpay.test-mode-key and refuses a wrong one.
 	testKey := strings.TrimSpace(c.Get(testPaymentsKeyHeader))
 	res, err := h.svc.CreateOrder(c.Context(), accountID, req.ProductCode, req.CouponCode, testKey)
 	if err != nil {
@@ -167,7 +167,7 @@ func (h *OrderHandler) Create(c *fiber.Ctx) error {
 }
 
 // testPaymentsKeyHeader carries an internal build's test-payments key on
-// POST /api/orders. See config.CashfreeConfig.TestModeKey.
+// POST /api/orders. See config.RazorpayConfig.TestModeKey.
 const testPaymentsKeyHeader = "X-Test-Payments-Key"
 
 // ---- GET /api/orders ------------------------------------------------------
@@ -199,7 +199,7 @@ func (h *OrderHandler) List(c *fiber.Ctx) error {
 // Get godoc
 //
 // @Summary      Get one order
-// @Description  Returns a single order owned by the authenticated account. If the order is still awaiting payment its status is reconciled against Cashfree before being returned, so this is the endpoint to poll after checkout closes.
+// @Description  Returns a single order owned by the authenticated account. If the order is still awaiting payment its status is reconciled against Razorpay before being returned, so this is the endpoint to poll after checkout closes.
 // @Tags         orders
 // @Produce      json
 // @Security     BearerAuth
@@ -226,31 +226,29 @@ func (h *OrderHandler) Get(c *fiber.Ctx) error {
 	return c.JSON(order)
 }
 
-// ---- POST /api/payments/cashfree/webhook ------------------------------------
+// ---- POST /api/payments/razorpay/webhook ------------------------------------
 
-// Webhook receives Cashfree's server-to-server payment notifications. It is
+// Webhook receives Razorpay's server-to-server payment notifications. It is
 // unauthenticated: trust comes from the HMAC signature over the raw body.
 //
-// @Summary      Cashfree payment webhook
-// @Description  Server-to-server endpoint called by Cashfree on payment success/failure. Not for client use: there is no bearer auth, trust comes from the `x-webhook-signature` HMAC over the raw body, and `x-idempotency-key` de-duplicates redeliveries.
+// @Summary      Razorpay payment webhook
+// @Description  Server-to-server endpoint called by Razorpay (subscribe it to order.paid, payment.captured and payment.failed). Not for client use: there is no bearer auth, trust comes from the `X-Razorpay-Signature` HMAC over the raw body, and `X-Razorpay-Event-Id` de-duplicates redeliveries.
 // @Tags         payments
 // @Accept       json
 // @Produce      plain
-// @Param        x-webhook-timestamp  header    string  true   "Cashfree signature timestamp"
-// @Param        x-webhook-signature  header    string  true   "Base64 HMAC-SHA256 of timestamp+body"
-// @Param        x-idempotency-key    header    string  false  "Cashfree delivery id, used to drop duplicates"
-// @Success      200                  {string}  string            "OK"
-// @Failure      400                  {object}  apperr.ErrorBody  "Invalid webhook payload"
-// @Failure      401                  {object}  apperr.ErrorBody  "Invalid webhook signature"
-// @Router       /payments/cashfree/webhook [post]
+// @Param        X-Razorpay-Signature  header    string  true   "Hex HMAC-SHA256 of the raw body, keyed with the webhook secret"
+// @Param        X-Razorpay-Event-Id   header    string  false  "Razorpay event id, the same across retries; used to drop duplicates"
+// @Success      200                   {string}  string            "OK"
+// @Failure      400                   {object}  apperr.ErrorBody  "Invalid webhook payload"
+// @Failure      401                   {object}  apperr.ErrorBody  "Invalid webhook signature"
+// @Router       /payments/razorpay/webhook [post]
 func (h *OrderHandler) Webhook(c *fiber.Ctx) error {
 	// Fiber reuses the body buffer between requests; copy before use.
 	body := append([]byte(nil), c.Body()...)
 	err := h.svc.ProcessWebhook(
 		c.Context(),
-		c.Get("x-webhook-timestamp"),
-		c.Get("x-webhook-signature"),
-		c.Get("x-idempotency-key"),
+		c.Get("X-Razorpay-Signature"),
+		c.Get("X-Razorpay-Event-Id"),
 		body,
 	)
 	if err != nil {

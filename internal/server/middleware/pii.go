@@ -6,7 +6,7 @@ package middleware
 // Two layers of defense:
 //  1. Key-based: a case-insensitive allowlist of sensitive field names, matched
 //     against the key's trailing segments so namespaced fields from third-party
-//     payloads (Cashfree's customer_phone, customer_name) are covered too. Any
+//     payloads (Cashfree's customer_phone, Razorpay's contact) are covered too. Any
 //     value at a matching key is replaced with a fixed mask, regardless of its
 //     JSON type. This is the primary mechanism.
 //  2. Value-based (defense-in-depth): even for non-allowlisted keys, values
@@ -55,6 +55,10 @@ var sensitiveKeys = map[string]struct{}{
 	"mobileno":          {},
 	"mobilephonenumber": {},
 	"destination":       {},
+	// Razorpay's payment entity names the payer's phone "contact" and their
+	// UPI id (a person's handle, often their name) "vpa".
+	"contact": {},
+	"vpa":     {},
 	// identity
 	"pan":              {},
 	"panname":          {},

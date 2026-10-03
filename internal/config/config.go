@@ -30,7 +30,7 @@ type Config struct {
 	CreditAnalytics CreditAnalyticsConfig `mapstructure:"credit-analytics"`
 	ScheduledChecks ScheduledChecksConfig `mapstructure:"scheduled-checks"`
 	Log             LogConfig             `mapstructure:"log"`
-	Cashfree        CashfreeConfig        `mapstructure:"cashfree"`
+	Razorpay        RazorpayConfig        `mapstructure:"razorpay"`
 	Statement       StatementConfig       `mapstructure:"statement"`
 	S3              S3Config              `mapstructure:"s3"`
 	Renderer        RendererConfig        `mapstructure:"renderer"`
@@ -168,7 +168,7 @@ type RendererConfig struct {
 // default credential chain supplies them and there is no long-lived key in the
 // environment to leak or rotate. A developer machine picks up whatever the local
 // AWS profile has, and an empty bucket selects the stub — the same
-// unconfigured-upstream convention the Digitap, Cashfree and MSG91 clients use.
+// unconfigured-upstream convention the Digitap, Razorpay and MSG91 clients use.
 //
 // Utho was the previous destination and is gone. Its API is S3-compatible, so
 // moving back would mean an endpoint override here, not a second client.
@@ -211,7 +211,7 @@ type StatementConfig struct {
 // BankDataConfig holds credentials and endpoints for the Digitap Bank Data PDF
 // UI API (v1.20). When ClientID is empty the client runs in stub mode (no I/O),
 // so dev/CI works without credentials — same convention as the credit Digitap
-// client and the Cashfree gateway.
+// client and the Razorpay gateway.
 type BankDataConfig struct {
 	BaseURL      string        `mapstructure:"base-url"`  // e.g. https://svcdemo.digitap.work/bank-data/
 	ClientID     string        `mapstructure:"client-id"` // empty -> stub
@@ -245,26 +245,44 @@ type DemoConfig struct {
 	Enabled bool `mapstructure:"enabled"`
 }
 
-// CashfreeConfig holds Cashfree Payment Gateway credentials and endpoints.
-// When ClientID is empty the service falls back to a log-only stub gateway
-// (mirroring the mail stub) so local dev works without credentials.
-type CashfreeConfig struct {
-	Mode         string        `mapstructure:"mode"`     // sandbox | production
-	BaseURL      string        `mapstructure:"base-url"` // optional; derived from mode when empty
-	ClientID     string        `mapstructure:"client-id"`
-	ClientSecret string        `mapstructure:"client-secret"`
-	APIVersion   string        `mapstructure:"api-version"`
-	ReturnURL    string        `mapstructure:"return-url"` // browser redirect after payment
-	NotifyURL    string        `mapstructure:"notify-url"` // public URL of our webhook endpoint
-	Timeout      time.Duration `mapstructure:"timeout"`
+// RazorpayConfig holds Razorpay Payment Gateway credentials.
+//
+// Razorpay has one API host for both environments; which one a call lands in
+// is decided by the key itself (rzp_test_... or rzp_live_...). Mode is still
+// configured explicitly, because it is what every order records as its
+// payment_mode and what settles, invoices and credits referrals by — and
+// validate refuses a key whose prefix disagrees with it, so a live key cannot
+// sit in a deployment that believes it is in sandbox (or the reverse).
+//
+// When KeyID is empty the service falls back to a log-only stub gateway
+// (mirroring the mail stub) so local dev works without credentials. The stub
+// accepts any webhook, so it is refused outside the local profiles.
+type RazorpayConfig struct {
+	Mode    string        `mapstructure:"mode"`     // sandbox | production
+	BaseURL string        `mapstructure:"base-url"` // optional; https://api.razorpay.com/v1 when empty
+	Timeout time.Duration `mapstructure:"timeout"`
 
-	// Sandbox is a second credential pair, for internal builds while Mode is
-	// production. ClientID/ClientSecret above always mean "the credentials for
-	// Mode", so a deployment that has only ever run in sandbox needs nothing
-	// here — its one gateway already is the sandbox one. Going live means
-	// moving the TEST keys into this block and the live keys into the fields
-	// above.
-	Sandbox CashfreeCredentials `mapstructure:"sandbox"`
+	// KeyID / KeySecret are the API key pair for Mode, from Dashboard ->
+	// Account & Settings -> API Keys. The key id is public (the checkout is
+	// opened with it); the secret never leaves the server.
+	KeyID     string `mapstructure:"key-id"`
+	KeySecret string `mapstructure:"key-secret"`
+	// WebhookSecret is the secret typed into the webhook's settings on the
+	// dashboard. It is NOT the key secret: Razorpay signs deliveries with
+	// whatever was entered there. Empty means no delivery verifies — orders
+	// still settle through reconciliation when the app polls.
+	WebhookSecret string `mapstructure:"webhook-secret"`
+
+	// CheckoutName is the merchant name the checkout header shows. Sent to the
+	// app with each order so it can change without a release.
+	CheckoutName string `mapstructure:"checkout-name"`
+
+	// Sandbox is a second key set, for internal builds while Mode is
+	// production. KeyID/KeySecret/WebhookSecret above always mean "the
+	// credentials for Mode", so a deployment that only runs in sandbox needs
+	// nothing here. Going live means moving the TEST keys into this block and
+	// the LIVE keys into the fields above.
+	Sandbox RazorpayCredentials `mapstructure:"sandbox"`
 
 	// TestModeKey is the shared secret an internal build presents on
 	// POST /orders to be put through the SANDBOX gateway. The store app and
@@ -273,17 +291,18 @@ type CashfreeConfig struct {
 	// Why a key and not simply a flag the app sends: the order's environment
 	// decides whether real money moves, and anything a client merely asserts,
 	// a client can assert falsely. A flag would let anyone edit a request from
-	// the store app, pay with sandbox money, and receive a real bureau pull.
+	// the store app, pay with test money, and receive a real bureau pull.
 	// The key is baked only into the APK shared with the internal WhatsApp
 	// group (build-apk.sh in the app repo), so extracting it needs that APK.
 	// Empty disables test payments entirely.
 	TestModeKey string `mapstructure:"test-mode-key"`
 }
 
-// CashfreeCredentials is one Cashfree App ID / Secret Key pair.
-type CashfreeCredentials struct {
-	ClientID     string `mapstructure:"client-id"`
-	ClientSecret string `mapstructure:"client-secret"`
+// RazorpayCredentials is one Razorpay key set.
+type RazorpayCredentials struct {
+	KeyID         string `mapstructure:"key-id"`
+	KeySecret     string `mapstructure:"key-secret"`
+	WebhookSecret string `mapstructure:"webhook-secret"`
 }
 
 // LogConfig holds structured-logging settings (log/slog). Level is one of
@@ -527,7 +546,7 @@ type MailConfig struct {
 // Provider selects the sender outright: "stub" never contacts a provider, and
 // is how a local run avoids texting real people while a real auth key sits in
 // config.dev.yaml. Any other value falls back to the empty-credentials-⇒-stub
-// convention shared with mail, Cashfree, Digitap and S3 — an empty auth key
+// convention shared with mail, Razorpay, Digitap and S3 — an empty auth key
 // also yields the stub.
 type SMSConfig struct {
 	Provider string      `mapstructure:"provider"` // msg91 | stub
@@ -672,8 +691,14 @@ func Load(profile string) (*Config, error) {
 	if err := cfg.validateLocalOnly(profile); err != nil {
 		return nil, err
 	}
-	if err := cfg.Cashfree.validate(); err != nil {
+	if err := cfg.Razorpay.validate(); err != nil {
 		return nil, err
+	}
+	if cfg.Razorpay.KeyID == "" && !localProfiles[profile] {
+		cfg.Warnings = append(cfg.Warnings, fmt.Sprintf(
+			"razorpay.key-id is empty under APP_PROFILE=%q, which is not a local profile: "+
+				"payments run on the stub gateway, which accepts ANY webhook signature, so "+
+				"anyone can mark an order paid. Set RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET", profile))
 	}
 	cfg.Warnings = append(cfg.Warnings, cfg.Invoice.validate()...)
 
@@ -682,23 +707,55 @@ func Load(profile string) (*Config, error) {
 
 // validate refuses a payments configuration that would take money wrongly.
 //
-// The hard failure is production mode without credentials. An empty client-id
-// selects the stub gateway, and the stub accepts ANY webhook signature — the
-// right behaviour on a laptop with no keys, and in production a way for anyone
-// to POST a "payment succeeded" webhook and have an order fulfilled. So a live
-// deployment with no live keys does not start rather than start as that.
-func (c CashfreeConfig) validate() error {
+// The hard failures are the ways onto the stub gateway, which accepts ANY
+// webhook signature — the right behaviour on a laptop with no keys, and on a
+// server a way for anyone to POST "payment captured" and have an order
+// fulfilled. So production mode with no keys does not start. A non-local
+// profile in sandbox with no keys is only warned about (stubWarning): the
+// config tests and fresh checkouts boot that way, but a deployed one still
+// hands out real bureau pulls to anyone who can POST a webhook.
+//
+// A key whose prefix disagrees with Mode is refused too. Razorpay picks the
+// environment from the key, while every order records Mode — a live key in a
+// "sandbox" deployment would take real money for orders marked as tests.
+func (c RazorpayConfig) validate() error {
 	switch c.Mode {
 	case "sandbox", "production":
 	default:
-		return fmt.Errorf("cashfree.mode must be sandbox or production, got %q", c.Mode)
+		return fmt.Errorf("razorpay.mode must be sandbox or production, got %q", c.Mode)
 	}
-	if c.Mode == "production" && (c.ClientID == "" || c.ClientSecret == "") {
-		return fmt.Errorf("cashfree.mode is production but cashfree.client-id/client-secret " +
+	if (c.KeyID == "") != (c.KeySecret == "") {
+		return fmt.Errorf("razorpay needs both key-id and key-secret, or neither")
+	}
+	if c.Mode == "production" && c.KeyID == "" {
+		return fmt.Errorf("razorpay.mode is production but razorpay.key-id/key-secret " +
 			"are empty; refusing to start on the stub gateway, which accepts any webhook")
 	}
-	if (c.Sandbox.ClientID == "") != (c.Sandbox.ClientSecret == "") {
-		return fmt.Errorf("cashfree.sandbox needs both client-id and client-secret, or neither")
+	if c.KeyID != "" {
+		if err := checkKeyPrefix("razorpay.key-id", c.KeyID, c.Mode); err != nil {
+			return err
+		}
+	}
+	if (c.Sandbox.KeyID == "") != (c.Sandbox.KeySecret == "") {
+		return fmt.Errorf("razorpay.sandbox needs both key-id and key-secret, or neither")
+	}
+	if c.Sandbox.KeyID != "" {
+		if err := checkKeyPrefix("razorpay.sandbox.key-id", c.Sandbox.KeyID, "sandbox"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkKeyPrefix matches a Razorpay key id to the environment it is meant for.
+func checkKeyPrefix(field, keyID, mode string) error {
+	want := "rzp_test_"
+	if mode == "production" {
+		want = "rzp_live_"
+	}
+	if !strings.HasPrefix(keyID, want) {
+		return fmt.Errorf("%s is for the wrong environment: mode %q needs a key starting %q",
+			field, mode, want)
 	}
 	return nil
 }
@@ -948,9 +1005,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("sentry.environment", "")
 	v.SetDefault("sentry.release", "")
 
-	v.SetDefault("cashfree.mode", "sandbox")
-	v.SetDefault("cashfree.api-version", "2025-01-01")
-	v.SetDefault("cashfree.timeout", "15s")
+	v.SetDefault("razorpay.mode", "sandbox")
+	v.SetDefault("razorpay.timeout", "15s")
+	v.SetDefault("razorpay.checkout-name", "myScorr")
 
 	// Bank-statement analysis. Parser defaults to "pdf" (the real text-layer
 	// reader); set "stub" for offline/CI runs that don't have a PDF. The worker
@@ -1041,11 +1098,12 @@ func allKeys() []string {
 		"digitap.prefill.client-secret", "digitap.prefill.timeout",
 		"log.level", "log.format",
 		"sentry.dsn", "sentry.environment", "sentry.release",
-		"cashfree.mode", "cashfree.base-url", "cashfree.client-id",
-		"cashfree.client-secret", "cashfree.api-version",
-		"cashfree.return-url", "cashfree.notify-url", "cashfree.timeout",
-		"cashfree.sandbox.client-id", "cashfree.sandbox.client-secret",
-		"cashfree.test-mode-key",
+		"razorpay.mode", "razorpay.base-url", "razorpay.timeout",
+		"razorpay.key-id", "razorpay.key-secret", "razorpay.webhook-secret",
+		"razorpay.checkout-name",
+		"razorpay.sandbox.key-id", "razorpay.sandbox.key-secret",
+		"razorpay.sandbox.webhook-secret",
+		"razorpay.test-mode-key",
 		"s3.bucket", "s3.region", "s3.presign-ttl",
 		"renderer.url", "renderer.timeout",
 		"statement.parser", "statement.max-file-size",

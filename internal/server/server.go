@@ -221,9 +221,9 @@ func New(
 	// prompted the call would fail RequireAuth.
 	a.Post("/refresh", auth.Refresh)
 
-	// Cashfree server-to-server webhook (public; authenticated by HMAC
+	// Razorpay server-to-server webhook (public; authenticated by HMAC
 	// signature over the raw body, not by a bearer token).
-	api.Post("/payments/cashfree/webhook", orders.Webhook)
+	api.Post("/payments/razorpay/webhook", orders.Webhook)
 
 	// Digitap transaction-complete webhook (public; authenticated by the
 	// x-digitap-callback-type header and an optional ?secret= guard, not a
@@ -264,7 +264,7 @@ func New(
 	profile.Get("/", auth.GetProfile)
 	profile.Put("/", auth.UpdateProfile)
 
-	// ---- Products & orders (Cashfree) -----------------------------------
+	// ---- Products & orders (Razorpay) -----------------------------------
 	api.Get("/products", requireAuth, orders.ListProducts)
 
 	o := api.Group("/orders", requireAuth)

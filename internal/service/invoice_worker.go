@@ -14,7 +14,7 @@ import (
 //
 // Asynchronous because an invoice is issued inside the payment webhook (or the
 // app's reconcile poll), and a browser render plus an SMTP round trip is
-// seconds of work that neither should wait on — Cashfree retries a webhook that
+// seconds of work that neither should wait on — Razorpay retries a webhook that
 // is slow to answer. Issue kicks this worker, so in the ordinary case the mail
 // leaves within a second or two of the payment; the ticker is the backstop for
 // a kick that found the renderer or the mail server down.

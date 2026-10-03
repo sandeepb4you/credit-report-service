@@ -48,7 +48,7 @@ type Client struct {
 // New returns a client for cfg, or a stub when no bucket is configured.
 //
 // An empty bucket yields the stub rather than an error, matching the convention
-// the rest of the service uses for unconfigured upstreams (Digitap, Cashfree,
+// the rest of the service uses for unconfigured upstreams (Digitap, Razorpay,
 // MSG91): a developer machine with no AWS access still boots and still serves
 // every path that does not need object storage.
 func New(ctx context.Context, cfg Config) (*Client, error) {

@@ -152,38 +152,43 @@ func main() {
 			"and confirms nothing about the real person")
 	}
 
-	// Payment gateway: real Cashfree client when credentials are set,
-	// otherwise the log-only stub (dev fallback, like the mail stub).
+	// Payment gateway: real Razorpay client when keys are set, otherwise the
+	// log-only stub (dev fallback, like the mail stub).
+	rp := cfg.Razorpay
 	var gateway payments.Gateway
-	cashfreeStub := cfg.Cashfree.ClientID == ""
-	if cashfreeStub {
-		slog.Warn("cashfree.client-id is empty; using the stub payment gateway")
-		gateway = payments.NewStubGateway(cfg.Cashfree.Mode)
+	razorpayStub := rp.KeyID == ""
+	if razorpayStub {
+		slog.Warn("razorpay.key-id is empty; using the stub payment gateway")
+		gateway = payments.NewStubGateway(rp.Mode)
 	} else {
-		gateway = payments.NewCashfreeClient(cfg.Cashfree)
+		gateway = payments.NewRazorpayClient(rp.Mode, payments.RazorpayCredentials{
+			KeyID: rp.KeyID, KeySecret: rp.KeySecret, WebhookSecret: rp.WebhookSecret,
+		}, rp.BaseURL, rp.Timeout)
+		if rp.WebhookSecret == "" {
+			slog.Warn("razorpay.webhook-secret is empty; every webhook will be refused and " +
+				"orders settle only when the app polls them")
+		}
 	}
 
 	// The sandbox gateway internal builds pay through. In a deployment whose
 	// default is already sandbox it IS the default gateway; once the default
-	// is production it is a second client over the cashfree.sandbox keys, and
+	// is production it is a second client over the razorpay.sandbox keys, and
 	// without those keys test payments are simply off (an internal build's
 	// order is refused with 503 rather than charged live).
 	var testGateway payments.Gateway
 	switch {
-	case cfg.Cashfree.Mode == "sandbox":
+	case rp.Mode == "sandbox":
 		testGateway = gateway
-	case cfg.Cashfree.Sandbox.ClientID != "":
-		sandboxCfg := cfg.Cashfree
-		sandboxCfg.Mode = "sandbox"
-		sandboxCfg.BaseURL = "" // derived from Mode; a live base-url override must not carry over
-		sandboxCfg.ClientID = cfg.Cashfree.Sandbox.ClientID
-		sandboxCfg.ClientSecret = cfg.Cashfree.Sandbox.ClientSecret
-		testGateway = payments.NewCashfreeClient(sandboxCfg)
+	case rp.Sandbox.KeyID != "":
+		testGateway = payments.NewRazorpayClient("sandbox", payments.RazorpayCredentials{
+			KeyID: rp.Sandbox.KeyID, KeySecret: rp.Sandbox.KeySecret,
+			WebhookSecret: rp.Sandbox.WebhookSecret,
+		}, rp.BaseURL, rp.Timeout)
 	}
 	testMode := "disabled"
 	switch {
-	case cfg.Cashfree.TestModeKey == "":
-		testMode = "disabled (no cashfree.test-mode-key)"
+	case rp.TestModeKey == "":
+		testMode = "disabled (no razorpay.test-mode-key)"
 	case testGateway != nil:
 		testMode = testGateway.Mode()
 	}
@@ -246,9 +251,9 @@ func main() {
 	// runs the manual-payout queue. Stateless, so one instance serves both.
 	earningsSvc := service.NewEarningsService(
 		repository.NewEarningsRepo(pool), accountRepo, orderRepo, couponSvc)
-	orderSvc := service.NewOrderService(orderRepo, accountRepo, couponSvc, gateway, cfg.Cashfree,
+	orderSvc := service.NewOrderService(orderRepo, accountRepo, couponSvc, gateway, cfg.Razorpay,
 		scheduledRepo, scheduleLoc, earningsSvc)
-	orderSvc.SetTestPayments(testGateway, cfg.Cashfree.TestModeKey)
+	orderSvc.SetTestPayments(testGateway, cfg.Razorpay.TestModeKey)
 	loanSwitchSvc := service.NewLoanSwitchService(loanRepo, analyticsRepo)
 	// Enrich analytics insights with interest-reduction opportunities so a single
 	// analytics call surfaces both levers: raise the score and cut interest.
@@ -438,7 +443,7 @@ func main() {
 		"port", cfg.Server.Port,
 		"profile", profile,
 		"digitap_stub", digitapClient.IsStub(),
-		"cashfree_stub", cashfreeStub,
+		"razorpay_stub", razorpayStub,
 		// True means phone OTPs are only logged — nobody receives an SMS.
 		"sms_stub", smsSender.IsStub(),
 		// True means a fixed code is accepted in place of every real OTP.

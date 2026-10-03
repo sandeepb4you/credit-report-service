@@ -24,7 +24,7 @@ import (
 //	orders, payment_webhook_events,  the financial record. Indian bookkeeping
 //	invoices                         and tax rules require it to outlive the
 //	                                 customer, and a payment later disputed
-//	                                 with Cashfree has to be answerable.
+//	                                 with the gateway has to be answerable.
 //	referral_earnings                money. An earning credited to SOMEBODY
 //	referral_withdrawals             ELSE off this user's first purchase is
 //	                                 their money, not this user's, and must
@@ -35,8 +35,8 @@ import (
 //	                                 makes the retained rows point at nobody.
 //
 // Pointing at nobody is half of it; the rows must also SAY nothing. The
-// webhook payload is rebuilt from an allowlist (Cashfree echoes the customer's
-// name, phone and email back in it), an invoice loses its billed-to columns and
+// webhook payload is rebuilt from an allowlist (the gateway's payment record
+// carries the payer's name, phone, email and UPI id), an invoice loses its billed-to columns and
 // its rendered PDF, and a withdrawal's holder name is replaced. Those scrubs
 // are what make the privacy policy's "kept with your name, number and email
 // removed" true — change what is retained and that sentence, on
@@ -362,15 +362,43 @@ func (r *AccountRepo) PurgeAccount(
 	// Keeping a row "with the link to you severed" only means something if the
 	// row itself says nothing about you. Two of the retained tables did.
 
-	// Cashfree's webhook payload is stored raw, and it echoes back the
-	// customer_details the backend sent when creating the order — name, phone,
-	// email — plus the payment instrument (a UPI id is a person's handle).
-	// Rebuilt from an ALLOWLIST rather than by deleting known keys: a field
-	// Cashfree adds next year should be dropped by default, not kept by default.
-	// What survives is what reconciling a payment with Cashfree needs: the
-	// event, the order, the amount, and Cashfree's own payment references.
+	// The gateway's webhook payload is stored raw, and it carries the payer:
+	// Razorpay's payment entity has their email, phone and UPI id (a person's
+	// handle); Cashfree's, still in the rows from before the switch, echoes the
+	// customer_details the order was created with. Rebuilt from an ALLOWLIST
+	// rather than by deleting known keys: a field the gateway adds next year
+	// should be dropped by default, not kept by default. What survives is what
+	// reconciling a payment with the gateway needs: the event, the order, the
+	// amount, and the gateway's own payment references.
+	//
+	// The two shapes are told apart by Razorpay's top-level "payload" key.
 	tag, err := tx.Exec(ctx,
-		`UPDATE payment_webhook_events SET payload = jsonb_strip_nulls(jsonb_build_object(
+		`UPDATE payment_webhook_events SET payload = CASE
+		   WHEN payload ? 'payload' THEN jsonb_strip_nulls(jsonb_build_object(
+		     'event',      payload->'event',
+		     'created_at', payload->'created_at',
+		     'payload', jsonb_build_object(
+		         'order', jsonb_build_object('entity', jsonb_build_object(
+		             'id',          payload->'payload'->'order'->'entity'->'id',
+		             'receipt',     payload->'payload'->'order'->'entity'->'receipt',
+		             'amount',      payload->'payload'->'order'->'entity'->'amount',
+		             'amount_paid', payload->'payload'->'order'->'entity'->'amount_paid',
+		             'currency',    payload->'payload'->'order'->'entity'->'currency',
+		             'status',      payload->'payload'->'order'->'entity'->'status')),
+		         'payment', jsonb_build_object('entity', jsonb_build_object(
+		             'id',         payload->'payload'->'payment'->'entity'->'id',
+		             'order_id',   payload->'payload'->'payment'->'entity'->'order_id',
+		             'amount',     payload->'payload'->'payment'->'entity'->'amount',
+		             'currency',   payload->'payload'->'payment'->'entity'->'currency',
+		             'status',     payload->'payload'->'payment'->'entity'->'status',
+		             'method',     payload->'payload'->'payment'->'entity'->'method',
+		             'created_at', payload->'payload'->'payment'->'entity'->'created_at',
+		             'error_code', payload->'payload'->'payment'->'entity'->'error_code',
+		             'acquirer_data', jsonb_build_object(
+		                 'rrn', payload->'payload'->'payment'->'entity'->'acquirer_data'->'rrn',
+		                 'bank_transaction_id',
+		                     payload->'payload'->'payment'->'entity'->'acquirer_data'->'bank_transaction_id'))))))
+		   ELSE jsonb_strip_nulls(jsonb_build_object(
 		     'type',       payload->'type',
 		     'event_time', payload->'event_time',
 		     'data', jsonb_build_object(
@@ -386,6 +414,7 @@ func (r *AccountRepo) PurgeAccount(
 		             'payment_time',     payload->'data'->'payment'->'payment_time',
 		             'payment_group',    payload->'data'->'payment'->'payment_group',
 		             'bank_reference',   payload->'data'->'payment'->'bank_reference'))))
+		   END
 		  WHERE order_uid IN (SELECT order_uid FROM orders WHERE account_id = $1)`,
 		accountID)
 	if err != nil {

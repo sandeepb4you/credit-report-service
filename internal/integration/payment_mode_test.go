@@ -6,8 +6,8 @@
 // REFUSED for a live order, which is the property that matters most here.
 // Sandbox payments cost nothing to make; if one could settle a live order, a
 // test build would be a way to get paid-for bureau pulls free. These tests use
-// two fake gateways that each sign with their own secret, as Cashfree's two
-// environments do.
+// two fake gateways that each sign with their own secret, as Razorpay's live
+// and test webhooks do.
 package integration
 
 import (
@@ -27,48 +27,57 @@ import (
 
 const testPaymentsKey = "internal-build-key"
 
-// modeGateway is a fake Cashfree environment: it creates orders, answers
+// modeGateway is a fake Razorpay environment: it creates orders, answers
 // GetOrder from a status the test sets, and accepts only webhooks signed with
-// its own secret.
+// its own secret. Its gateway order ids are "order_<mode>_<uid>", so a lookup
+// can be traced back to both the environment and our order.
 type modeGateway struct {
 	mode   string
 	secret string
 
 	mu       sync.Mutex
 	statuses map[string]string // order uid -> status GetOrder reports
-	lookups  []string          // order uids GetOrder was asked about
+	lookups  []string          // order uids GetOrder was asked about (via their gateway id)
 }
 
 func newModeGateway(mode string) *modeGateway {
 	return &modeGateway{mode: mode, secret: "secret-" + mode, statuses: map[string]string{}}
 }
 
-func (g *modeGateway) Mode() string { return g.mode }
+func (g *modeGateway) Mode() string  { return g.mode }
+func (g *modeGateway) KeyID() string { return "rzp_" + g.mode + "_key" }
+
+func (g *modeGateway) gatewayID(orderUID string) string { return "order_" + g.mode + "_" + orderUID }
+
+// uidOf recovers our order uid from one of this gateway's order ids, "" when
+// the id belongs to the other environment.
+func (g *modeGateway) uidOf(gatewayOrderID string) string {
+	return strings.TrimPrefix(gatewayOrderID, "order_"+g.mode+"_")
+}
 
 func (g *modeGateway) CreateOrder(_ context.Context, p payments.CreateOrderParams) (*payments.OrderResult, error) {
-	return &payments.OrderResult{
-		CFOrderID:        "cf-" + g.mode + "-" + p.OrderID,
-		PaymentSessionID: "session-" + g.mode,
-		Status:           "ACTIVE",
+	return &payments.OrderResult{GatewayOrderID: g.gatewayID(p.OrderID), Status: payments.StatusActive}, nil
+}
+
+func (g *modeGateway) GetOrder(_ context.Context, gatewayOrderID string) (*payments.OrderResult, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	uid := g.uidOf(gatewayOrderID)
+	g.lookups = append(g.lookups, uid)
+	status := g.statuses[uid]
+	if status == "" {
+		status = payments.StatusActive
+	}
+	return &payments.OrderResult{GatewayOrderID: gatewayOrderID, Status: status}, nil
+}
+
+func (g *modeGateway) GetPayment(_ context.Context, gatewayOrderID string) (*payments.PaymentDetails, error) {
+	return &payments.PaymentDetails{
+		PaymentID: "pay_" + g.uidOf(gatewayOrderID), Group: "upi", BankReference: "UTR" + g.mode,
 	}, nil
 }
 
-func (g *modeGateway) GetOrder(_ context.Context, orderID string) (*payments.OrderResult, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.lookups = append(g.lookups, orderID)
-	status := g.statuses[orderID]
-	if status == "" {
-		status = "ACTIVE"
-	}
-	return &payments.OrderResult{CFOrderID: "cf-" + orderID, Status: status}, nil
-}
-
-func (g *modeGateway) GetPayment(_ context.Context, orderID string) (*payments.PaymentDetails, error) {
-	return &payments.PaymentDetails{CFPaymentID: "pay-" + orderID, Group: "upi", BankReference: "UTR" + g.mode}, nil
-}
-
-func (g *modeGateway) VerifyWebhookSignature(_ string, _ []byte, signature string) bool {
+func (g *modeGateway) VerifyWebhookSignature(_ []byte, signature string) bool {
 	return signature == g.signature()
 }
 
@@ -113,18 +122,19 @@ func (h *harness) createOrder(token, productCode, testKey string) response {
 	return h.send(req)
 }
 
-// deliverPaid posts a PAYMENT_SUCCESS webhook for orderUID with the given
+// deliverPaid posts an order.paid webhook for orderUID with the given
 // signature and returns the HTTP status.
 func (h *harness) deliverPaid(orderUID, signature string) int {
 	h.t.Helper()
-	body := fmt.Sprintf(`{"type":"PAYMENT_SUCCESS_WEBHOOK","data":{"order":{"order_id":%q},
-		"payment":{"cf_payment_id":"pay-1","payment_status":"SUCCESS","payment_group":"upi",
-		"payment_time":%q}}}`, orderUID, time.Now().UTC().Format(time.RFC3339))
-	req := httptest.NewRequest(http.MethodPost, "/api/payments/cashfree/webhook", strings.NewReader(body))
+	return h.deliverWebhook(orderPaidWebhook(orderUID, "pay_1"), signature)
+}
+
+func (h *harness) deliverWebhook(body, signature string) int {
+	h.t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/payments/razorpay/webhook", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-webhook-timestamp", "1")
-	req.Header.Set("x-webhook-signature", signature)
-	req.Header.Set("x-idempotency-key", fmt.Sprintf("wh-%s-%d", orderUID, time.Now().UnixNano()))
+	req.Header.Set("X-Razorpay-Signature", signature)
+	req.Header.Set("X-Razorpay-Event-Id", fmt.Sprintf("evt_%d", time.Now().UnixNano()))
 	return h.send(req).Status
 }
 
@@ -182,7 +192,12 @@ func TestStoreBuildsPayLiveAndInternalBuildsPaySandbox(t *testing.T) {
 		t.Fatalf("store order: %d %s", store.Status, store.Raw)
 	}
 	if got := store.Body["mode"]; got != "production" {
-		t.Errorf("store order mode = %v, want production (the app opens checkout in this)", got)
+		t.Errorf("store order mode = %v, want production", got)
+	}
+	// The key is what selects Razorpay's environment in the checkout, so it
+	// must be the one belonging to the gateway that created the order.
+	if got := store.Body["keyId"]; got != "rzp_production_key" {
+		t.Errorf("store order keyId = %v, want the live gateway's key", got)
 	}
 	if got := h.orderColumn(orderUIDOf(t, store), "payment_mode"); got != "production" {
 		t.Errorf("store order stored as %q, want production", got)
@@ -194,6 +209,9 @@ func TestStoreBuildsPayLiveAndInternalBuildsPaySandbox(t *testing.T) {
 	}
 	if got := internal.Body["mode"]; got != "sandbox" {
 		t.Errorf("internal order mode = %v, want sandbox", got)
+	}
+	if got := internal.Body["keyId"]; got != "rzp_sandbox_key" {
+		t.Errorf("internal order keyId = %v, want the test gateway's key", got)
 	}
 	if got := h.orderColumn(orderUIDOf(t, internal), "payment_mode"); got != "sandbox" {
 		t.Errorf("internal order stored as %q, want sandbox", got)
@@ -296,4 +314,40 @@ func (h *harness) earningsOf(referrerID int64) int {
 		h.t.Fatalf("count referral earnings: %v", err)
 	}
 	return n
+}
+
+// A failed attempt does not end a Razorpay order: the checkout stays open for
+// another try on the same order. The delivery names only Razorpay's order id,
+// and must still be matched to ours — the deletion scrub finds webhook rows by
+// order_uid, and this one carries the payer's email, phone and UPI id.
+func TestAFailedAttemptLeavesTheOrderPayableAndIsLinkedToIt(t *testing.T) {
+	h, live, _ := liveDeployment(t)
+	token, _ := h.signInByPhone("+919000000708", "")
+	uid := orderUIDOf(t, h.createOrder(token, "CREDIT_ANALYSIS", ""))
+
+	failed := fmt.Sprintf(`{"entity":"event","event":"payment.failed","created_at":%d,
+		"payload":{"payment":{"entity":{"id":"pay_F","order_id":%q,"status":"failed","method":"upi",
+		"email":"payer@example.com","contact":"+919000000708","vpa":"payer@okaxis",
+		"error_description":"Payment was declined by the bank"}}}}`,
+		time.Now().Unix(), live.gatewayID(uid))
+	if status := h.deliverWebhook(failed, live.signature()); status != http.StatusOK {
+		t.Fatalf("payment.failed webhook answered %d", status)
+	}
+	if got := h.orderColumn(uid, "status"); got != "ACTIVE" {
+		t.Errorf("order after a failed attempt = %q, want ACTIVE (still payable)", got)
+	}
+	var linked int
+	if err := h.pool.QueryRow(h.baseCtx,
+		`SELECT count(*) FROM payment_webhook_events WHERE order_uid = $1 AND event_type = 'payment.failed'`,
+		uid).Scan(&linked); err != nil || linked != 1 {
+		t.Errorf("payment.failed rows linked to the order = %d (err %v), want 1", linked, err)
+	}
+
+	// The same order then pays.
+	if status := h.deliverPaid(uid, live.signature()); status != http.StatusOK {
+		t.Fatalf("order.paid webhook answered %d", status)
+	}
+	if got := h.orderColumn(uid, "status"); got != "PAID" {
+		t.Errorf("order after paying = %q, want PAID", got)
+	}
 }

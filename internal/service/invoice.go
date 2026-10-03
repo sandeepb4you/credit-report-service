@@ -82,7 +82,7 @@ const specimenSeries = "TST"
 const (
 	invoiceResendCooldown = 30 * time.Second
 	invoiceOneTimePerDay  = 3
-	// paymentFetchAttempts bounds how often an invoice asks Cashfree for its
+	// paymentFetchAttempts bounds how often an invoice asks the gateway for its
 	// payment record before settling for the payment group alone.
 	paymentFetchAttempts = 3
 	paymentFetchTimeout  = 5 * time.Second
@@ -267,7 +267,7 @@ func (s *InvoiceService) Issue(
 }
 
 // applyPayment fills the payment lines from the best source available: the
-// payment record, else the order's own payment group and Cashfree id.
+// payment record, else the order's own payment group and gateway payment id.
 func applyPayment(inv *models.Invoice, pd *payments.PaymentDetails, order *models.Order) {
 	if pd != nil {
 		if l := pd.Label(); l != "" {
@@ -286,9 +286,9 @@ func applyPayment(inv *models.Invoice, pd *payments.PaymentDetails, order *model
 			inv.PaymentLabel = &l
 		}
 	}
-	if order.CFPaymentID != nil && *order.CFPaymentID != "" {
+	if order.GatewayPaymentID != nil && *order.GatewayPaymentID != "" {
 		label := "Payment ID"
-		inv.PaymentRefLabel, inv.PaymentRef = &label, order.CFPaymentID
+		inv.PaymentRefLabel, inv.PaymentRef = &label, order.GatewayPaymentID
 	}
 }
 
@@ -605,7 +605,7 @@ func (s *InvoiceService) render(ctx context.Context, inv *models.Invoice) ([]byt
 
 // ensurePayment reads the payment record for an invoice issued without one,
 // a bounded number of times. The payment lines are information, not a GST
-// requirement, so a Cashfree that cannot answer costs the invoice its UTR, not
+// requirement, so a gateway that cannot answer costs the invoice its UTR, not
 // its existence.
 func (s *InvoiceService) ensurePayment(ctx context.Context, inv *models.Invoice) {
 	if inv.PaymentLabel != nil || s.payments == nil || inv.PaymentFetchAttempts >= paymentFetchAttempts {

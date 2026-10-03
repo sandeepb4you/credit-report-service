@@ -69,8 +69,8 @@ type AccountPurgeResult struct {
 
 	// The retained rows that had personal data IN them, and were scrubbed
 	// rather than deleted. A retained row is only anonymous if its contents
-	// are: the webhook payload is Cashfree's raw JSON, which carries the
-	// customer's name, phone and email; a withdrawal carries the bank account
+	// are: the webhook payload is the gateway's raw JSON, which carries the
+	// payer's name, phone, email and UPI id; a withdrawal carries the bank account
 	// holder's name. Counted so the audit line shows the scrub happened.
 	WebhookEventsScrubbed int `json:"webhookEventsScrubbed"`
 	// InvoicesScrubbed kept their numbers and amounts and lost their billed-to

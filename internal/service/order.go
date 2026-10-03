@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"crypto/subtle"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -21,23 +20,15 @@ import (
 	"credit-report-service/internal/repository"
 )
 
-// Cashfree webhook event types (x-api-version 2025-01-01).
-const (
-	webhookPaymentSuccess = "PAYMENT_SUCCESS_WEBHOOK"
-	webhookPaymentFailed  = "PAYMENT_FAILED_WEBHOOK"
-	webhookUserDropped    = "PAYMENT_USER_DROPPED_WEBHOOK"
-	webhookTestPing       = "WEBHOOK" // dashboard "test webhook" event
-)
-
 // OrderService implements the purchase flow: create a local order, open the
-// matching Cashfree order, and settle the outcome from webhooks (with
+// matching Razorpay order, and settle the outcome from webhooks (with
 // on-demand reconciliation against the gateway as backup).
 type OrderService struct {
 	orders   *repository.OrderRepo
 	accounts *repository.AccountRepo
 	coupons  *CouponService
 	gateway  payments.Gateway
-	cfg      config.CashfreeConfig
+	cfg      config.RazorpayConfig
 	// testGateway is the sandbox gateway internal builds pay through, and
 	// testModeKey the secret they present to reach it (SetTestPayments). Nil /
 	// empty means test payments are off. In a deployment whose default mode is
@@ -81,7 +72,7 @@ func NewOrderService(
 	accounts *repository.AccountRepo,
 	coupons *CouponService,
 	gateway payments.Gateway,
-	cfg config.CashfreeConfig,
+	cfg config.RazorpayConfig,
 	scheduled *repository.ScheduledCheckRepo,
 	scheduleLoc *time.Location,
 	earnings earningsCrediter,
@@ -95,7 +86,7 @@ func NewOrderService(
 // SetInvoices wires invoicing into fulfilment and the orders API.
 func (s *OrderService) SetInvoices(inv invoiceIssuer) { s.invoices = inv }
 
-// PaymentDetails reads the successful payment on an order from the Cashfree
+// PaymentDetails reads the successful payment on an order from the Razorpay
 // environment that took it: the invoice's payment lines. Implements the
 // invoice service's paymentLookup.
 func (s *OrderService) PaymentDetails(ctx context.Context, order *models.Order) (*payments.PaymentDetails, error) {
@@ -103,11 +94,14 @@ func (s *OrderService) PaymentDetails(ctx context.Context, order *models.Order) 
 	if gateway == nil {
 		return nil, fmt.Errorf("no %q gateway configured for order %s", order.PaymentMode, order.OrderUID)
 	}
-	return gateway.GetPayment(ctx, order.OrderUID)
+	if order.GatewayOrderID == nil || *order.GatewayOrderID == "" {
+		return nil, fmt.Errorf("order %s was never registered with the gateway", order.OrderUID)
+	}
+	return gateway.GetPayment(ctx, *order.GatewayOrderID)
 }
 
 // SetTestPayments wires the sandbox gateway that internal builds pay through,
-// and the key they must present to use it. See config.CashfreeConfig.TestModeKey
+// and the key they must present to use it. See config.RazorpayConfig.TestModeKey
 // for why this is a key rather than a flag the app could simply send.
 func (s *OrderService) SetTestPayments(gateway payments.Gateway, key string) {
 	s.testGateway = gateway
@@ -151,12 +145,29 @@ func (s *OrderService) gatewayForNewOrder(testKey string) (payments.Gateway, err
 	return s.testGateway, nil
 }
 
-// PurchaseResult is returned from CreateOrder. The frontend initialises the
-// Cashfree JS SDK with Mode and opens checkout with PaymentSessionID.
+// PurchaseResult is returned from CreateOrder: everything the app needs to
+// open Razorpay's checkout for this order.
 type PurchaseResult struct {
-	OrderID          string `json:"orderId"`
-	CFOrderID        string `json:"cfOrderId"`
-	PaymentSessionID string `json:"paymentSessionId"`
+	OrderID string `json:"orderId"`
+	// Gateway names the checkout to open. Always "razorpay"; sent so a client
+	// can refuse an order it does not know how to pay rather than guess.
+	Gateway string `json:"gateway"`
+	// GatewayOrderID is Razorpay's order id, the checkout's order_id.
+	GatewayOrderID string `json:"gatewayOrderId"`
+	// KeyID is the public key the checkout is opened with. It is what selects
+	// the Razorpay environment on the client, so it comes from the gateway
+	// that created THIS order — an internal build gets the test key.
+	KeyID string `json:"keyId"`
+	// AmountMinor is Amount in paise, the unit the checkout takes, computed
+	// here so the client never rounds a float.
+	AmountMinor int64 `json:"amountMinor"`
+	// CheckoutName and Description are the checkout header's two lines.
+	CheckoutName string `json:"checkoutName"`
+	Description  string `json:"description"`
+	// Prefill is the caller's own contact details, so the checkout does not
+	// ask for what the account already knows. Fields are omitted rather than
+	// faked: a placeholder phone here would be offered as the payer's number.
+	Prefill CheckoutPrefill `json:"prefill"`
 	// Amount is the charged total, already net of any coupon. OriginalAmount
 	// and DiscountAmount let the payment screen show the saving without
 	// recomputing it — and without being trusted to.
@@ -169,14 +180,21 @@ type PurchaseResult struct {
 	Mode           string  `json:"mode"`
 }
 
+// CheckoutPrefill is the checkout form's prefill. Only the caller's own data.
+type CheckoutPrefill struct {
+	Name    string `json:"name,omitempty"`
+	Email   string `json:"email,omitempty"`
+	Contact string `json:"contact,omitempty"`
+}
+
 // ListProducts returns the purchasable catalog.
 func (s *OrderService) ListProducts(ctx context.Context) ([]models.Product, error) {
 	return s.orders.ListActiveProducts(ctx)
 }
 
 // CreateOrder starts a purchase: snapshots the product price into a local
-// order row, opens the Cashfree order, and returns the payment session the
-// frontend needs to launch checkout.
+// order row, opens the Razorpay order, and returns what the frontend needs to
+// launch checkout.
 // An optional couponCode discounts the price. The discount is computed here
 // from the catalog price and the coupon's stored percentage — the client sends
 // only the code, never an amount — and the redemption is committed in the same
@@ -317,19 +335,13 @@ func (s *OrderService) CreateOrder(
 	}
 
 	res, err := gateway.CreateOrder(ctx, payments.CreateOrderParams{
-		OrderID:       order.OrderUID,
-		Amount:        order.Amount,
-		Currency:      order.Currency,
-		CustomerID:    fmt.Sprintf("acct_%d", accountID),
-		CustomerEmail: strDeref(account.PrimaryEmail),
-		CustomerPhone: customerPhone(account),
-		CustomerName:  customerName(account),
-		ReturnURL:     buildReturnURL(s.cfg.ReturnURL, order.OrderUID),
-		NotifyURL:     s.cfg.NotifyURL,
-		OrderNote:     product.Name,
+		OrderID:   order.OrderUID,
+		Amount:    order.Amount,
+		Currency:  order.Currency,
+		OrderNote: product.Name,
 	})
 	if err != nil {
-		log.Printf("[order] cashfree create failed for %s: %v", order.OrderUID, err)
+		log.Printf("[order] razorpay create failed for %s: %v", order.OrderUID, err)
 		if ferr := s.orders.MarkOrderCreationFailed(ctx, order.OrderUID, err.Error()); ferr != nil {
 			log.Printf("[order] mark creation-failed %s: %v", order.OrderUID, ferr)
 		}
@@ -343,26 +355,34 @@ func (s *OrderService) CreateOrder(
 	if res.Status != "" {
 		order.Status = res.Status
 	}
-	order.CFOrderID = &res.CFOrderID
-	order.PaymentSessionID = &res.PaymentSessionID
+	order.GatewayOrderID = &res.GatewayOrderID
 	order.OrderExpiryTime = res.ExpiryTime
 	if err := s.orders.MarkOrderCreated(ctx, order); err != nil {
 		return nil, err
 	}
 
 	return &PurchaseResult{
-		OrderID:          order.OrderUID,
-		CFOrderID:        res.CFOrderID,
-		PaymentSessionID: res.PaymentSessionID,
-		Amount:           order.Amount,
-		OriginalAmount:   order.Amount + order.DiscountAmount,
-		DiscountAmount:   order.DiscountAmount,
-		CouponCode:       order.CouponCode,
-		Currency:         order.Currency,
-		Status:           order.Status,
-		// The app, the web and iOS each open checkout in whatever this says, so
-		// it is the ORDER's environment -- which is what makes an internal build
-		// open the sandbox checkout without being built any differently.
+		OrderID:        order.OrderUID,
+		Gateway:        "razorpay",
+		GatewayOrderID: res.GatewayOrderID,
+		KeyID:          gateway.KeyID(),
+		AmountMinor:    payments.ToMinorUnits(order.Amount),
+		CheckoutName:   s.cfg.CheckoutName,
+		Description:    product.Name,
+		Prefill: CheckoutPrefill{
+			Name:    customerName(account),
+			Email:   strDeref(account.PrimaryEmail),
+			Contact: strDeref(account.PrimaryPhone),
+		},
+		Amount:         order.Amount,
+		OriginalAmount: order.Amount + order.DiscountAmount,
+		DiscountAmount: order.DiscountAmount,
+		CouponCode:     order.CouponCode,
+		Currency:       order.Currency,
+		Status:         order.Status,
+		// The ORDER's environment, the same one KeyID belongs to -- which is what
+		// makes an internal build open the test checkout without being built
+		// any differently.
 		Mode: gateway.Mode(),
 	}, nil
 }
@@ -418,7 +438,7 @@ func (s *OrderService) GetOrder(ctx context.Context, accountID int64, orderUID s
 	}
 
 	if (order.Status == models.OrderActive || order.Status == models.OrderCreationRequested) &&
-		order.CFOrderID != nil {
+		order.GatewayOrderID != nil {
 		if err := s.reconcile(ctx, order); err != nil {
 			// Reconciliation is best-effort; return the local state.
 			log.Printf("[order] reconcile %s: %v", order.OrderUID, err)
@@ -537,88 +557,84 @@ func (s *OrderService) findOwnedOrder(ctx context.Context, accountID int64, orde
 }
 
 // reconcile pulls the order state from the gateway and applies it locally.
+//
+// Only PAID moves anything. A Razorpay order has no expiry and no terminal
+// failure — after a declined attempt the same order can still be paid — so
+// "not paid yet" is the only other answer, and it leaves the order as it is.
 func (s *OrderService) reconcile(ctx context.Context, order *models.Order) error {
 	gateway := s.gatewayFor(order.PaymentMode)
 	if gateway == nil {
 		return fmt.Errorf("no %q gateway configured to reconcile order %s",
 			order.PaymentMode, order.OrderUID)
 	}
-	res, err := gateway.GetOrder(ctx, order.OrderUID)
+	res, err := gateway.GetOrder(ctx, *order.GatewayOrderID)
 	if err != nil {
 		return err
 	}
-	switch res.Status {
-	case models.OrderPaid:
-		first, err := s.orders.MarkOrderPaid(ctx, order.OrderUID, nil, nil, time.Now().UTC())
-		if err != nil {
-			return err
-		}
-		if first {
-			// The order endpoint carries no payment record, so the invoice's
-			// payment lines are read now while the gateway is in hand. Bounded
-			// and best-effort: the app is waiting on this call, and an invoice
-			// issued without them reads them again at first render.
-			var pd *payments.PaymentDetails
-			if s.invoices != nil {
-				pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-				pd, _ = gateway.GetPayment(pctx, order.OrderUID)
-				cancel()
-			}
-			s.fulfillOrder(ctx, order, pd)
-		}
-	case models.OrderExpired, models.OrderTerminated:
-		if err := s.orders.UpdateOrderStatus(ctx, order.OrderUID, res.Status, nil); err != nil {
-			return err
-		}
-		s.coupons.Release(ctx, order.OrderUID)
+	if res.Status != payments.StatusPaid {
+		return nil
+	}
+	// The order endpoint carries no payment record, so the payment is read now
+	// while the gateway is in hand: its id and group for the order row, and its
+	// description for the invoice. Bounded and best-effort: the app is waiting
+	// on this call, and an invoice issued without them reads them again at
+	// first render.
+	pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	pd, _ := gateway.GetPayment(pctx, *order.GatewayOrderID)
+	cancel()
+	var paymentID, group *string
+	if pd != nil {
+		paymentID, group = nilIfEmpty(pd.PaymentID), nilIfEmpty(pd.Group)
+	}
+	first, err := s.orders.MarkOrderPaid(ctx, order.OrderUID, paymentID, group, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if first {
+		s.fulfillOrder(ctx, order, pd)
 	}
 	return nil
 }
 
 // ---- webhook processing ----------------------------------------------------
 
-// webhookEnvelope is the subset of the Cashfree webhook payload we act on.
-type webhookEnvelope struct {
-	Type string `json:"type"`
-	Data struct {
-		Order struct {
-			OrderID string `json:"order_id"`
-		} `json:"order"`
-		Payment struct {
-			CFPaymentID    flexString `json:"cf_payment_id"`
-			PaymentStatus  string     `json:"payment_status"`
-			PaymentMessage string     `json:"payment_message"`
-			PaymentGroup   string     `json:"payment_group"`
-			PaymentTime    string     `json:"payment_time"`
-		} `json:"payment"`
-	} `json:"data"`
-}
-
-// ProcessWebhook verifies, records, and applies a Cashfree webhook delivery.
+// ProcessWebhook verifies, records, and applies a Razorpay webhook delivery.
 // body must be the raw request bytes — the signature is computed over them.
+// eventID is Razorpay's X-Razorpay-Event-Id, the same across retries of one
+// event, which is what makes a redelivery a no-op.
 //
-// Cashfree's live and sandbox environments post to the same URL, each signed
-// with its own secret. The signature therefore says which environment sent the
-// delivery, and applyWebhook refuses one whose environment is not the order's.
-func (s *OrderService) ProcessWebhook(ctx context.Context, timestamp, signature, idempotencyKey string, body []byte) error {
-	mode, ok := s.verifyWebhook(timestamp, body, signature)
+// Razorpay's live and test environments each have their own webhooks, which
+// may point at this same URL, each with its own secret. The signature
+// therefore says which environment sent the delivery, and applyWebhook refuses
+// one whose environment is not the order's.
+func (s *OrderService) ProcessWebhook(ctx context.Context, signature, eventID string, body []byte) error {
+	mode, ok := s.verifyWebhook(body, signature)
 	if !ok {
 		return apperr.NewUnauthorized("Invalid webhook signature")
 	}
 
-	var env webhookEnvelope
-	if err := json.Unmarshal(body, &env); err != nil {
+	ev, err := payments.ParseWebhook(body)
+	if err != nil {
 		return apperr.NewValidation("invalid webhook payload")
 	}
-	if env.Type == "" || strings.EqualFold(env.Type, webhookTestPing) {
-		// Dashboard test ping — acknowledge without recording.
-		return nil
+
+	// Find the order before recording, so the stored event names it. The
+	// account-deletion scrub finds webhook rows by order_uid, and a
+	// payment.failed delivery (which names only Razorpay's order id) stored
+	// without one would keep the payer's email, phone and UPI id forever.
+	order, err := s.findWebhookOrder(ctx, ev)
+	if err != nil {
+		return err
+	}
+	var orderUID *string
+	if order != nil {
+		orderUID = &order.OrderUID
 	}
 
 	event := &models.PaymentWebhookEvent{
-		IdempotencyKey: nilIfEmpty(idempotencyKey),
-		EventType:      env.Type,
-		OrderUID:       nilIfEmpty(env.Data.Order.OrderID),
+		IdempotencyKey: nilIfEmpty(eventID),
+		EventType:      ev.Type,
+		OrderUID:       orderUID,
 		Payload:        string(body),
 	}
 	if err := s.orders.CreateWebhookEvent(ctx, event); err != nil {
@@ -629,19 +645,9 @@ func (s *OrderService) ProcessWebhook(ctx context.Context, timestamp, signature,
 		return err
 	}
 
-	// The payment object again, whole, for the invoice's payment lines: the
-	// envelope above reads only the fields settlement needs.
-	var raw struct {
-		Data struct {
-			Payment json.RawMessage `json:"payment"`
-		} `json:"data"`
-	}
-	_ = json.Unmarshal(body, &raw)
-	pd := payments.DetailsFromWebhook(raw.Data.Payment)
-
-	if err := s.applyWebhook(ctx, &env, mode, pd); err != nil {
-		// Leave processed=false; Cashfree's retry (new idempotency key) or the
-		// GetOrder reconciliation path will settle the order.
+	if err := s.applyWebhook(ctx, ev, order, mode); err != nil {
+		// Leave processed=false; Razorpay's retry or the GetOrder
+		// reconciliation path will settle the order.
 		return err
 	}
 	if err := s.orders.MarkWebhookProcessed(ctx, event.ID); err != nil {
@@ -650,12 +656,37 @@ func (s *OrderService) ProcessWebhook(ctx context.Context, timestamp, signature,
 	return nil
 }
 
+// findWebhookOrder resolves a delivery to our order: by the receipt when the
+// event carries the order entity, else by Razorpay's order id. Nil (no error)
+// for an order this service never created: a delivery about someone else's
+// order is not ours to fail on.
+func (s *OrderService) findWebhookOrder(ctx context.Context, ev *payments.WebhookEvent) (*models.Order, error) {
+	var (
+		order *models.Order
+		err   error
+	)
+	switch {
+	case ev.OrderUID != "":
+		order, err = s.orders.FindOrderByUID(ctx, ev.OrderUID)
+	case ev.GatewayOrderID != "":
+		order, err = s.orders.FindOrderByGatewayOrderID(ctx, ev.GatewayOrderID)
+	default:
+		return nil, nil
+	}
+	if errors.Is(err, repository.ErrNotFound) {
+		log.Printf("[order] webhook %s for unknown order (uid %q, gateway %q); ignoring",
+			ev.Type, ev.OrderUID, ev.GatewayOrderID)
+		return nil, nil
+	}
+	return order, err
+}
+
 // verifyWebhook checks the signature against each configured environment and
 // reports which one it belongs to. The default gateway is tried first; a
 // deployment in sandbox mode has one gateway and so one answer.
-func (s *OrderService) verifyWebhook(timestamp string, body []byte, signature string) (string, bool) {
+func (s *OrderService) verifyWebhook(body []byte, signature string) (string, bool) {
 	for _, gw := range []payments.Gateway{s.gateway, s.testGateway} {
-		if gw != nil && gw.VerifyWebhookSignature(timestamp, body, signature) {
+		if gw != nil && gw.VerifyWebhookSignature(body, signature) {
 			return gw.Mode(), true
 		}
 	}
@@ -663,58 +694,38 @@ func (s *OrderService) verifyWebhook(timestamp string, body []byte, signature st
 }
 
 func (s *OrderService) applyWebhook(
-	ctx context.Context, env *webhookEnvelope, mode string, pd *payments.PaymentDetails,
+	ctx context.Context, ev *payments.WebhookEvent, order *models.Order, mode string,
 ) error {
-	orderUID := env.Data.Order.OrderID
-	if orderUID == "" {
-		log.Printf("[order] webhook %s without order_id; ignoring", env.Type)
+	if order == nil {
 		return nil
 	}
-	order, err := s.orders.FindOrderByUID(ctx, orderUID)
-	if errors.Is(err, repository.ErrNotFound) {
-		log.Printf("[order] webhook %s for unknown order %s; ignoring", env.Type, orderUID)
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	// A sandbox-signed delivery must never settle a live order. Sandbox
-	// "payments" cost nothing to make, so this is the line that keeps a test
-	// build from being a way to get paid-for reports free.
+	// A sandbox-signed delivery must never settle a live order. Test payments
+	// cost nothing to make, so this is the line that keeps a test build from
+	// being a way to get paid-for reports free.
 	if order.PaymentMode != mode {
-		slog.Warn("webhook refused: signed by a different Cashfree environment than the order's",
-			"order_uid", orderUID, "order_mode", order.PaymentMode, "webhook_mode", mode)
+		slog.Warn("webhook refused: signed by a different Razorpay environment than the order's",
+			"order_uid", order.OrderUID, "order_mode", order.PaymentMode, "webhook_mode", mode)
 		return apperr.NewUnauthorized("Webhook environment does not match the order")
 	}
 
-	switch strings.ToUpper(env.Type) {
-	case webhookPaymentSuccess:
-		paidAt := time.Now().UTC()
-		if t, perr := time.Parse(time.RFC3339, env.Data.Payment.PaymentTime); perr == nil {
-			paidAt = t
-		}
-		first, err := s.orders.MarkOrderPaid(ctx, orderUID,
-			nilIfEmpty(string(env.Data.Payment.CFPaymentID)),
-			nilIfEmpty(env.Data.Payment.PaymentGroup), paidAt)
+	switch ev.Kind {
+	case payments.WebhookPaid:
+		first, err := s.orders.MarkOrderPaid(ctx, order.OrderUID,
+			nilIfEmpty(ev.PaymentID), nilIfEmpty(ev.PaymentGroup), ev.PaidAt)
 		if err != nil {
 			return err
 		}
 		if first {
-			s.fulfillOrder(ctx, order, pd)
+			s.fulfillOrder(ctx, order, ev.Payment)
 		}
-	case webhookPaymentFailed:
-		if err := s.orders.UpdateOrderStatus(ctx, orderUID, models.OrderFailed,
-			nilIfEmpty(env.Data.Payment.PaymentMessage)); err != nil {
-			return err
-		}
-		// Release is idempotent, so a redelivered failure webhook cannot
-		// credit the coupon twice.
-		s.coupons.Release(ctx, orderUID)
-	case webhookUserDropped:
-		// The customer abandoned checkout; the order stays ACTIVE and can be
-		// retried until it expires.
+	case payments.WebhookPaymentFailed:
+		// One attempt failed; the order is still payable and the checkout is
+		// usually still open for another try. Nothing to change — marking the
+		// order FAILED here would tell the app to give up on an order the user
+		// may be about to pay.
+		log.Printf("[order] payment attempt failed for %s: %s", order.OrderUID, ev.FailureReason)
 	default:
-		log.Printf("[order] unhandled webhook type %s for order %s", env.Type, orderUID)
+		log.Printf("[order] unhandled webhook type %s for order %s", ev.Type, order.OrderUID)
 	}
 	return nil
 }
@@ -741,7 +752,7 @@ func (s *OrderService) applyWebhook(
 // Minting is idempotent two ways: MarkOrderPaid's status guard means only the
 // first PAID transition reaches here, and the (order_id, sequence_no) unique
 // key means a replayed mint inserts nothing. A mint failure is logged loudly
-// rather than failing the webhook: the payment HAS happened, and Cashfree's
+// rather than failing the webhook: the payment HAS happened, and Razorpay's
 // retry (or the reconcile path) re-enters here to try again.
 //
 // MarkOrderPaid stamps fulfilled_at on the same transition, recording when the
@@ -837,31 +848,6 @@ func businessToday(loc *time.Location) time.Time {
 
 // ---- helpers ----------------------------------------------------------------
 
-// buildReturnURL substitutes the {order_id} placeholder, or appends an
-// order_id query param when no placeholder is present.
-func buildReturnURL(base, orderUID string) string {
-	if base == "" {
-		return ""
-	}
-	if strings.Contains(base, "{order_id}") {
-		return strings.ReplaceAll(base, "{order_id}", orderUID)
-	}
-	sep := "?"
-	if strings.Contains(base, "?") {
-		sep = "&"
-	}
-	return base + sep + "order_id=" + orderUID
-}
-
-// customerPhone returns the account's phone; Cashfree requires one, so a
-// placeholder stands in for accounts that haven't added a phone yet.
-func customerPhone(a *models.Account) string {
-	if a.PrimaryPhone != nil && *a.PrimaryPhone != "" {
-		return *a.PrimaryPhone
-	}
-	return "9999999999"
-}
-
 func customerName(a *models.Account) string {
 	name := strings.TrimSpace(strDeref(a.FirstName) + " " + strDeref(a.LastName))
 	return name
@@ -879,25 +865,4 @@ func nilIfEmpty(s string) *string {
 		return nil
 	}
 	return &s
-}
-
-// flexString tolerates a JSON field arriving as either a string or a number
-// (Cashfree's cf_payment_id has changed types across API versions).
-type flexString string
-
-func (f *flexString) UnmarshalJSON(b []byte) error {
-	if len(b) == 0 || string(b) == "null" {
-		*f = ""
-		return nil
-	}
-	if b[0] == '"' {
-		var s string
-		if err := json.Unmarshal(b, &s); err != nil {
-			return err
-		}
-		*f = flexString(s)
-		return nil
-	}
-	*f = flexString(string(b))
-	return nil
 }

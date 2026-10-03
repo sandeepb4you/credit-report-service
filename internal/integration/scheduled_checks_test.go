@@ -27,6 +27,23 @@ import (
 // buyPlan creates an order for productCode and settles it with a fabricated
 // success webhook, returning the order UID. This is the REAL fulfilment path —
 // ProcessWebhook → MarkOrderPaid → fulfillOrder → mint — not a DB shortcut.
+// orderPaidWebhook is the shape of Razorpay's order.paid delivery, as much of
+// it as settlement reads: the order (whose receipt is our order uid) and the
+// captured UPI payment.
+func orderPaidWebhook(orderUID, paymentID string) string {
+	return fmt.Sprintf(`{
+		"entity": "event", "event": "order.paid", "contains": ["payment", "order"],
+		"created_at": %d,
+		"payload": {
+			"payment": {"entity": {"id": %q, "entity": "payment", "amount": 29900,
+				"currency": "INR", "status": "captured", "order_id": "order_stub_%s",
+				"method": "upi", "acquirer_data": {"rrn": "412345678901"}}},
+			"order": {"entity": {"id": "order_stub_%s", "entity": "order", "amount": 29900,
+				"amount_paid": 29900, "currency": "INR", "receipt": %q, "status": "paid"}}
+		}
+	}`, time.Now().Unix(), paymentID, orderUID, orderUID, orderUID)
+}
+
 func (h *harness) buyPlan(token, productCode string) string {
 	h.t.Helper()
 
@@ -39,21 +56,13 @@ func (h *harness) buyPlan(token, productCode string) string {
 		h.t.Fatalf("no orderId in create response: %s", created.Raw)
 	}
 
-	payload := fmt.Sprintf(`{
-		"type": "PAYMENT_SUCCESS_WEBHOOK",
-		"data": {
-			"order": {"order_id": %q},
-			"payment": {"cf_payment_id": "stub-pay-1", "payment_status": "SUCCESS",
-			            "payment_group": "upi", "payment_time": %q}
-		}
-	}`, orderUID, time.Now().UTC().Format(time.RFC3339))
+	payload := orderPaidWebhook(orderUID, "pay_stub1")
 
-	req := httptest.NewRequest(http.MethodPost, "/api/payments/cashfree/webhook",
+	req := httptest.NewRequest(http.MethodPost, "/api/payments/razorpay/webhook",
 		strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-webhook-timestamp", "1")
-	req.Header.Set("x-webhook-signature", "stub")
-	req.Header.Set("x-idempotency-key", "test-"+orderUID)
+	req.Header.Set("X-Razorpay-Signature", "stub")
+	req.Header.Set("X-Razorpay-Event-Id", "test-"+orderUID)
 	res, err := h.app.Test(req, -1)
 	if err != nil {
 		h.t.Fatalf("webhook for %s: %v", orderUID, err)

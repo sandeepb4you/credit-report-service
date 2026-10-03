@@ -11,7 +11,7 @@
 // When no client credentials are configured (ClientID == ""), New returns a
 // stub client that never does I/O and replies with a synthesized success
 // envelope, so the feature runs offline / in CI — the same convention used by
-// the credit digitap client (internal/digitap) and the Cashfree gateway.
+// the credit digitap client (internal/digitap) and the Razorpay gateway.
 package bankdata
 
 import (

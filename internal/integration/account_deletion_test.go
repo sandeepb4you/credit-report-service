@@ -107,19 +107,18 @@ func TestAccountDeletionSchedulesAndPurges(t *testing.T) {
 	orderUID := h.buyPlan(token, "SCORE_PLUS_MONTHLY")
 
 	// The personal data that retained rows can carry, seeded in the shapes the
-	// live system produces. The harness webhook is minimal; Cashfree's real one
-	// echoes back the customer_details the order was created with, plus the
-	// payment instrument.
+	// live system produces. The harness webhook is minimal; Razorpay's real
+	// payment entity carries the payer's email, phone and UPI id, plus notes
+	// and a customer id.
 	const upiID = "asha.rao@okhdfc"
 	if _, err := h.pool.Exec(h.baseCtx,
 		`UPDATE payment_webhook_events
-		    SET payload = jsonb_set(jsonb_set(payload,
-		        '{data,customer_details}', $2::jsonb),
-		        '{data,payment,payment_method}', $3::jsonb)
+		    SET payload = jsonb_set(payload, '{payload,payment,entity}',
+		        (payload->'payload'->'payment'->'entity') || $2::jsonb)
 		  WHERE order_uid = $1`,
 		orderUID,
-		`{"customer_name":"Asha Rao","customer_phone":"9000000601","customer_email":"asha@example.com","customer_id":"acct_x"}`,
-		fmt.Sprintf(`{"upi":{"channel":"collect","upi_id":%q}}`, upiID),
+		fmt.Sprintf(`{"email":"asha@example.com","contact":"+919000000601","vpa":%q,
+		  "upi":{"vpa":%q},"notes":{"name":"Asha Rao"},"customer_id":"cust_x"}`, upiID, upiID),
 	); err != nil {
 		t.Fatalf("seed webhook customer details: %v", err)
 	}
@@ -213,12 +212,12 @@ func TestAccountDeletionSchedulesAndPurges(t *testing.T) {
 	).Scan(&payload); err != nil {
 		t.Fatalf("read retained webhook: %v", err)
 	}
-	for _, personal := range []string{"Asha Rao", "9000000601", "asha@example.com", upiID, "customer_details", "acct_x"} {
+	for _, personal := range []string{"Asha Rao", "9000000601", "asha@example.com", upiID, "cust_x"} {
 		if strings.Contains(payload, personal) {
 			t.Errorf("retained webhook payload still carries %q: %s", personal, payload)
 		}
 	}
-	for _, needed := range []string{orderUID, "stub-pay-1", "SUCCESS", "PAYMENT_SUCCESS_WEBHOOK"} {
+	for _, needed := range []string{orderUID, "pay_stub1", "captured", "order.paid", "412345678901"} {
 		if !strings.Contains(payload, needed) {
 			t.Errorf("scrub removed %q, which reconciling the payment needs: %s", needed, payload)
 		}

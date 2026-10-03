@@ -3,11 +3,13 @@ package models
 import "time"
 
 // Order status lifecycle. CREATION_REQUESTED/CREATION_FAILED are local-only;
-// the rest mirror Cashfree's order_status vocabulary, plus FAILED which we set
+// the rest are the order_status vocabulary the table has used since the
+// Cashfree days (Razorpay's created/attempted/paid map onto ACTIVE and PAID),
+// plus FAILED which we set
 // from a payment-failure webhook.
 const (
-	OrderCreationRequested = "CREATION_REQUESTED" // row saved, Cashfree not yet called
-	OrderCreationFailed    = "CREATION_FAILED"    // Cashfree create-order call failed
+	OrderCreationRequested = "CREATION_REQUESTED" // row saved, gateway not yet called
+	OrderCreationFailed    = "CREATION_FAILED"    // gateway create-order call failed
 	OrderActive            = "ACTIVE"             // awaiting payment
 	OrderPaid              = "PAID"
 	OrderFailed            = "FAILED"
@@ -38,7 +40,7 @@ type Product struct {
 	// products). IntervalMonths is the cadence between them and nil for one-time
 	// products — it is what makes fulfilment mint a scheduled batch. ValidityDays
 	// bounds how long unrun checks stay runnable (nil = forever). These are NOT
-	// subscription fields: payment is one Cashfree order, no mandate, no renewal.
+	// subscription fields: payment is one gateway order, no mandate, no renewal.
 	ChecksIncluded int  `json:"checksIncluded" db:"checks_included"`
 	IntervalMonths *int `json:"intervalMonths,omitempty" db:"interval_months"`
 	ValidityDays   *int `json:"validityDays,omitempty" db:"validity_days"`
@@ -74,7 +76,7 @@ type Product struct {
 func (p *Product) IsPlan() bool { return p.IntervalMonths != nil && *p.IntervalMonths > 0 }
 
 // Order is the row model for the orders table: one purchase attempt. OrderUID
-// is our public identifier and the order_id sent to Cashfree; the serial id
+// is our public identifier and the receipt sent to Razorpay; the serial id
 // stays internal.
 type Order struct {
 	ID          int64  `json:"-"           db:"id"`
@@ -92,19 +94,24 @@ type Order struct {
 	Currency       string  `json:"currency"       db:"currency"`
 	Status         string  `json:"status"         db:"status"`
 
-	// PaymentMode is the Cashfree environment the order was created in —
+	// PaymentMode is the gateway environment the order was created in —
 	// "sandbox" or "production" — and everything that happens to the order
 	// afterwards (reconcile, webhook, referral credit) is routed by it rather
 	// than by the server's current config. See migration 0031. Serialized so
 	// the app and the admin console can tell a test purchase from a real one.
 	PaymentMode string `json:"paymentMode" db:"payment_mode"`
 
-	CFOrderID        *string    `json:"cfOrderId"        db:"cf_order_id"`
-	PaymentSessionID *string    `json:"paymentSessionId" db:"payment_session_id"`
-	CFPaymentID      *string    `json:"-"                db:"cf_payment_id"`
-	PaymentMethod    *string    `json:"paymentMethod"    db:"payment_method"`
-	FailureReason    *string    `json:"failureReason"    db:"failure_reason"`
-	OrderExpiryTime  *time.Time `json:"-"                db:"order_expiry_time"`
+	// The gateway's identifiers. The columns keep their cf_ names from the
+	// Cashfree days rather than being migrated: orders created then still hold
+	// Cashfree ids in them, and Razorpay ids (order_..., pay_...) are told
+	// apart by shape (payments.checkOrderID). payment_session_id is Cashfree's
+	// alone and is no longer written.
+	GatewayOrderID   *string    `json:"gatewayOrderId" db:"cf_order_id"`
+	PaymentSessionID *string    `json:"-"              db:"payment_session_id"`
+	GatewayPaymentID *string    `json:"-"              db:"cf_payment_id"`
+	PaymentMethod    *string    `json:"paymentMethod"  db:"payment_method"`
+	FailureReason    *string    `json:"failureReason"  db:"failure_reason"`
+	OrderExpiryTime  *time.Time `json:"-"              db:"order_expiry_time"`
 
 	PaidAt      *time.Time `json:"paidAt" db:"paid_at"`
 	FulfilledAt *time.Time `json:"-"      db:"fulfilled_at"`

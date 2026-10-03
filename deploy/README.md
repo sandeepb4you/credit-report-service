@@ -65,7 +65,7 @@ scp deploy/nginx/*.conf ec2-user@api.myscorr.com:/tmp/
 
 Only `init/` and the nginx confs are genuinely one-time. `deploy.sh` re-syncs
 `docker-compose.yml` and the env file on every run, because the image carries
-none of that configuration — an SMS or Cashfree setting changed locally and not
+none of that configuration — an SMS or Razorpay setting changed locally and not
 synced would leave a deploy reporting success while the server kept the old
 value. `SYNC_CONFIG=0 ./deploy/deploy.sh` skips it for an image-only redeploy,
 and `ENV_FILE=/path/to/env` picks a different env file than `.env.staging`.

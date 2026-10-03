@@ -161,6 +161,19 @@ func (r *OrderRepo) FindOrderByUID(ctx context.Context, uid string) (*models.Ord
 	return &o, err
 }
 
+// FindOrderByGatewayOrderID finds the order a gateway order id belongs to — how
+// a webhook that names only the gateway's order (Razorpay's payment.failed)
+// is matched back to ours.
+func (r *OrderRepo) FindOrderByGatewayOrderID(ctx context.Context, gatewayOrderID string) (*models.Order, error) {
+	var o models.Order
+	err := pgxscan.Get(ctx, r.pool, &o,
+		`SELECT `+orderCols+` FROM orders WHERE cf_order_id = $1`, gatewayOrderID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &o, err
+}
+
 func (r *OrderRepo) ListOrdersByAccount(ctx context.Context, accountID int64) ([]models.Order, error) {
 	os := []models.Order{}
 	err := pgxscan.Select(ctx, r.pool, &os,
@@ -176,7 +189,7 @@ func (r *OrderRepo) MarkOrderCreated(ctx context.Context, o *models.Order) error
 		     status = $2, cf_order_id = $3, payment_session_id = $4,
 		     order_expiry_time = $5, updated_at = now()
 		 WHERE order_uid = $1`,
-		o.OrderUID, o.Status, o.CFOrderID, o.PaymentSessionID, o.OrderExpiryTime,
+		o.OrderUID, o.Status, o.GatewayOrderID, o.PaymentSessionID, o.OrderExpiryTime,
 	)
 	return classifyPgErr(err)
 }
@@ -193,7 +206,7 @@ func (r *OrderRepo) MarkOrderCreationFailed(ctx context.Context, uid, reason str
 // MarkOrderPaid transitions an order to PAID exactly once: the status guard
 // makes replayed success webhooks no-ops. Returns true on the first (real)
 // transition — the caller triggers fulfilment only then.
-func (r *OrderRepo) MarkOrderPaid(ctx context.Context, uid string, cfPaymentID, method *string, paidAt time.Time) (bool, error) {
+func (r *OrderRepo) MarkOrderPaid(ctx context.Context, uid string, paymentID, method *string, paidAt time.Time) (bool, error) {
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE orders SET
 		     status = $2,
@@ -203,7 +216,7 @@ func (r *OrderRepo) MarkOrderPaid(ctx context.Context, uid string, cfPaymentID, 
 		     fulfilled_at = now(),
 		     updated_at = now()
 		 WHERE order_uid = $1 AND status <> $2`,
-		uid, models.OrderPaid, cfPaymentID, method, paidAt,
+		uid, models.OrderPaid, paymentID, method, paidAt,
 	)
 	if err != nil {
 		return false, err

@@ -9,7 +9,7 @@
 #   DEPLOY_SERVER=ubuntu@1.2.3.4 ./deploy/deploy.sh
 #
 # The image is only half a deploy: anything configured in docker-compose.yml or
-# the env file (ports, volumes, every SMS_/CASHFREE_/MAIL_ setting) reaches the
+# the env file (ports, volumes, every SMS_/RAZORPAY_/MAIL_ setting) reaches the
 # server through those two files, not through the image. They are synced here so
 # a config change cannot be left behind by a deploy that reports success.
 # SYNC_CONFIG=0 skips that step for an image-only redeploy.

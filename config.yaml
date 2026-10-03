@@ -94,19 +94,22 @@ multipart:
   max-file-size: 5MB
   max-request-size: 10MB
 
-cashfree:
+razorpay:
   mode: sandbox            # sandbox | production
-  # Credentials from the Cashfree merchant dashboard. Never commit real values:
-  # set them in the gitignored config.dev.yaml, or via CASHFREE_CLIENT_ID /
-  # CASHFREE_CLIENT_SECRET. Empty client-id -> log-only stub gateway.
-  client-id: ""
-  client-secret: ""
-  api-version: "2025-01-01"
-  # Browser redirect after payment; "{order_id}" is replaced with our order uid.
-  return-url: "http://localhost:3000/payment/result?order_id={order_id}"
-  # Public HTTPS URL of POST /api/payments/cashfree/webhook. Empty -> webhooks
-  # must be configured in the Cashfree dashboard instead.
-  notify-url: ""
+  # Keys from the Razorpay dashboard (Account & Settings -> API Keys). Never
+  # commit real values: set them in the gitignored config.dev.yaml, or via
+  # RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET. Empty key-id -> log-only stub
+  # gateway. The key's prefix must match mode: rzp_test_ for sandbox,
+  # rzp_live_ for production.
+  key-id: ""
+  key-secret: ""
+  # The secret entered on the dashboard webhook pointing at
+  # POST /api/payments/razorpay/webhook (events: order.paid, payment.captured,
+  # payment.failed). Empty -> every webhook is refused and orders settle only
+  # when the app polls them.
+  webhook-secret: ""
+  # The merchant name in the checkout header.
+  checkout-name: "myScorr"
   timeout: 15s
 
 registration:

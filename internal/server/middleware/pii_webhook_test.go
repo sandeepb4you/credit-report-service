@@ -52,13 +52,48 @@ func TestMaskJSON_CashfreeWebhookHidesCustomerPII(t *testing.T) {
 	}
 }
 
+// The shape Razorpay posts to /api/payments/razorpay/webhook: the payment
+// entity carries the payer's email, phone ("contact") and UPI id ("vpa").
+const razorpayPaidBody = `{
+  "event": "order.paid",
+  "payload": {
+    "payment": {"entity": {
+      "id": "pay_29QQoUBi66xm2f", "order_id": "order_9A33XWu170gUtm", "status": "captured",
+      "method": "upi", "email": "customer@example.com", "contact": "+919999999999",
+      "vpa": "test.customer@okhdfc", "acquirer_data": {"rrn": "412345678901"}
+    }},
+    "order": {"entity": {"id": "order_9A33XWu170gUtm", "receipt": "737f6050-b1ff-4892-ae0e-287c06407361",
+      "amount": 29900, "status": "paid"}}
+  }
+}`
+
+func TestMaskJSON_RazorpayWebhookHidesPayerPII(t *testing.T) {
+	got := string(maskJSON([]byte(razorpayPaidBody)))
+
+	for _, secret := range []string{"customer@example.com", "9999999999", "test.customer@okhdfc"} {
+		if strings.Contains(got, secret) {
+			t.Errorf("payer PII %q survived redaction:\n%s", secret, got)
+		}
+	}
+	for _, keep := range []string{
+		"737f6050-b1ff-4892-ae0e-287c06407361", // receipt = order_uid
+		"pay_29QQoUBi66xm2f",                   // payment id
+		"order_9A33XWu170gUtm",                 // gateway order id
+		"order.paid", "captured", "29900",
+	} {
+		if !strings.Contains(got, keep) {
+			t.Errorf("over-redacted: %q should remain for debugging:\n%s", keep, got)
+		}
+	}
+}
+
 func TestIsSensitiveKey_NamespacedAndCamelCase(t *testing.T) {
 	sensitive := []string{
 		"customer_name", "customer_phone", "customer_email",
 		"customerName", "customerPhone", "CustomerEmail",
 		"name", "phone", "email", "pan", "dateOfBirth", "date_of_birth",
 		"applicant_first_name", "user.mobile", "PANName",
-		"aadhaar_last4", "primary_email",
+		"aadhaar_last4", "primary_email", "contact", "vpa",
 	}
 	for _, k := range sensitive {
 		t.Run("sensitive/"+k, func(t *testing.T) {
@@ -96,7 +131,7 @@ func TestMaskShapes_PhoneNumbers(t *testing.T) {
 	}
 
 	// 15-digit gateway references must survive: they are how a payment is
-	// traced with Cashfree support.
+	// traced with gateway support.
 	for _, s := range []string{"206823902413856", "12345", "299"} {
 		t.Run("kept/"+s, func(t *testing.T) {
 			if got := maskShapes(s); got != s {

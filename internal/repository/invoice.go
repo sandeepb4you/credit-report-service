@@ -146,7 +146,7 @@ func (r *InvoiceRepo) ListByAccount(ctx context.Context, accountID int64) ([]mod
 	return out, err
 }
 
-// SetPayment records the payment lines once they have been read from Cashfree.
+// SetPayment records the payment lines once they have been read from the gateway.
 func (r *InvoiceRepo) SetPayment(ctx context.Context, id int64, label, refLabel, ref *string) error {
 	_, err := r.pool.Exec(ctx,
 		`UPDATE invoices SET payment_label = $2, payment_ref_label = $3, payment_ref = $4,
@@ -156,7 +156,7 @@ func (r *InvoiceRepo) SetPayment(ctx context.Context, id int64, label, refLabel,
 }
 
 // CountPaymentFetch records one attempt to read the payment record, so an
-// order whose payment Cashfree cannot describe stops being asked about.
+// order whose payment the gateway cannot describe stops being asked about.
 func (r *InvoiceRepo) CountPaymentFetch(ctx context.Context, id int64) error {
 	_, err := r.pool.Exec(ctx,
 		`UPDATE invoices SET payment_fetch_attempts = payment_fetch_attempts + 1, updated_at = now()

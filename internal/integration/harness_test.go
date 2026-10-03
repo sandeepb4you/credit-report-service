@@ -240,7 +240,7 @@ const testStatementDailyLimit = 3
 // Handlers outside that slice are passed as nil. server.New only stores them
 // into route closures, so an unexercised nil never gets dereferenced — and
 // building the real analytics, orders and statement stacks here would drag in
-// S3, Cashfree and a worker pool for tests that call none of them. Routing and
+// S3, Razorpay and a worker pool for tests that call none of them. Routing and
 // the auth/permission middleware are the real ones, which is the part that
 // matters: the admin report's permission gate is under test, not mocked out.
 func buildApp(cfg *config.Config, pool *pgxpool.Pool, pay *paymentSetup) (*fiber.App, *invoiceWiring) {
@@ -298,7 +298,7 @@ func buildApp(cfg *config.Config, pool *pgxpool.Pool, pay *paymentSetup) (*fiber
 		gateway = pay.gateway
 	}
 	orderSvc := service.NewOrderService(orderRepo, accountRepo, couponSvc,
-		gateway, cfg.Cashfree,
+		gateway, cfg.Razorpay,
 		scheduledRepo, cfg.ScheduledChecks.Location(), earningsSvc)
 	if pay != nil {
 		orderSvc.SetTestPayments(pay.testGateway, pay.testKey)
