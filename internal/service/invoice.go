@@ -246,6 +246,23 @@ func (s *InvoiceService) Issue(
 	if inv.BilledToEmail != nil {
 		inv.AutoEmail = models.InvoiceEmailPending
 	}
+	// No payment record handed in (the heal, a plan self-heal): read it now rather
+	// than leave it to render. The order-row fallback below fills the payment
+	// label, and ensurePayment only fetches while that label is empty — so an
+	// invoice issued from the order row alone never got its UTR, and printed
+	// Razorpay's payment id where the customer's bank reference belongs. The
+	// callers that pass nil run in the background, so the bounded wait is free.
+	if pd == nil && s.payments != nil {
+		fetchCtx, cancel := context.WithTimeout(ctx, paymentFetchTimeout)
+		got, err := s.payments.PaymentDetails(fetchCtx, order)
+		cancel()
+		if err == nil {
+			pd = got
+		} else {
+			slog.Warn("invoice: payment record unavailable at issue; using the order's own lines",
+				"order_uid", order.OrderUID, "error", err)
+		}
+	}
 	applyPayment(inv, pd, order)
 
 	series := s.cfg.Series

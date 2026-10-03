@@ -382,3 +382,36 @@ func TestInvoice_AResetKeepsTheInvoiceAndItsNumber(t *testing.T) {
 		t.Fatalf("invoice after reset = %s, want 000002", got)
 	}
 }
+
+// An invoice issued late — the heal, for an order paid while no GSTIN was
+// configured — must still print the UTR. It used to take its payment line from
+// the order row alone ("UPI" + the gateway's payment id), and that filled label
+// stopped the render-time fetch of the real payment record, so the customer's
+// bank reference never reached the invoice. Found on the first live order.
+func TestInvoice_ALateInvoiceStillPrintsTheUTR(t *testing.T) {
+	h := newHarness(t)
+	token, _ := h.planAccount("+919600000705")
+
+	created := h.post("/api/orders/", token, map[string]string{"productCode": "CREDIT_ANALYSIS"})
+	uid := orderUIDOf(t, created)
+	// Paid with no invoice, the state a live order sits in until a GSTIN appears.
+	if _, err := h.pool.Exec(h.baseCtx,
+		`UPDATE orders SET status = 'PAID', paid_at = now(), fulfilled_at = now(),
+		        payment_method = 'upi', cf_payment_id = 'pay_from_order_row'
+		  WHERE order_uid = $1`, uid); err != nil {
+		t.Fatalf("mark paid: %v", err)
+	}
+
+	h.inv.deliverer.Pass(h.baseCtx)
+
+	// The stub gateway's payment record carries the UTR STUB000000.
+	if got := h.invoiceColumn(uid, "payment_ref_label"); got != "UTR" {
+		t.Fatalf("payment_ref_label = %q, want UTR (the bank reference, not the gateway's payment id)", got)
+	}
+	if got := h.invoiceColumn(uid, "payment_ref"); got != "STUB000000" {
+		t.Fatalf("payment_ref = %q, want the payment record's UTR", got)
+	}
+	if got := h.invoiceColumn(uid, "payment_label"); got != "UPI" {
+		t.Fatalf("payment_label = %q, want UPI", got)
+	}
+}
