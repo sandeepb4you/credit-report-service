@@ -310,3 +310,62 @@ func TestAdminAccountListFiltersEachColumn(t *testing.T) {
 			byPhone.Body["total"], len(ids(byPhone)), byPhone.Raw)
 	}
 }
+
+// backdateSignup moves an account's created_at so a test can put it outside a
+// window. No API writes that column — a signup date is whenever the signup
+// happened — so the test reaches for it directly.
+func (h *harness) backdateSignup(accountID int64, at time.Time) {
+	h.t.Helper()
+	if _, err := h.pool.Exec(h.baseCtx,
+		`UPDATE accounts SET created_at = $2 WHERE id = $1`, accountID, at); err != nil {
+		h.t.Fatalf("backdate signup for %d: %v", accountID, err)
+	}
+}
+
+// Sending no dates means every account, not a month of them.
+//
+// The console's "All time" chip is the only filter that sends neither bound,
+// and the endpoint used to fill both in with the last 30 days — so "All time"
+// quietly answered with the same rows as "30 days", and showed FEWER users than
+// "90 days". That ordering is the regression to watch for: a window filter that
+// widens and returns less is the shape of this bug.
+func TestAdminAccountListWithNoDatesCoversEverySignup(t *testing.T) {
+	h := newHarness(t)
+
+	adminToken := h.makeAdmin("+919000000621")
+	_, recent := h.signInByPhone("+919000000622", "")
+	_, ancient := h.signInByPhone("+919000000623", "")
+	h.backdateSignup(ancient, time.Now().UTC().AddDate(-2, 0, 0))
+
+	all := h.adminAccounts(adminToken, "")
+	if rowFor(all, ancient) == nil {
+		t.Errorf("no dates dropped a two-year-old signup: %s", all.Raw)
+	}
+	if rowFor(all, recent) == nil {
+		t.Errorf("no dates dropped today's signup: %s", all.Raw)
+	}
+
+	// The narrower window still narrows — the fix must not have removed the
+	// filter, only its invented default.
+	today := time.Now().UTC().Format("2006-01-02")
+	ninety := time.Now().UTC().AddDate(0, 0, -89).Format("2006-01-02")
+	recent90 := h.adminAccounts(adminToken, "from="+ninety+"&to="+today)
+	if rowFor(recent90, ancient) != nil {
+		t.Errorf("a 90-day window returned a two-year-old signup: %s", recent90.Raw)
+	}
+
+	// The headline count has to move with the rows. An operator reads the total,
+	// not the page — both queries share a filter prefix for exactly this reason.
+	allTotal, _ := all.Body["total"].(float64)
+	ninetyTotal, _ := recent90.Body["total"].(float64)
+	if allTotal <= ninetyTotal {
+		t.Errorf("all-time total %v must exceed the 90-day total %v", allTotal, ninetyTotal)
+	}
+
+	// One bound given and one left off is open on the side left off, rather
+	// than a month measured back from the one that was given.
+	openEnded := h.adminAccounts(adminToken, "to="+today)
+	if rowFor(openEnded, ancient) == nil {
+		t.Errorf("an open-ended 'to' dropped a two-year-old signup: %s", openEnded.Raw)
+	}
+}

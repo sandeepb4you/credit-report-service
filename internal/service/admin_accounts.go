@@ -12,13 +12,20 @@ import (
 )
 
 const (
-	// AccountsDefaultWindowDays matches the referral report's default: the
-	// console opens on the last 30 days of signups rather than the whole
-	// table, because "who joined recently" is the question it is opened with.
+	// AccountsDefaultWindowDays is the window the CONSOLE opens on — "who
+	// joined recently" being the question it is opened with — and it is the
+	// console that applies it, by sending both dates. The endpoint does not:
+	// an absent bound here is absent, not thirty days ago. See
+	// resolveAccountWindow for what that distinction cost when it was missing.
+	//
+	// Kept at the referral report's 30 so two admin screens showing "last 30
+	// days" cover the same days.
 	AccountsDefaultWindowDays = 30
-	accountsMaxWindowDays     = 3660 // ten years: effectively "all time"
-	accountsDefaultPage       = 50
-	accountsMaxPage           = 200
+	// accountsMaxWindowDays bounds a range the caller named. A query naming no
+	// range is unbounded on purpose, so this does not apply to one.
+	accountsMaxWindowDays = 3660 // ten years
+	accountsDefaultPage   = 50
+	accountsMaxPage       = 200
 	// AccountsRecentChecks is how many past score checks the detail view
 	// carries. Five, per the console's spec — enough to see a trend and a
 	// recent failure, short enough to read without paging.
@@ -102,7 +109,12 @@ func (s *AdminAccountsService) List(ctx context.Context, q AccountQuery) (*model
 
 	// The window is half-open internally: [from, to+1d). Callers speak in
 	// inclusive days, so a list "to 30 Aug" must include the whole of the 30th.
-	end := to.AddDate(0, 0, 1)
+	// No upper bound stays no upper bound.
+	var end *time.Time
+	if to != nil {
+		e := to.AddDate(0, 0, 1)
+		end = &e
+	}
 
 	rows, total, err := s.accounts.ListAccounts(ctx, repository.AccountListFilter{
 		From:         from,
@@ -184,30 +196,44 @@ func normalizeAccountStatus(raw string) (*string, error) {
 	}
 }
 
-// resolveAccountWindow fills in whichever bound was left off, defaulting to
-// the last 30 whole UTC days. Same shape and same UTC bucketing as the
-// referral report, so two admin screens filtered to "last 30 days" cover the
-// same days.
-func resolveAccountWindow(from, to time.Time) (time.Time, time.Time, error) {
-	today := time.Now().UTC().Truncate(24 * time.Hour)
-	switch {
-	case from.IsZero() && to.IsZero():
-		to = today
-		from = to.AddDate(0, 0, -(AccountsDefaultWindowDays - 1))
-	case from.IsZero():
-		from = to.AddDate(0, 0, -(AccountsDefaultWindowDays - 1))
-	case to.IsZero():
-		to = today
+// resolveAccountWindow validates the signup window. A bound the caller left
+// off is left off — an omitted "from" means "since the first signup", and
+// omitting both means every account there has ever been.
+//
+// It used to fill an absent bound with 30 days, which quietly made the
+// console's "All time" chip the same query as its "30 days" chip: the chip
+// sends no dates, and the endpoint answered with a month. Every other preset
+// sends explicit dates, so nothing was wrong except the one filter whose whole
+// job was to remove the filter — and it showed FEWER users than "90 days",
+// which is what gave it away. If a default window is ever wanted back, it
+// belongs on the screen that wants it (as AccountsDefaultWindowDays is used
+// now), not on an endpoint that cannot tell "unasked" from "everything".
+//
+// The ten-year ceiling only applies when both bounds are given. It bounds a
+// range a caller named, and there is nothing to bound in a query that names
+// none — a page of 50 off an index is the same cost either way.
+func resolveAccountWindow(from, to time.Time) (*time.Time, *time.Time, error) {
+	var fromPtr, toPtr *time.Time
+	if !from.IsZero() {
+		f := from
+		fromPtr = &f
+	}
+	if !to.IsZero() {
+		t := to
+		toPtr = &t
+	}
+	if fromPtr == nil || toPtr == nil {
+		return fromPtr, toPtr, nil
 	}
 	if to.Before(from) {
-		return time.Time{}, time.Time{}, apperr.NewValidationWith("Validation failed", map[string]string{
+		return nil, nil, apperr.NewValidationWith("Validation failed", map[string]string{
 			"to": "the end date cannot be before the start date",
 		})
 	}
 	if to.Sub(from) > accountsMaxWindowDays*24*time.Hour {
-		return time.Time{}, time.Time{}, apperr.NewValidationWith("Validation failed", map[string]string{
+		return nil, nil, apperr.NewValidationWith("Validation failed", map[string]string{
 			"from": "the range cannot be longer than ten years",
 		})
 	}
-	return from, to, nil
+	return fromPtr, toPtr, nil
 }

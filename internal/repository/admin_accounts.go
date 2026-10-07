@@ -14,8 +14,12 @@ import (
 // nil-able fields are absent filters rather than zero ones: a minimum score of
 // 0 and no minimum at all are different questions.
 type AccountListFilter struct {
-	From         time.Time
-	To           time.Time
+	// From and To bound the signup window, half-open [From, To). Nil is a
+	// genuinely absent bound — "all time" — not a zero one: the console's
+	// "All time" chip sends neither, and filling either in with a default
+	// would make that chip a lie about the rows it is showing.
+	From         *time.Time
+	To           *time.Time
 	Status       *string
 	Search       *string // matches name, phone or email
 	Paid         *bool
@@ -74,7 +78,8 @@ const accountRowsCTE = `
 	                          WHERE o2.account_id = ref.id
 	                            AND o2.status = $5))             AS referred_paid_count
 	    FROM accounts a
-	   WHERE a.created_at >= $1 AND a.created_at < $2
+	   WHERE ($1::timestamptz IS NULL OR a.created_at >= $1)
+	     AND ($2::timestamptz IS NULL OR a.created_at <  $2)
 	     AND ($3::text IS NULL
 	          OR ($3 = 'INACTIVE' AND a.status <> 'ACTIVE')
 	          OR a.status = $3)

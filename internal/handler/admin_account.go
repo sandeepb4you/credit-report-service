@@ -27,7 +27,7 @@ func NewAdminAccountHandler(
 // ListAccounts godoc
 //
 // @Summary      List user accounts over a signup-date window
-// @Description  The operator's customer list: who signed up in the window, with their latest credit score, whether they have ever paid, how many accounts they referred and how many of those bought. Contact details are NOT masked — the console is admin-only and the number is here to be called. Defaults to the last 30 whole UTC days, newest first.
+// @Description  The operator's customer list: who signed up in the window, with their latest credit score, whether they have ever paid, how many accounts they referred and how many of those bought. Contact details are NOT masked — the console is admin-only and the number is here to be called. Omitting a bound leaves that side unbounded, so sending neither date returns every account — the console's "All time" filter. Whole UTC days, inclusive, newest first.
 // @Tags         admin
 // @Produce      json
 // @Security     BearerAuth

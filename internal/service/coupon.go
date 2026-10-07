@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -163,6 +164,110 @@ func (s *CouponService) Revoke(ctx context.Context, code string, accountID int64
 	}
 	slog.Info("coupon revoked", "code", normalized, "by_account", accountID)
 	return nil
+}
+
+// Update changes an existing discount coupon, including bringing a revoked one
+// back. Agents may only edit their own; holders of coupon:admin may edit any.
+//
+// Three things worth knowing, because each is a question an operator will ask:
+//
+//   - **Nothing here is retroactive.** Orders snapshot their own amount and
+//     coupon_redemptions snapshots the discount it was worth, so raising or
+//     lowering the percentage changes what the NEXT customer pays and never
+//     what someone has already been charged.
+//   - **Un-revoking makes the code live again for everyone who has it.** A
+//     coupon is revoked when it has leaked or been over-shared, and restoring
+//     it restores that exposure — which is why the app asks before doing it.
+//     Set a cap or an expiry in the same edit when that is the worry.
+//   - **The redemption count is never reset.** It is the join key to
+//     coupon_redemptions, so zeroing it would orphan real redemptions and
+//     break the per-account limit. "Let it be used again" is a higher
+//     maxRedemptions, which is why lowering the cap below the count is
+//     refused here rather than left to the CHECK constraint.
+func (s *CouponService) Update(
+	ctx context.Context, code string, accountID int64, role string, edit repository.CouponEdit,
+) (*models.Coupon, error) {
+	normalized, err := normalizeCouponCode(code)
+	if err != nil {
+		return nil, err
+	}
+	if edit.IsEmpty() {
+		return nil, apperr.NewValidationWith("Validation failed",
+			map[string]string{"code": "provide at least one field to change"})
+	}
+	// 0 means "any creator" in the repo query.
+	var scopeTo int64
+	if !models.HasPermission(role, models.PermCouponAdmin) {
+		scopeTo = accountID
+	}
+
+	// Read the row before validating so the errors can name real figures ("it
+	// has already been used 7 times") rather than surfacing a CHECK violation.
+	// The repo's UPDATE is still the authority on who may edit what; this read
+	// only decides what to say, and answers 404 for a coupon the caller may not
+	// touch so it cannot be used to discover which codes exist.
+	current, err := s.coupons.FindByCode(ctx, normalized)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, apperr.NewNotFound("No such coupon")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if current.IsReferral() || (scopeTo != 0 && current.CreatedBy != scopeTo) {
+		return nil, apperr.NewNotFound("No such coupon")
+	}
+
+	details := map[string]string{}
+	if edit.DiscountPercent != nil &&
+		(*edit.DiscountPercent <= 0 || *edit.DiscountPercent > 100) {
+		details["discountPercent"] = "discountPercent must be greater than 0 and at most 100"
+	}
+	if edit.PerAccountLimit != nil && *edit.PerAccountLimit <= 0 {
+		details["perAccountLimit"] = "perAccountLimit must be positive"
+	}
+	if edit.MaxRedemptions != nil {
+		switch {
+		case *edit.MaxRedemptions <= 0:
+			details["maxRedemptions"] = "maxRedemptions must be positive when set"
+		case *edit.MaxRedemptions < current.RedemptionCount:
+			// The count cannot be walked back, so a cap under it is unsatisfiable.
+			// Revoking is what stops a coupon that has already been over-used.
+			details["maxRedemptions"] = fmt.Sprintf(
+				"this coupon has already been used %d times; the cap cannot be lower",
+				current.RedemptionCount)
+		}
+	}
+	if edit.ValidUntil != nil && !edit.ValidUntil.After(current.ValidFrom) {
+		details["validUntil"] = "validUntil must be after the coupon's start date"
+	}
+	// A coupon scoped to a product that does not exist would silently never
+	// apply, so reject it here rather than at checkout — as Create does.
+	if edit.ProductCode != nil {
+		pc := strings.TrimSpace(*edit.ProductCode)
+		if _, err := s.orders.FindProduct(ctx, pc); err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				details["productCode"] = "unknown product"
+			} else {
+				return nil, err
+			}
+		}
+		edit.ProductCode = &pc
+	}
+	if len(details) > 0 {
+		return nil, apperr.NewValidationWith("Validation failed", details)
+	}
+
+	updated, err := s.coupons.Update(ctx, normalized, edit, scopeTo)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, apperr.NewNotFound("No such coupon")
+	}
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("coupon updated",
+		"code", updated.Code, "by_account", accountID,
+		"revoked", updated.RevokedAt != nil, "percent", updated.DiscountPercent)
+	return updated, nil
 }
 
 // Quote validates a code against a product and returns the resulting price.

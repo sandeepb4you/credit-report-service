@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/georgysavva/scany/v2/pgxscan"
 	"github.com/jackc/pgx/v5"
@@ -104,6 +105,90 @@ func (r *CouponRepo) Revoke(ctx context.Context, code string, onlyCreator int64)
 		return false, err
 	}
 	return tag.RowsAffected() > 0, nil
+}
+
+// CouponEdit is what may be changed on an existing discount coupon.
+//
+// Every field is a pointer so "not supplied" is distinguishable from "set to
+// zero" — with plain values, omitting perAccountLimit would silently set it to
+// 0, which the CHECK constraint refuses, and omitting discountPercent would
+// make the coupon worthless. The Clear* flags carry what a nil pointer cannot
+// say: "put this back to unbounded".
+//
+// Revoked is how a coupon comes back: false clears revoked_at, true sets it.
+// Re-revoking an already-revoked coupon leaves the original timestamp alone,
+// so the audit trail records when it first stopped working.
+type CouponEdit struct {
+	DiscountPercent *float64
+
+	ProductCode      *string
+	ClearProductCode bool
+
+	MaxRedemptions      *int
+	ClearMaxRedemptions bool
+
+	PerAccountLimit *int
+
+	ValidUntil      *time.Time
+	ClearValidUntil bool
+
+	Revoked *bool
+}
+
+// IsEmpty reports whether the edit would change nothing.
+func (e CouponEdit) IsEmpty() bool {
+	return e.DiscountPercent == nil &&
+		e.ProductCode == nil && !e.ClearProductCode &&
+		e.MaxRedemptions == nil && !e.ClearMaxRedemptions &&
+		e.PerAccountLimit == nil &&
+		e.ValidUntil == nil && !e.ClearValidUntil &&
+		e.Revoked == nil
+}
+
+// Update applies a CouponEdit, COALESCE-ing so a caller changes only what it
+// sends and never read-modify-writes over another operator's edit.
+//
+// Scoped to kind='discount': a referral code is an account's identity, not a
+// promotion, and its shape is pinned by coupons_referral_shape — nothing here
+// is editable on one. When onlyCreator is non-zero the update is scoped to
+// that issuer, so an agent editing someone else's coupon reads as missing
+// rather than forbidden — the same rule as Revoke.
+func (r *CouponRepo) Update(
+	ctx context.Context, code string, e CouponEdit, onlyCreator int64,
+) (*models.Coupon, error) {
+	var c models.Coupon
+	err := pgxscan.Get(ctx, r.pool, &c,
+		`UPDATE coupons SET
+		     discount_percent  = COALESCE($2, discount_percent),
+		     product_code      = CASE WHEN $3::bool THEN NULL
+		                              ELSE COALESCE($4, product_code) END,
+		     max_redemptions   = CASE WHEN $5::bool THEN NULL
+		                              ELSE COALESCE($6, max_redemptions) END,
+		     per_account_limit = COALESCE($7, per_account_limit),
+		     valid_until       = CASE WHEN $8::bool THEN NULL
+		                              ELSE COALESCE($9, valid_until) END,
+		     revoked_at        = CASE WHEN $10::bool IS NULL THEN revoked_at
+		                              WHEN $10 THEN COALESCE(revoked_at, now())
+		                              ELSE NULL END,
+		     updated_at        = now()
+		  WHERE code = $1
+		    AND kind = 'discount'
+		    AND ($11 = 0 OR created_by = $11)
+		RETURNING `+couponCols,
+		code, e.DiscountPercent,
+		e.ClearProductCode, e.ProductCode,
+		e.ClearMaxRedemptions, e.MaxRedemptions,
+		e.PerAccountLimit,
+		e.ClearValidUntil, e.ValidUntil,
+		e.Revoked,
+		onlyCreator)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, classifyPgErr(err)
+	}
+	return &c, nil
 }
 
 // ---- redemption ----------------------------------------------------------

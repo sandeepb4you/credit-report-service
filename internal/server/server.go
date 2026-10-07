@@ -287,6 +287,10 @@ func New(
 	cp.Post("/", middleware.RequirePermission(tokens, epochs, models.PermCouponCreate), coupons.CreateCoupon)
 	cp.Get("/", middleware.RequirePermission(tokens, epochs, models.PermCouponManage), coupons.ListCoupons)
 	cp.Delete("/:code", middleware.RequirePermission(tokens, epochs, models.PermCouponManage), coupons.RevokeCoupon)
+	// Editing shares the manage permission with revoking, because it subsumes
+	// it: `{"revoked": false}` is how a revoked coupon comes back, so anyone
+	// who can stop a code can start it again.
+	cp.Patch("/:code", middleware.RequirePermission(tokens, epochs, models.PermCouponManage), coupons.UpdateCoupon)
 
 	// ---- Referral earnings (user dashboard + manual-payout queue) ---------
 	//

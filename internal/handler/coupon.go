@@ -8,6 +8,7 @@ import (
 
 	"credit-report-service/internal/apperr"
 	_ "credit-report-service/internal/models" // referenced by swag annotations (models.Coupon)
+	"credit-report-service/internal/repository"
 	"credit-report-service/internal/server/middleware"
 	"credit-report-service/internal/service"
 )
@@ -139,6 +140,97 @@ func (h *CouponHandler) RevokeCoupon(c *fiber.Ctx) error {
 		return err
 	}
 	return c.JSON(fiber.Map{"message": "Coupon revoked"})
+}
+
+// ---- PATCH /api/coupons/:code ---------------------------------------------
+
+// updateCouponReq carries what may be changed on an existing coupon. Every
+// field is a POINTER so "not supplied" is distinguishable from "set to zero":
+// with plain values, omitting discountPercent would make the coupon worthless
+// and omitting revoked would un-revoke it on every edit.
+//
+// Three fields need a way to say "back to unbounded", which an omitted field
+// cannot express. The sentinels are the empty string and zero, matching the
+// plan editor's "" clears a badge:
+//
+//	productCode:    "" -> applies to every plan
+//	maxRedemptions:  0 -> unlimited uses
+//	validUntil:     "" -> never expires
+type updateCouponReq struct {
+	DiscountPercent *float64 `json:"discountPercent" example:"25"`
+	ProductCode     *string  `json:"productCode"     example:"CREDIT_ANALYSIS"`
+	MaxRedemptions  *int     `json:"maxRedemptions"  example:"100"`
+	PerAccountLimit *int     `json:"perAccountLimit" example:"1"`
+	ValidUntil      *string  `json:"validUntil"      example:"2026-12-31T23:59:59Z"`
+	// Revoked false brings a revoked coupon back into use; true stops it, the
+	// same effect as DELETE /coupons/{code}.
+	Revoked *bool `json:"revoked" example:"false"`
+}
+
+// UpdateCoupon godoc
+//
+// @Summary      Edit a coupon, or bring a revoked one back
+// @Description  Changes a discount coupon in place. Omitted fields are left alone; "" clears productCode and validUntil and 0 clears maxRedemptions, each meaning "unbounded". `revoked: false` restores a revoked coupon and `revoked: true` stops it. Agents may only edit their own; a code belonging to someone else reads as 404 so the endpoint cannot be used to discover which codes exist. Referral codes are not editable. Nothing is retroactive: orders and redemptions snapshot the price and discount they were created with, so an edit only changes what the next customer gets.
+// @Tags         coupons
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        code     path      string           true  "Coupon code"
+// @Param        request  body      updateCouponReq  true  "Fields to change"
+// @Success      200      {object}  models.Coupon
+// @Failure      400      {object}  apperr.ErrorBody  "Nothing to change, or a value out of range"
+// @Failure      401      {object}  apperr.ErrorBody  "Not authenticated"
+// @Failure      403      {object}  apperr.ErrorBody  "Missing the 'coupon:manage' permission"
+// @Failure      404      {object}  apperr.ErrorBody  "No such coupon"
+// @Router       /coupons/{code} [patch]
+func (h *CouponHandler) UpdateCoupon(c *fiber.Ctx) error {
+	accountID, ok := middleware.AccountID(c)
+	if !ok {
+		return apperr.NewUnauthorized("Not authenticated")
+	}
+	var req updateCouponReq
+	if err := c.BodyParser(&req); err != nil {
+		return apperr.NewValidation("invalid JSON body")
+	}
+
+	edit := repository.CouponEdit{
+		DiscountPercent: req.DiscountPercent,
+		PerAccountLimit: req.PerAccountLimit,
+		Revoked:         req.Revoked,
+	}
+	if req.ProductCode != nil {
+		if strings.TrimSpace(*req.ProductCode) == "" {
+			edit.ClearProductCode = true
+		} else {
+			edit.ProductCode = req.ProductCode
+		}
+	}
+	if req.MaxRedemptions != nil {
+		if *req.MaxRedemptions == 0 {
+			edit.ClearMaxRedemptions = true
+		} else {
+			edit.MaxRedemptions = req.MaxRedemptions
+		}
+	}
+	if req.ValidUntil != nil {
+		if strings.TrimSpace(*req.ValidUntil) == "" {
+			edit.ClearValidUntil = true
+		} else {
+			until, err := parseOptionalTime(req.ValidUntil)
+			if err != nil {
+				return apperr.NewValidationWith("Validation failed",
+					map[string]string{"validUntil": "validUntil must be an RFC3339 timestamp"})
+			}
+			edit.ValidUntil = until
+		}
+	}
+
+	role, _ := middleware.AccountRole(c)
+	coupon, err := h.svc.Update(c.Context(), c.Params("code"), accountID, role, edit)
+	if err != nil {
+		return err
+	}
+	return c.JSON(coupon)
 }
 
 // ---- GET /api/coupons/referral --------------------------------------------
