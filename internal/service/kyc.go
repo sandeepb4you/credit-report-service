@@ -581,15 +581,15 @@ func (s *KycService) VerifyPAN(ctx context.Context, accountID, reviewerID int64)
 // whose name was never captured. Never overwrites a name already held.
 func (s *KycService) FillNameIfMissing(ctx context.Context, accountID int64, first, last string) error {
 	first, last = strings.TrimSpace(first), strings.TrimSpace(last)
-	if first == "" || last == "" {
+	if first == "" {
 		return apperr.NewValidationWith("Validation failed", map[string]string{
-			"name": "both first and last name are required: the bureau needs both",
+			"firstName": "first name is required",
 		})
 	}
 	if err := s.accounts.FillProfileIfEmpty(ctx, accountID, first, last, nil); err != nil {
 		return err
 	}
-	return s.accounts.FillPANNameIfEmpty(ctx, accountID, first+" "+last)
+	return s.accounts.FillPANNameIfEmpty(ctx, accountID, strings.TrimSpace(first+" "+last))
 }
 
 // maxRejectionReasonLen bounds the reviewer's note. The column is TEXT so the

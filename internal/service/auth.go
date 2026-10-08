@@ -384,7 +384,9 @@ func (s *AuthService) UpdateProfile(
 	acc.FirstName = &first
 	acc.LastName = &last
 	acc.DateOfBirth = dob
-	acc.ProfileCompleted = first != "" && last != ""
+	// A first name is the whole requirement: many customers have no surname,
+	// and the bureau pull sends the first name in its place.
+	acc.ProfileCompleted = first != ""
 
 	tx, err := s.accounts.BeginTx(ctx)
 	if err != nil {

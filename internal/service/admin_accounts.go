@@ -168,8 +168,8 @@ const maxNameLen = 100
 
 // UpdateName sets an account's first and last name — an admin correcting a
 // name that is missing or wrong, usually by reading it off the uploaded PAN
-// card. Both halves are required because the bureau call needs both; a profile
-// with one is one that cannot be pulled for.
+// card. The first name is required; the last is optional, since many customers
+// have none and the bureau pull sends the first name in its place.
 //
 // The PAN record's name is left alone: that is verification evidence (the
 // provider's spelling, or what the user typed beside the PAN), and rewriting it
@@ -184,10 +184,7 @@ func (s *AdminAccountsService) UpdateName(ctx context.Context, accountID, adminI
 	case len([]rune(first)) > maxNameLen:
 		details["firstName"] = "at most 100 characters"
 	}
-	switch {
-	case last == "":
-		details["lastName"] = "last name is required: the credit bureau needs both names"
-	case len([]rune(last)) > maxNameLen:
+	if len([]rune(last)) > maxNameLen {
 		details["lastName"] = "at most 100 characters"
 	}
 	if len(details) > 0 {

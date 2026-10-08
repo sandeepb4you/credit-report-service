@@ -37,7 +37,7 @@ type updateNameReq struct {
 // UpdateAccountName godoc
 //
 // @Summary      Set an account's name
-// @Description  Replaces the account's first and last name — an admin's correction, usually read off the uploaded PAN card. Both are required: the credit-bureau pull needs both. The PAN record's own name is not changed.
+// @Description  Replaces the account's first and last name — an admin's correction, usually read off the uploaded PAN card. The first name is required; the last is optional (single-word names), and the bureau pull sends the first name in its place. The PAN record's own name is not changed.
 // @Tags         admin
 // @Accept       json
 // @Produce      json
@@ -45,7 +45,7 @@ type updateNameReq struct {
 // @Param        accountId  path  int            true  "Account id"
 // @Param        request    body  updateNameReq  true  "The new name"
 // @Success      200  {object}  map[string]string
-// @Failure      400  {object}  apperr.ErrorBody  "A name half is missing or too long"
+// @Failure      400  {object}  apperr.ErrorBody  "No first name, or a name too long"
 // @Failure      403  {object}  apperr.ErrorBody  "Missing the 'account:edit' permission"
 // @Failure      404  {object}  apperr.ErrorBody  "No account with that id"
 // @Router       /admin/accounts/{accountId}/name [patch]

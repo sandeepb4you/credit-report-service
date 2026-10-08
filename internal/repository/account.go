@@ -156,8 +156,8 @@ func (r *AccountRepo) FillProfileIfEmpty(
 		        first_name        = f.first,
 		        last_name         = f.last,
 		        date_of_birth     = f.dob,
-		        profile_completed = (f.first IS NOT NULL AND f.first <> ''
-		                             AND f.last IS NOT NULL AND f.last <> ''),
+		        -- A first name is enough: a surname is optional (single-word names).
+		        profile_completed = (f.first IS NOT NULL AND f.first <> ''),
 		        updated_at        = now()
 		   FROM (SELECT COALESCE(NULLIF(first_name, ''), NULLIF($2, '')) AS first,
 		                COALESCE(NULLIF(last_name,  ''), NULLIF($3, '')) AS last,
@@ -170,6 +170,7 @@ func (r *AccountRepo) FillProfileIfEmpty(
 }
 
 // SetName replaces an account's first and last name — an admin's correction.
+// An empty last name is stored as none (single-word names).
 // Unlike FillProfileIfEmpty it overwrites, which is the point: the name an
 // admin types is the one read off the PAN card. profile_completed follows the
 // two names, as it does everywhere else. ErrNotFound for an unknown or purged
@@ -178,7 +179,7 @@ func (r *AccountRepo) SetName(ctx context.Context, accountID int64, first, last 
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE accounts
 		    SET first_name        = $2,
-		        last_name         = $3,
+		        last_name         = NULLIF($3, ''),
 		        profile_completed = true,
 		        updated_at        = now()
 		  WHERE id = $1 AND status <> $4`,

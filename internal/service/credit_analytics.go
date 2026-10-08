@@ -986,9 +986,6 @@ func (s *CreditAnalyticsService) accountForPull(
 	if acc.FirstName == nil || strings.TrimSpace(*acc.FirstName) == "" {
 		missing["first_name"] = "account profile has no first name; complete your profile"
 	}
-	if acc.LastName == nil || strings.TrimSpace(*acc.LastName) == "" {
-		missing["last_name"] = "account profile has no last name; complete your profile"
-	}
 	if len(missing) > 0 {
 		// Info so a rejected request is explainable from default-level logs
 		// without redeploying at debug. Keys only, never the values
@@ -1057,7 +1054,7 @@ func (s *CreditAnalyticsService) buildPayload(ctx context.Context, accountID int
 		ClientRefNum:      generateClientRefNum(),
 		MobileNo:          *acc.PrimaryPhone,
 		FirstName:         *acc.FirstName,
-		LastName:          *acc.LastName,
+		LastName:          bureauLastName(acc),
 		PAN:               kyc.PANNumber,
 		NameLookup:        nameLookupOff,
 		ConsentMessage:    consentMessage,
@@ -1068,6 +1065,20 @@ func (s *CreditAnalyticsService) buildPayload(ctx context.Context, accountID int
 		DeviceIP:          deviceIP,
 		ReportType:        reportTypeFlag,
 	}, nil
+}
+
+// bureauLastName is the last_name sent to the bureau. Digitap's spec makes
+// first_name and last_name mandatory together whenever names are passed, and
+// many customers have a single-word name with no surname at all; for them the
+// first name is sent in both fields (decided 2026-10-08), which the API's format
+// rules always accept. accountForPull has already required the first name.
+func bureauLastName(acc *models.Account) string {
+	if acc.LastName != nil {
+		if last := strings.TrimSpace(*acc.LastName); last != "" {
+			return last
+		}
+	}
+	return strings.TrimSpace(*acc.FirstName)
 }
 
 // buildRow assembles a model row from the assembled payload (before the upstream

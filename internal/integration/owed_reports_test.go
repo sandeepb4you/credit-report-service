@@ -154,8 +154,8 @@ func TestAdminCanSeeAndRunAnOwedReport(t *testing.T) {
 	if res := h.post(run, admin, map[string]any{}); res.Status != http.StatusBadRequest {
 		t.Fatalf("no name on file: want the pull's own 400, got %d %s", res.Status, res.Raw)
 	}
-	if res := h.post(run, admin, map[string]any{"firstName": "PRIYA"}); res.Status != http.StatusBadRequest {
-		t.Fatalf("half a name: want 400, got %d %s", res.Status, res.Raw)
+	if res := h.post(run, admin, map[string]any{"lastName": "NAIR"}); res.Status != http.StatusBadRequest {
+		t.Fatalf("no first name: want 400, got %d %s", res.Status, res.Raw)
 	}
 
 	// The admin reads the name off the card; it is saved, then the pull runs.
@@ -220,7 +220,7 @@ func TestAdminCanSetANameAndItUnblocksTheOwedReport(t *testing.T) {
 
 	path := fmt.Sprintf("/api/admin/accounts/%d/name", accountID)
 	for _, body := range []map[string]any{
-		{"firstName": "ANITA"}, // the bureau needs both halves
+		{"lastName": "DESAI"}, // a first name is the one thing required
 		{"firstName": "  ", "lastName": "DESAI"},
 	} {
 		if res := h.do(http.MethodPatch, path, admin, body); res.Status != http.StatusBadRequest {
@@ -250,5 +250,53 @@ func TestAdminCanSetANameAndItUnblocksTheOwedReport(t *testing.T) {
 	if res := h.do(http.MethodPatch, "/api/admin/accounts/999999/name", admin,
 		map[string]any{"firstName": "A", "lastName": "B"}); res.Status != http.StatusNotFound {
 		t.Errorf("unknown account: want 404, got %d", res.Status)
+	}
+}
+
+// sentLastName is the last_name the account's most recent pull sent the bureau.
+func (h *harness) sentLastName(accountID int64) string {
+	h.t.Helper()
+	var last string
+	if err := h.pool.QueryRow(h.baseCtx,
+		`SELECT request_body->>'last_name' FROM credit_analytics_requests
+		  WHERE account_id = $1 ORDER BY id DESC LIMIT 1`, accountID).Scan(&last); err != nil {
+		h.t.Fatalf("read sent last_name: %v", err)
+	}
+	return last
+}
+
+// A single-word name is a complete name. Many customers have no surname, and
+// Digitap requires last_name whenever names are sent, so the first name goes in
+// both fields (decided 2026-10-08) rather than the pull being refused.
+func TestASingleWordNameIsEnoughForThePull(t *testing.T) {
+	h := newHarness(t)
+	admin := h.makeAdmin("+919000000991")
+	token, accountID := h.signInByPhone("+919000000992", "")
+
+	h.buyPlan(token, "CREDIT_ANALYSIS")
+	h.failPANCheck(token, "MURUGAN") // one word, as on the card
+	h.approvePAN(admin, accountID)
+	h.waitForReport(accountID)
+
+	if first, last := h.profileName(accountID); first != "MURUGAN" || last != "" {
+		t.Errorf("profile name = %q %q, want the single name and no surname", first, last)
+	}
+	if got := h.sentLastName(accountID); got != "MURUGAN" {
+		t.Errorf("bureau last_name = %q, want the first name standing in for it", got)
+	}
+}
+
+// The admin name endpoint takes a first name alone, and stores no surname.
+func TestAdminCanSetASingleWordName(t *testing.T) {
+	h := newHarness(t)
+	admin := h.makeAdmin("+919000000993")
+	_, accountID := h.signInByPhone("+919000000994", "")
+
+	path := fmt.Sprintf("/api/admin/accounts/%d/name", accountID)
+	if res := h.do(http.MethodPatch, path, admin, map[string]any{"firstName": "Lakshmi"}); res.Status != http.StatusOK {
+		t.Fatalf("single-word name: %d %s", res.Status, res.Raw)
+	}
+	if first, last := h.profileName(accountID); first != "Lakshmi" || last != "" {
+		t.Errorf("name = %q %q", first, last)
 	}
 }
