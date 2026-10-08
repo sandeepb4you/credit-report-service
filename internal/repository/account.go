@@ -169,6 +169,39 @@ func (r *AccountRepo) FillProfileIfEmpty(
 	return classifyPgErr(err)
 }
 
+// SetName replaces an account's first and last name — an admin's correction.
+// Unlike FillProfileIfEmpty it overwrites, which is the point: the name an
+// admin types is the one read off the PAN card. profile_completed follows the
+// two names, as it does everywhere else. ErrNotFound for an unknown or purged
+// account (a tombstone's name stays nulled).
+func (r *AccountRepo) SetName(ctx context.Context, accountID int64, first, last string) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE accounts
+		    SET first_name        = $2,
+		        last_name         = $3,
+		        profile_completed = true,
+		        updated_at        = now()
+		  WHERE id = $1 AND status <> $4`,
+		accountID, first, last, models.AccountDeleted)
+	if err != nil {
+		return classifyPgErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// FillPANNameIfEmpty records the name on the account's PAN record when it has
+// none. A no-op for an account without a PAN record or with a name already.
+func (r *AccountRepo) FillPANNameIfEmpty(ctx context.Context, accountID int64, name string) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE kyc_records SET pan_name = $2, updated_at = now()
+		  WHERE account_id = $1 AND (pan_name IS NULL OR pan_name = '')`,
+		accountID, name)
+	return classifyPgErr(err)
+}
+
 // RecordPrefillLookup stores one provider call. Best-effort by contract: the
 // caller logs a failure and carries on, because losing the audit row must not
 // fail a verification that the provider already answered.
@@ -517,14 +550,24 @@ func (r *AccountRepo) RecordPANVerificationAttempt(ctx context.Context, accountI
 // already exists for this account — replaces the PAN and resets verification
 // (the new PAN isn't trusted until re-verified). A PAN already claimed by
 // another account surfaces as ErrConflict via the UNIQUE(pan_number) index.
-func (r *AccountRepo) UpsertPAN(ctx context.Context, accountID int64, panNumber string) (*models.KYCRecord, error) {
+//
+// claimedName is the name the user typed beside the PAN, stored as pan_name
+// until a provider replaces it with its own spelling. It used to be dropped
+// unless the automated check succeeded, so a PAN approved by hand after failed
+// matches left the account with no name at all — and the bureau pull refuses
+// an account without one. Empty keeps the stored name for the same PAN (the
+// card-upload path sends none) and clears it for a different PAN.
+func (r *AccountRepo) UpsertPAN(ctx context.Context, accountID int64, panNumber, claimedName string) (*models.KYCRecord, error) {
 	var k models.KYCRecord
 	err := pgxscan.Get(ctx, r.pool, &k,
-		`INSERT INTO kyc_records (account_id, pan_number, pan_verified, status)
-		 VALUES ($1, $2, false, 'PENDING')
+		`INSERT INTO kyc_records (account_id, pan_number, pan_name, pan_verified, status)
+		 VALUES ($1, $2, NULLIF($3, ''), false, 'PENDING')
 		 ON CONFLICT (account_id) DO UPDATE
 		    SET pan_number        = EXCLUDED.pan_number,
-		        pan_name          = NULL,
+		        pan_name          = CASE
+		            WHEN EXCLUDED.pan_name IS NOT NULL THEN EXCLUDED.pan_name
+		            WHEN kyc_records.pan_number IS DISTINCT FROM EXCLUDED.pan_number THEN NULL
+		            ELSE kyc_records.pan_name END,
 		        pan_verified      = false,
 		        aadhaar_last4     = NULL,
 		        aadhaar_reference = NULL,
@@ -554,7 +597,7 @@ func (r *AccountRepo) UpsertPAN(ctx context.Context, accountID int64, panNumber 
 		            THEN NULL ELSE kyc_records.document_id END,
 		        updated_at        = now()
 		 RETURNING `+kycCols,
-		accountID, panNumber,
+		accountID, panNumber, claimedName,
 	)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, classifyPgErr(err)

@@ -64,6 +64,13 @@ const (
 	// the customer book and the revenue line are different things to hand
 	// someone, even though both carry contact details.
 	PermOrderView = "order:view"
+	// Run the credit report a customer paid for but did not receive: a billed
+	// bureau call made on their behalf, spending their purchase. Its own
+	// permission because it acts, where order:view only reads.
+	PermReportRun = "report:run"
+	// Correct a customer's profile name from the console. A write, so not part
+	// of account:view; the name is what the credit bureau is sent.
+	PermAccountEdit = "account:edit"
 )
 
 // rolePerms lists the permissions each role adds on top of the role beneath
@@ -92,6 +99,8 @@ var rolePerms = map[string][]string{
 		PermReferralManage,
 		PermAccountView,
 		PermOrderView,
+		PermReportRun,
+		PermAccountEdit,
 	},
 }
 

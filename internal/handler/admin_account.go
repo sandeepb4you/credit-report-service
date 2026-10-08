@@ -17,14 +17,121 @@ type AdminAccountHandler struct {
 	svc    *service.AccountResetService
 	list   *service.AdminAccountsService
 	orders *service.AdminOrdersService
+	owed   *service.OwedReportService
 }
 
 func NewAdminAccountHandler(
 	svc *service.AccountResetService,
 	list *service.AdminAccountsService,
 	orders *service.AdminOrdersService,
+	owed *service.OwedReportService,
 ) *AdminAccountHandler {
-	return &AdminAccountHandler{svc: svc, list: list, orders: orders}
+	return &AdminAccountHandler{svc: svc, list: list, orders: orders, owed: owed}
+}
+
+type updateNameReq struct {
+	FirstName string `json:"firstName" example:"RAHUL"`
+	LastName  string `json:"lastName"  example:"SHARMA"`
+}
+
+// UpdateAccountName godoc
+//
+// @Summary      Set an account's name
+// @Description  Replaces the account's first and last name — an admin's correction, usually read off the uploaded PAN card. Both are required: the credit-bureau pull needs both. The PAN record's own name is not changed.
+// @Tags         admin
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        accountId  path  int            true  "Account id"
+// @Param        request    body  updateNameReq  true  "The new name"
+// @Success      200  {object}  map[string]string
+// @Failure      400  {object}  apperr.ErrorBody  "A name half is missing or too long"
+// @Failure      403  {object}  apperr.ErrorBody  "Missing the 'account:edit' permission"
+// @Failure      404  {object}  apperr.ErrorBody  "No account with that id"
+// @Router       /admin/accounts/{accountId}/name [patch]
+func (h *AdminAccountHandler) UpdateAccountName(c *fiber.Ctx) error {
+	accountID, err := strconv.ParseInt(c.Params("accountId"), 10, 64)
+	if err != nil || accountID <= 0 {
+		return apperr.NewValidationWith("Validation failed", map[string]string{
+			"accountId": "expected a positive account id",
+		})
+	}
+	adminID, ok := middleware.AccountID(c)
+	if !ok {
+		return apperr.NewUnauthorized("Not authenticated")
+	}
+	var req updateNameReq
+	if err := c.BodyParser(&req); err != nil {
+		return apperr.NewValidation("invalid JSON body")
+	}
+	if err := h.list.UpdateName(c.Context(), accountID, adminID, req.FirstName, req.LastName); err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"message": "Name updated"})
+}
+
+// ListOwedReports godoc
+//
+// @Summary      Customers owed a credit report
+// @Description  Everyone who paid and has not received the report: an unspent one-time check, or a plan refresh that is due. Each row says whether the PAN is verified (the pull needs it) and whether the last pull attempt failed. Newest payment first.
+// @Tags         admin
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {array}   models.OwedReportRow
+// @Failure      401  {object}  apperr.ErrorBody  "Not authenticated"
+// @Failure      403  {object}  apperr.ErrorBody  "Missing the 'report:run' permission"
+// @Router       /admin/owed-reports [get]
+func (h *AdminAccountHandler) ListOwedReports(c *fiber.Ctx) error {
+	rows, err := h.owed.List(c.Context())
+	if err != nil {
+		return err
+	}
+	return c.JSON(rows)
+}
+
+type runOwedReq struct {
+	// Only for an account with no name on file, read off its uploaded PAN
+	// card; ignored when the account already has one.
+	FirstName string `json:"firstName" example:"RAHUL"`
+	LastName  string `json:"lastName"  example:"SHARMA"`
+}
+
+// RunOwedReport godoc
+//
+// @Summary      Pull the credit report an account has paid for, now
+// @Description  Runs the pull the customer's own app would, funded by their unspent one-time check or their due plan refresh. 409 when nothing is owed; the pull's own refusals pass through (PAN not verified, profile without a name). For an account with no name, send the name off the PAN card and it is saved first — never over a name already held. Safe to repeat: a second call for the same purchase returns the first call's report.
+// @Tags         admin
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        accountId  path  int         true   "Account id"
+// @Param        request    body  runOwedReq  false  "Name, only when the account has none"
+// @Success      200  {object}  models.OwedRunResult
+// @Failure      400  {object}  apperr.ErrorBody  "Not ready: PAN unverified or profile incomplete"
+// @Failure      403  {object}  apperr.ErrorBody  "Missing the 'report:run' permission"
+// @Failure      409  {object}  apperr.ErrorBody  "Nothing is owed"
+// @Router       /admin/accounts/{accountId}/run-owed-report [post]
+func (h *AdminAccountHandler) RunOwedReport(c *fiber.Ctx) error {
+	accountID, err := strconv.ParseInt(c.Params("accountId"), 10, 64)
+	if err != nil || accountID <= 0 {
+		return apperr.NewValidationWith("Validation failed", map[string]string{
+			"accountId": "expected a positive account id",
+		})
+	}
+	var req runOwedReq
+	if len(c.Body()) > 0 {
+		if err := c.BodyParser(&req); err != nil {
+			return apperr.NewValidation("invalid JSON body")
+		}
+	}
+	res, err := h.owed.Run(c.Context(), accountID, service.RunInput{
+		FirstName: strings.TrimSpace(req.FirstName),
+		LastName:  strings.TrimSpace(req.LastName),
+	})
+	if err != nil {
+		return err
+	}
+	return c.JSON(res)
 }
 
 // ListOrders godoc

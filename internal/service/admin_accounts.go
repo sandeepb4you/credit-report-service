@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -159,6 +160,48 @@ func (s *AdminAccountsService) Detail(ctx context.Context, accountID int64) (*mo
 	}
 
 	return &models.AdminAccountDetail{Account: account, KYC: kyc, Checks: checks}, nil
+}
+
+// maxNameLen bounds each half of an admin-entered name. The columns are text;
+// the cap keeps a pasted paragraph out of a field the bureau receives.
+const maxNameLen = 100
+
+// UpdateName sets an account's first and last name — an admin correcting a
+// name that is missing or wrong, usually by reading it off the uploaded PAN
+// card. Both halves are required because the bureau call needs both; a profile
+// with one is one that cannot be pulled for.
+//
+// The PAN record's name is left alone: that is verification evidence (the
+// provider's spelling, or what the user typed beside the PAN), and rewriting it
+// would erase what the approval was decided on.
+func (s *AdminAccountsService) UpdateName(ctx context.Context, accountID, adminID int64, first, last string) error {
+	first = strings.Join(strings.Fields(first), " ")
+	last = strings.Join(strings.Fields(last), " ")
+	details := map[string]string{}
+	switch {
+	case first == "":
+		details["firstName"] = "first name is required"
+	case len([]rune(first)) > maxNameLen:
+		details["firstName"] = "at most 100 characters"
+	}
+	switch {
+	case last == "":
+		details["lastName"] = "last name is required: the credit bureau needs both names"
+	case len([]rune(last)) > maxNameLen:
+		details["lastName"] = "at most 100 characters"
+	}
+	if len(details) > 0 {
+		return apperr.NewValidationWith("Validation failed", details)
+	}
+	if err := s.accounts.SetName(ctx, accountID, first, last); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return apperr.NewNotFound("No account with that id")
+		}
+		return err
+	}
+	// Who changed whose name — never the name itself, which is PII.
+	slog.Info("account name updated by admin", "account_id", accountID, "admin_id", adminID)
+	return nil
 }
 
 // trimmedPtr turns a blank search box into no filter at all, rather than a

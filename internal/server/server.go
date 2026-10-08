@@ -426,6 +426,11 @@ func New(
 	admin.Get("/accounts/:accountId<int>/detail",
 		middleware.RequirePermission(tokens, epochs, models.PermAccountView),
 		adminAccounts.AccountDetail)
+	// Changing a customer's name is a write to their profile — the name the bureau
+	// is sent — so it is not something account:view's readers may do.
+	admin.Patch("/accounts/:accountId<int>/name",
+		middleware.RequirePermission(tokens, epochs, models.PermAccountEdit),
+		adminAccounts.UpdateAccountName)
 
 	// The purchases list reads every order with its buyer's unmasked contact
 	// details and the money it took, so it carries its own permission: reading
@@ -433,6 +438,15 @@ func New(
 	admin.Get("/orders",
 		middleware.RequirePermission(tokens, epochs, models.PermOrderView),
 		adminAccounts.ListOrders)
+
+	// Running a customer's owed report makes a billed bureau call on their
+	// behalf and spends their purchase, so it carries its own permission.
+	admin.Get("/owed-reports",
+		middleware.RequirePermission(tokens, epochs, models.PermReportRun),
+		adminAccounts.ListOwedReports)
+	admin.Post("/accounts/:accountId<int>/run-owed-report",
+		middleware.RequirePermission(tokens, epochs, models.PermReportRun),
+		adminAccounts.RunOwedReport)
 
 	// The referral report reads across every account, so it is gated on its own
 	// permission rather than on kyc:verify -- reviewing PANs and reading the

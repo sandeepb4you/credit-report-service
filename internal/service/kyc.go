@@ -31,6 +31,9 @@ import (
 // In demo mode no provider is called and a submitted PAN is auto-verified.
 // This flag must stay false in production.
 type KycService struct {
+	// onVerified runs after an admin approves a PAN; see SetOnVerified.
+	onVerified func(accountID int64)
+
 	accounts *repository.AccountRepo
 	verifier *PrefillVerifier
 	cfg      config.PANConfig
@@ -54,6 +57,12 @@ func NewKycService(
 // analytics service's report-PDF store: the s3 client is built after the
 // services). Unset or stub, the upload endpoint answers 503.
 func (s *KycService) SetDocumentStore(docs *s3store.Client) { s.docs = docs }
+
+// SetOnVerified wires what happens after an admin approves a PAN: in practice,
+// running the report the customer already paid for (OwedReportService). Set
+// after construction because that service is built from services built after
+// this one. Unset, approval only approves.
+func (s *KycService) SetOnVerified(fn func(accountID int64)) { s.onVerified = fn }
 
 // SubmitPAN validates the submitted PAN and name, then verifies them against
 // the account's mobile number through the prefill provider.
@@ -99,7 +108,7 @@ func (s *KycService) SubmitPAN(ctx context.Context, accountID int64, pan, fullNa
 			"Add and verify a mobile number before submitting your PAN")
 	}
 
-	rec, err := s.accounts.UpsertPAN(ctx, accountID, pan)
+	rec, err := s.accounts.UpsertPAN(ctx, accountID, pan, fullName)
 	if err != nil {
 		if errors.Is(err, repository.ErrConflict) {
 			// Conflict, not the PAN value itself.
@@ -344,7 +353,7 @@ func (s *KycService) UploadPANDocument(
 	}
 
 	if pan != "" && (rec == nil || rec.PANNumber != pan) {
-		rec, err = s.accounts.UpsertPAN(ctx, accountID, pan)
+		rec, err = s.accounts.UpsertPAN(ctx, accountID, pan, "")
 		if err != nil {
 			if errors.Is(err, repository.ErrConflict) {
 				slog.Warn("pan document upload rejected: pan linked to another account",
@@ -544,7 +553,43 @@ func (s *KycService) VerifyPAN(ctx context.Context, accountID, reviewerID int64)
 	}
 	// Admin-gated action — record who verified whom, never the PAN.
 	slog.Info("pan verified", "account_id", accountID, "reviewer_id", reviewerID)
+
+	// The automated path copies the verified name (and DOB) onto the profile;
+	// a manual approval has to do the same, or the account it approves cannot
+	// be pulled for — the bureau call needs both names. The reviewer approves
+	// the name on the record together with the card, so it is the name to use.
+	// Fills blanks only: a name the user already gave is theirs.
+	first, last := "", ""
+	if rec.PANName != nil {
+		first, last = splitName(*rec.PANName)
+	}
+	if ferr := s.accounts.FillProfileIfEmpty(ctx, accountID, first, last, rec.PANDateOfBirth); ferr != nil {
+		slog.Warn("could not fill profile name/dob after manual pan approval",
+			"account_id", accountID, "error", ferr)
+	}
+
+	// A customer who paid before their PAN went to review is owed a report
+	// now; nothing else would run it until they came back to the app.
+	if s.onVerified != nil {
+		s.onVerified(accountID)
+	}
 	return rec, nil
+}
+
+// FillNameIfMissing sets the account's name, and the PAN record's, where
+// either is blank — an admin reading it off the uploaded card for an account
+// whose name was never captured. Never overwrites a name already held.
+func (s *KycService) FillNameIfMissing(ctx context.Context, accountID int64, first, last string) error {
+	first, last = strings.TrimSpace(first), strings.TrimSpace(last)
+	if first == "" || last == "" {
+		return apperr.NewValidationWith("Validation failed", map[string]string{
+			"name": "both first and last name are required: the bureau needs both",
+		})
+	}
+	if err := s.accounts.FillProfileIfEmpty(ctx, accountID, first, last, nil); err != nil {
+		return err
+	}
+	return s.accounts.FillPANNameIfEmpty(ctx, accountID, first+" "+last)
 }
 
 // maxRejectionReasonLen bounds the reviewer's note. The column is TEXT so the

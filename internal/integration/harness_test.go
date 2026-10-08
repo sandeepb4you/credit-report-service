@@ -284,6 +284,11 @@ func buildApp(cfg *config.Config, pool *pgxpool.Pool, pay *paymentSetup) (*fiber
 		cfg.CreditAnalytics,
 		cfg.ScheduledChecks.Location(),
 	)
+	// Wired as in main.go: approving a PAN by hand runs the report the
+	// customer already paid for.
+	owedSvc := service.NewOwedReportService(
+		analyticsSvc, orderRepo, scheduledRepo, kycSvc, cfg.ScheduledChecks.Location())
+	kycSvc.SetOnVerified(owedSvc.RunAfterApproval)
 
 	referralH := handler.NewAdminReferralHandler(
 		service.NewReferralService(repository.NewReferralRepo(pool), accountRepo))
@@ -350,7 +355,8 @@ func buildApp(cfg *config.Config, pool *pgxpool.Pool, pay *paymentSetup) (*fiber
 		handler.NewAdminAccountHandler(
 			service.NewAccountResetService(accountRepo),
 			service.NewAdminAccountsService(accountRepo),
-			service.NewAdminOrdersService(orderRepo)),
+			service.NewAdminOrdersService(orderRepo),
+			owedSvc),
 		referralH,
 		handler.NewEarningsHandler(earningsSvc),
 		tokenSvc,

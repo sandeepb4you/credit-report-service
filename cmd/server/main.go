@@ -424,10 +424,16 @@ func main() {
 	// with it rather than leaving encrypted orphans behind.
 	accountResetSvc := service.NewAccountResetService(accountRepo)
 	accountResetSvc.SetPDFStore(pdfStore)
+	// A PAN approved by hand runs the report its customer already paid for —
+	// see OwedReportService. The same service backs the console's owed list.
+	owedSvc := service.NewOwedReportService(
+		analyticsSvc, orderRepo, scheduledRepo, kycSvc, cfg.ScheduledChecks.Location())
+	kycSvc.SetOnVerified(owedSvc.RunAfterApproval)
 	adminAccountH := handler.NewAdminAccountHandler(
 		accountResetSvc,
 		service.NewAdminAccountsService(accountRepo),
-		service.NewAdminOrdersService(orderRepo))
+		service.NewAdminOrdersService(orderRepo),
+		owedSvc)
 	// Referral reporting is read-only over the accounts graph, so it takes its
 	// own repo rather than borrowing the coupon service that mints the codes.
 	adminReferralH := handler.NewAdminReferralHandler(
