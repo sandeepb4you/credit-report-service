@@ -45,6 +45,12 @@ type sessionClaims struct {
 	// change does not have to wait out auth.access-ttl. Absent (zero) in tokens
 	// minted before this existed, which matches the column default.
 	Epoch int `json:"ep,omitempty"`
+	// Impersonator and ImpersonationID are set only on a "View as user" token:
+	// the admin who is looking, and the admin_impersonations row that audits
+	// the view. Their presence is what makes a token read-only — see
+	// middleware.ReadOnlyImpersonation.
+	Impersonator    int64 `json:"imp,omitempty"`
+	ImpersonationID int64 `json:"iid,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -78,12 +84,45 @@ func (s *TokenService) Issue(accountID int64, role string, sessionID int64, epoc
 	return &IssuedToken{Token: signed, ExpiresAt: exp}, nil
 }
 
+// IssueImpersonation mints the token behind an admin's read-only "View as
+// user": it authenticates as the target account, so every customer route
+// answers exactly as it would for them, and carries the admin and the audit
+// row's id, which is what the read-only guard keys off.
+//
+// No session id and no refresh token: the view is not a sign-in, appears in
+// nobody's device list, and ends when ttl runs out.
+func (s *TokenService) IssueImpersonation(
+	targetID int64, role string, epoch int, adminID, impersonationID int64, exp time.Time,
+) (*IssuedToken, error) {
+	now := time.Now().UTC()
+	claims := sessionClaims{
+		Role:            role,
+		Epoch:           epoch,
+		Impersonator:    adminID,
+		ImpersonationID: impersonationID,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   fmt.Sprintf("%d", targetID),
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(exp),
+		},
+	}
+	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(s.secret)
+	if err != nil {
+		return nil, fmt.Errorf("sign token: %w", err)
+	}
+	return &IssuedToken{Token: signed, ExpiresAt: exp}, nil
+}
+
 // Parsed is the trusted content of a validated access token.
 type Parsed struct {
 	AccountID int64
 	Role      string
 	SessionID int64 // zero for tokens minted before session tracking
 	Epoch     int   // zero for tokens minted before epoch stamping
+	// Impersonator is the admin behind a "View as user" token, and
+	// ImpersonationID its audit row. Both zero on every ordinary token.
+	Impersonator    int64
+	ImpersonationID int64
 }
 
 // Parse validates a token string and returns its claims. Any failure maps to a
@@ -106,7 +145,9 @@ func (s *TokenService) Parse(tokenStr string) (*Parsed, error) {
 	return &Parsed{
 		AccountID: accountID,
 		Role:      claims.Role,
-		SessionID: claims.SessionID,
-		Epoch:     claims.Epoch,
+		SessionID:       claims.SessionID,
+		Epoch:           claims.Epoch,
+		Impersonator:    claims.Impersonator,
+		ImpersonationID: claims.ImpersonationID,
 	}, nil
 }

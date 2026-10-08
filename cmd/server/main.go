@@ -433,7 +433,8 @@ func main() {
 		accountResetSvc,
 		service.NewAdminAccountsService(accountRepo),
 		service.NewAdminOrdersService(orderRepo),
-		owedSvc)
+		owedSvc,
+		service.NewImpersonationService(accountRepo, tokenSvc))
 	// Referral reporting is read-only over the accounts graph, so it takes its
 	// own repo rather than borrowing the coupon service that mints the codes.
 	adminReferralH := handler.NewAdminReferralHandler(

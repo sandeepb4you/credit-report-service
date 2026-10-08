@@ -18,6 +18,7 @@ type AdminAccountHandler struct {
 	list   *service.AdminAccountsService
 	orders *service.AdminOrdersService
 	owed   *service.OwedReportService
+	views  *service.ImpersonationService
 }
 
 func NewAdminAccountHandler(
@@ -25,8 +26,66 @@ func NewAdminAccountHandler(
 	list *service.AdminAccountsService,
 	orders *service.AdminOrdersService,
 	owed *service.OwedReportService,
+	views *service.ImpersonationService,
 ) *AdminAccountHandler {
-	return &AdminAccountHandler{svc: svc, list: list, orders: orders, owed: owed}
+	return &AdminAccountHandler{svc: svc, list: list, orders: orders, owed: owed, views: views}
+}
+
+// StartImpersonation godoc
+//
+// @Summary      Open a read-only view of a customer's app
+// @Description  Issues a 30-minute access token that authenticates as the customer, so the app shows exactly what they see. Read-only on the server: every request the token makes other than GET/HEAD/OPTIONS is 403. No refresh token, no session row, and it does not cancel a scheduled deletion. Customer accounts only. Each view is audited.
+// @Tags         admin
+// @Produce      json
+// @Security     BearerAuth
+// @Param        accountId  path  int  true  "Account to view"
+// @Success      200  {object}  service.ImpersonationStarted
+// @Failure      403  {object}  apperr.ErrorBody  "Missing 'account:impersonate', or the account is not a customer"
+// @Failure      404  {object}  apperr.ErrorBody  "No such account"
+// @Failure      409  {object}  apperr.ErrorBody  "The account has been deleted"
+// @Router       /admin/accounts/{accountId}/impersonate [post]
+func (h *AdminAccountHandler) StartImpersonation(c *fiber.Ctx) error {
+	accountID, err := strconv.ParseInt(c.Params("accountId"), 10, 64)
+	if err != nil || accountID <= 0 {
+		return apperr.NewValidationWith("Validation failed", map[string]string{
+			"accountId": "expected a positive account id",
+		})
+	}
+	adminID, ok := middleware.AccountID(c)
+	if !ok {
+		return apperr.NewUnauthorized("Not authenticated")
+	}
+	res, err := h.views.Start(c.Context(), adminID, accountID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(res)
+}
+
+// EndImpersonation godoc
+//
+// @Summary      End a read-only customer view
+// @Description  Revokes the view's token at once, rather than leaving it to expire. Called with the admin's own token. Ending a view twice is not an error.
+// @Tags         admin
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id  path  int  true  "impersonationId from the start call"
+// @Success      200  {object}  map[string]string
+// @Failure      404  {object}  apperr.ErrorBody  "No such view, or not yours"
+// @Router       /admin/impersonations/{id}/end [post]
+func (h *AdminAccountHandler) EndImpersonation(c *fiber.Ctx) error {
+	id, err := strconv.ParseInt(c.Params("id"), 10, 64)
+	if err != nil || id <= 0 {
+		return apperr.NewValidation("expected a positive view id")
+	}
+	adminID, ok := middleware.AccountID(c)
+	if !ok {
+		return apperr.NewUnauthorized("Not authenticated")
+	}
+	if err := h.views.End(c.Context(), adminID, id); err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"message": "View ended"})
 }
 
 type updateNameReq struct {

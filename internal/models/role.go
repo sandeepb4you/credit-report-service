@@ -71,6 +71,10 @@ const (
 	// Correct a customer's profile name from the console. A write, so not part
 	// of account:view; the name is what the credit bureau is sent.
 	PermAccountEdit = "account:edit"
+	// Open a read-only view of a customer's app ("View as user"). Its own
+	// permission because it shows everything the customer sees — reports,
+	// purchases, bank details — not the summary account:view lists.
+	PermAccountImpersonate = "account:impersonate"
 )
 
 // rolePerms lists the permissions each role adds on top of the role beneath
@@ -101,6 +105,7 @@ var rolePerms = map[string][]string{
 		PermOrderView,
 		PermReportRun,
 		PermAccountEdit,
+		PermAccountImpersonate,
 	},
 }
 

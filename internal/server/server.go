@@ -58,9 +58,9 @@ func New(
 	adminReferrals *handler.AdminReferralHandler,
 	earnings *handler.EarningsHandler,
 	tokens *service.TokenService,
-	// epochs backs the stale-token check on the permission gates; see
-	// middleware.checkEpoch.
-	epochs middleware.EpochSource,
+	// epochs backs the stale-token check on the permission gates (see
+	// middleware.checkEpoch) and the "View as user" liveness check.
+	epochs middleware.TokenStateSource,
 ) *fiber.App {
 	// Client IP resolution. X-Forwarded-For is only believed when the immediate
 	// peer is a configured trusted proxy — otherwise any caller could forge the
@@ -125,6 +125,9 @@ func New(
 	}))
 
 	api := app.Group("/api")
+	// An admin's "View as user" token may read and nothing else, on every
+	// route — ahead of them all so no route can forget it.
+	api.Use(middleware.ReadOnlyImpersonation(tokens, epochs))
 	api.Get("/ping", health.Ping)
 
 	// Swagger UI (served from the generated docs/ package). Public so the
@@ -431,6 +434,16 @@ func New(
 	admin.Patch("/accounts/:accountId<int>/name",
 		middleware.RequirePermission(tokens, epochs, models.PermAccountEdit),
 		adminAccounts.UpdateAccountName)
+
+	// "View as user": a read-only, audited, 30-minute view of a customer's app.
+	// Its own permission — it shows everything the customer sees. The end call
+	// is made with the admin's token, since the view's own token cannot POST.
+	admin.Post("/accounts/:accountId<int>/impersonate",
+		middleware.RequirePermission(tokens, epochs, models.PermAccountImpersonate),
+		adminAccounts.StartImpersonation)
+	admin.Post("/impersonations/:id<int>/end",
+		middleware.RequirePermission(tokens, epochs, models.PermAccountImpersonate),
+		adminAccounts.EndImpersonation)
 
 	// The purchases list reads every order with its buyer's unmasked contact
 	// details and the money it took, so it carries its own permission: reading
