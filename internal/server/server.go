@@ -427,6 +427,13 @@ func New(
 		middleware.RequirePermission(tokens, epochs, models.PermAccountView),
 		adminAccounts.AccountDetail)
 
+	// The purchases list reads every order with its buyer's unmasked contact
+	// details and the money it took, so it carries its own permission: reading
+	// revenue is a different job from reading the customer book.
+	admin.Get("/orders",
+		middleware.RequirePermission(tokens, epochs, models.PermOrderView),
+		adminAccounts.ListOrders)
+
 	// The referral report reads across every account, so it is gated on its own
 	// permission rather than on kyc:verify -- reviewing PANs and reading the
 	// whole referral graph are different jobs even when one person does both.

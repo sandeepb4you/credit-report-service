@@ -14,14 +14,78 @@ import (
 // AdminAccountHandler carries the account-administration routes that are not
 // KYC review — currently just the reset that walks an account back to signup.
 type AdminAccountHandler struct {
-	svc  *service.AccountResetService
-	list *service.AdminAccountsService
+	svc    *service.AccountResetService
+	list   *service.AdminAccountsService
+	orders *service.AdminOrdersService
 }
 
 func NewAdminAccountHandler(
-	svc *service.AccountResetService, list *service.AdminAccountsService,
+	svc *service.AccountResetService,
+	list *service.AdminAccountsService,
+	orders *service.AdminOrdersService,
 ) *AdminAccountHandler {
-	return &AdminAccountHandler{svc: svc, list: list}
+	return &AdminAccountHandler{svc: svc, list: list, orders: orders}
+}
+
+// ListOrders godoc
+//
+// @Summary      List purchases across every account
+// @Description  The console's purchases list: every order placed in the window, with its buyer (unmasked, as on the user list), product, amount and coupon, payment status and gateway ids, invoice number and what it still entitles the buyer to. The summary totals the whole filtered set, not the page, and counts money from PAID orders only. Omitting a bound leaves that side unbounded. Whole UTC days, inclusive, on when the order was placed.
+// @Tags         admin
+// @Produce      json
+// @Security     BearerAuth
+// @Param        from     query  string  false  "First day, inclusive (YYYY-MM-DD)"
+// @Param        to       query  string  false  "Last day, inclusive (YYYY-MM-DD)"
+// @Param        status   query  string  false  "paid, pending or failed; omit for every order"
+// @Param        mode     query  string  false  "live or test; omit for both"
+// @Param        product  query  string  false  "Product code, e.g. CREDIT_ANALYSIS"
+// @Param        q        query  string  false  "Buyer name, phone or email, order id, coupon, gateway id or invoice number"
+// @Param        sort     query  string  false  "created (default), paid, amount, product, buyer or status"
+// @Param        desc     query  bool    false  "Sort descending (default true)"
+// @Param        limit    query  int     false  "Page size (default 50, max 200)"
+// @Param        offset   query  int     false  "Rows to skip"
+// @Success      200  {object}  models.AdminOrderPage
+// @Failure      400  {object}  apperr.ErrorBody  "Unparseable date, backwards range, or unknown status, mode or sort"
+// @Failure      401  {object}  apperr.ErrorBody  "Not authenticated"
+// @Failure      403  {object}  apperr.ErrorBody  "Missing the 'order:view' permission"
+// @Router       /admin/orders [get]
+func (h *AdminAccountHandler) ListOrders(c *fiber.Ctx) error {
+	from, err := queryDate(c, "from")
+	if err != nil {
+		return err
+	}
+	to, err := queryDate(c, "to")
+	if err != nil {
+		return err
+	}
+	limit, err := queryInt(c, "limit")
+	if err != nil {
+		return err
+	}
+	offset, err := queryInt(c, "offset")
+	if err != nil {
+		return err
+	}
+	desc, err := queryBoolPtr(c, "desc")
+	if err != nil {
+		return err
+	}
+	page, err := h.orders.List(c.Context(), service.OrderQuery{
+		From:        from,
+		To:          to,
+		Status:      c.Query("status"),
+		Mode:        c.Query("mode"),
+		ProductCode: c.Query("product"),
+		Search:      c.Query("q"),
+		Sort:        c.Query("sort"),
+		Desc:        desc == nil || *desc,
+		Limit:       limit,
+		Offset:      offset,
+	})
+	if err != nil {
+		return err
+	}
+	return c.JSON(page)
 }
 
 // ListAccounts godoc

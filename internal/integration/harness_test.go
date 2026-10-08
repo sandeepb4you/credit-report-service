@@ -349,7 +349,8 @@ func buildApp(cfg *config.Config, pool *pgxpool.Pool, pay *paymentSetup) (*fiber
 		// key introduces. A nil here is why a plan purchase could break it unseen.
 		handler.NewAdminAccountHandler(
 			service.NewAccountResetService(accountRepo),
-			service.NewAdminAccountsService(accountRepo)),
+			service.NewAdminAccountsService(accountRepo),
+			service.NewAdminOrdersService(orderRepo)),
 		referralH,
 		handler.NewEarningsHandler(earningsSvc),
 		tokenSvc,

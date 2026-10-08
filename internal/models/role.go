@@ -59,6 +59,11 @@ const (
 	// reviewing one PAN at a time is a different job from reading the whole
 	// customer book, and this one carries unmasked phone numbers.
 	PermAccountView = "account:view"
+	// Read every purchase across every account: what was bought, by whom, for
+	// how much, and the totals. Own permission rather than account:view —
+	// the customer book and the revenue line are different things to hand
+	// someone, even though both carry contact details.
+	PermOrderView = "order:view"
 )
 
 // rolePerms lists the permissions each role adds on top of the role beneath
@@ -86,6 +91,7 @@ var rolePerms = map[string][]string{
 		PermWithdrawalReview,
 		PermReferralManage,
 		PermAccountView,
+		PermOrderView,
 	},
 }
 

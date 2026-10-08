@@ -425,7 +425,9 @@ func main() {
 	accountResetSvc := service.NewAccountResetService(accountRepo)
 	accountResetSvc.SetPDFStore(pdfStore)
 	adminAccountH := handler.NewAdminAccountHandler(
-		accountResetSvc, service.NewAdminAccountsService(accountRepo))
+		accountResetSvc,
+		service.NewAdminAccountsService(accountRepo),
+		service.NewAdminOrdersService(orderRepo))
 	// Referral reporting is read-only over the accounts graph, so it takes its
 	// own repo rather than borrowing the coupon service that mints the codes.
 	adminReferralH := handler.NewAdminReferralHandler(
