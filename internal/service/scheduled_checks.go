@@ -8,6 +8,7 @@ import (
 
 	"credit-report-service/internal/config"
 	"credit-report-service/internal/models"
+	"credit-report-service/internal/push"
 	"credit-report-service/internal/repository"
 )
 
@@ -41,8 +42,23 @@ type ScheduledCheckRunner struct {
 	cfg       config.ScheduledChecksConfig
 	loc       *time.Location
 
+	// pusher announces a completed refresh to the account's devices. Optional
+	// (nil = silent): a scheduled run completes with nobody watching, and the
+	// push is the only thing telling the user their paid refresh happened. Set
+	// via SetPushSender; best-effort like everything in internal/push.
+	pusher *push.Sender
+	// prunePushTokens clears tokens older than push.token-max-age, hosted here
+	// because this is the loop that already sweeps hourly. Optional.
+	prunePushTokens func(ctx context.Context) (int64, error)
+
 	wg   sync.WaitGroup
 	once sync.Once
+}
+
+// SetPushSender wires the completion notification and the stale-token prune.
+func (r *ScheduledCheckRunner) SetPushSender(p *push.Sender, prune func(ctx context.Context) (int64, error)) {
+	r.pusher = p
+	r.prunePushTokens = prune
 }
 
 func NewScheduledCheckRunner(
@@ -102,6 +118,14 @@ func (r *ScheduledCheckRunner) Sweep(ctx context.Context) {
 		slog.Error("scheduled-checks: stale reclaim failed", "error", err)
 	} else if reclaimed > 0 {
 		slog.Warn("scheduled-checks: reclaimed runs orphaned by a crash", "count", reclaimed)
+	}
+
+	if r.prunePushTokens != nil {
+		if pruned, err := r.prunePushTokens(ctx); err != nil {
+			slog.Error("scheduled-checks: push-token prune failed", "error", err)
+		} else if pruned > 0 {
+			slog.Info("scheduled-checks: pruned stale push tokens", "count", pruned)
+		}
 	}
 
 	expired, err := r.repo.ExpireOverdue(ctx, today)
@@ -212,5 +236,15 @@ func (r *ScheduledCheckRunner) execute(ctx context.Context, row *models.Schedule
 	slog.Info("scheduled-checks: run completed",
 		"scheduled_check_id", row.ID, "account_id", row.AccountID,
 		"report_id", report.ID, "sequence_no", row.SequenceNo)
+	// The refresh ran with nobody watching — this is the one message telling
+	// the user it happened. After Complete, so a notification can never
+	// announce a run the bookkeeping then failed to settle.
+	if r.pusher != nil {
+		r.pusher.NotifyAccount(ctx, row.AccountID, push.Notification{
+			Title: "Your credit score was refreshed",
+			Body:  "Your scheduled score refresh is ready. Open myScorr to see what changed.",
+			Data:  map[string]string{"route": "Reports"},
+		})
+	}
 	return runDone
 }

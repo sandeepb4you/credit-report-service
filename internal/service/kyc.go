@@ -12,6 +12,7 @@ import (
 	"credit-report-service/internal/apperr"
 	"credit-report-service/internal/config"
 	"credit-report-service/internal/models"
+	"credit-report-service/internal/push"
 	"credit-report-service/internal/repository"
 	"credit-report-service/internal/s3store"
 )
@@ -33,6 +34,11 @@ import (
 type KycService struct {
 	// onVerified runs after an admin approves a PAN; see SetOnVerified.
 	onVerified func(accountID int64)
+
+	// pusher tells the user their PAN cleared review. Optional (nil = silent).
+	// The manual-review wait is hours against an expectation of minutes, and
+	// nothing else reaches a user who closed the app. Via SetPushSender.
+	pusher *push.Sender
 
 	accounts *repository.AccountRepo
 	verifier *PrefillVerifier
@@ -538,6 +544,9 @@ func clampQueuePage(limit, offset int) (int, int) {
 	return limit, offset
 }
 
+// SetPushSender wires the PAN-approved notification. Optional.
+func (s *KycService) SetPushSender(p *push.Sender) { s.pusher = p }
+
 // VerifyPAN marks the given account's PAN as verified (admin action). The
 // account must already have a KYC row (created via SubmitPAN).
 //
@@ -572,6 +581,16 @@ func (s *KycService) VerifyPAN(ctx context.Context, accountID, reviewerID int64)
 	// now; nothing else would run it until they came back to the app.
 	if s.onVerified != nil {
 		s.onVerified(accountID)
+	}
+
+	// Announce the approval. After onVerified, which may already be pulling the
+	// owed report — the message is true either way, and best-effort regardless.
+	if s.pusher != nil {
+		s.pusher.NotifyAccount(ctx, accountID, push.Notification{
+			Title: "You're verified",
+			Body:  "Your PAN has been verified. Open myScorr to check your credit score.",
+			Data:  map[string]string{"route": "Home"},
+		})
 	}
 	return rec, nil
 }

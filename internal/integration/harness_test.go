@@ -51,6 +51,7 @@ import (
 	"credit-report-service/internal/handler"
 	"credit-report-service/internal/models"
 	"credit-report-service/internal/payments"
+	"credit-report-service/internal/push"
 	"credit-report-service/internal/repository"
 	"credit-report-service/internal/server"
 	"credit-report-service/internal/service"
@@ -360,6 +361,9 @@ func buildApp(cfg *config.Config, pool *pgxpool.Pool, pay *paymentSetup) (*fiber
 			service.NewImpersonationService(accountRepo, tokenSvc)),
 		referralH,
 		handler.NewEarningsHandler(earningsSvc),
+		// Real handler over the stub sender: registration and revocation are
+		// what the push tests exercise; nothing leaves the process.
+		newStubPushHandler(sessionRepo, accountRepo),
 		tokenSvc,
 		accountRepo,
 	), inv
@@ -381,6 +385,10 @@ func (h *harness) post(path, token string, body any) response {
 
 func (h *harness) get(path, token string) response {
 	return h.do(http.MethodGet, path, token, nil)
+}
+
+func (h *harness) put(path, token string, body any) response {
+	return h.do(http.MethodPut, path, token, body)
 }
 
 func (h *harness) do(method, path, token string, body any) response {
@@ -674,4 +682,15 @@ func (h *harness) insertReport(
 		h.t.Fatalf("insert report for account %d: %v", accountID, err)
 	}
 	return id
+}
+
+
+// newStubPushHandler builds the push handler over the no-credentials stub
+// sender (logs instead of calling FCM).
+func newStubPushHandler(sessions *repository.SessionRepo, accounts *repository.AccountRepo) *handler.PushHandler {
+	sender, err := push.New(context.Background(), "", "", sessions)
+	if err != nil {
+		panic(err) // empty path cannot error; a panic here is a changed contract
+	}
+	return handler.NewPushHandler(sessions, accounts, sender)
 }

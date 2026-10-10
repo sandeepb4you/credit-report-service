@@ -21,6 +21,7 @@ import (
 	"credit-report-service/internal/digitap"
 	"credit-report-service/internal/handler"
 	"credit-report-service/internal/payments"
+	"credit-report-service/internal/push"
 	"credit-report-service/internal/render"
 	"credit-report-service/internal/repository"
 	"credit-report-service/internal/s3store"
@@ -288,7 +289,26 @@ func main() {
 	// The scheduled-checks runner: executes the prepaid runs a myScorr Plus
 	// purchase minted, daily semantics on an hourly sweep. The first sweep
 	// fires at boot, so runs missed while the process was down start now.
+	// Push notifications (FCM HTTP v1), built BEFORE the runner starts: the
+	// runner's boot sweep reads the sender, so wiring it afterwards would race.
+	// Empty credentials file = log-only stub; a configured-but-unreadable file
+	// is fatal — a deployment that meant to notify must not boot silently mute.
+	pushSender, err := push.New(rootCtx, cfg.Push.CredentialsFile, cfg.Push.ProjectID, sessionRepo)
+	if err != nil {
+		slog.Error("push sender init failed", "error", err)
+		os.Exit(1)
+	}
+	if pushSender.IsStub() {
+		slog.Warn("push credentials are not configured (credentials-file / project-id); notifications will be logged, not sent")
+	}
+	// Consumers: the runner announces completed refreshes (and hosts the
+	// stale-token prune), KYC announces a manual PAN approval.
+	kycSvc.SetPushSender(pushSender)
+
 	scheduledRunner := service.NewScheduledCheckRunner(scheduledRepo, analyticsSvc, cfg.ScheduledChecks)
+	scheduledRunner.SetPushSender(pushSender, func(ctx context.Context) (int64, error) {
+		return sessionRepo.ExpireStalePushTokens(ctx, time.Now().Add(-cfg.Push.TokenMaxAge))
+	})
 	scheduledRunner.Start(rootCtx)
 	// User-initiated account deletion: erases the accounts whose fourteen-day
 	// grace period has run out. Hourly, because the deadline is a date rather
@@ -470,8 +490,10 @@ func main() {
 		"trusted_proxies", len(cfg.Server.TrustedProxies),
 	)
 
+	pushH := handler.NewPushHandler(sessionRepo, accountRepo, pushSender)
+
 	app := server.New(cfg, healthH, authH, analyticsH, kycH, orderH, couponH, loanH, scoreBuilderH, bankStmtH,
-		adminAccountH, adminReferralH, earningsH, tokenSvc, accountRepo)
+		adminAccountH, adminReferralH, earningsH, pushH, tokenSvc, accountRepo)
 
 	go func() {
 		addr := ":" + itoa(cfg.Server.Port)

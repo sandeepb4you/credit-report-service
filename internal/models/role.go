@@ -77,6 +77,13 @@ const (
 	PermAccountImpersonate = "account:impersonate"
 )
 
+// PermNotificationSend sends a push notification to a customer's devices. Its
+// own permission rather than account:edit: writing to someone's lock screen in
+// myScorr's name is a different authority from correcting their profile.
+const (
+	PermNotificationSend = "notification:send"
+)
+
 // rolePerms lists the permissions each role adds on top of the role beneath
 // it. Effective permissions are the union across every role at or below your
 // rank — see PermissionsFor — so an entry here is written once and inherited
@@ -106,6 +113,7 @@ var rolePerms = map[string][]string{
 		PermReportRun,
 		PermAccountEdit,
 		PermAccountImpersonate,
+		PermNotificationSend,
 	},
 }
 

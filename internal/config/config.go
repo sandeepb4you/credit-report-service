@@ -37,6 +37,7 @@ type Config struct {
 	Invoice         InvoiceConfig         `mapstructure:"invoice"`
 	Demo            DemoConfig            `mapstructure:"demo"`
 	Sentry          SentryConfig          `mapstructure:"sentry"`
+	Push            PushConfig            `mapstructure:"push"`
 
 	// Warnings holds problems found while loading that are worth an operator's
 	// attention but not worth refusing to boot over. Load runs before the
@@ -1002,6 +1003,11 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("log.format", "text")
 	// Reporting is opt-in: no DSN, no events. See SentryConfig.
 	v.SetDefault("sentry.dsn", "")
+	// Push notifications (FCM HTTP v1). Empty credentials file selects the
+	// log-only stub; the token-staleness sweep follows Firebase's guidance.
+	v.SetDefault("push.credentials-file", "")
+	v.SetDefault("push.project-id", "")
+	v.SetDefault("push.token-max-age", "4320h") // 180 days
 	v.SetDefault("sentry.environment", "")
 	v.SetDefault("sentry.release", "")
 
@@ -1098,6 +1104,7 @@ func allKeys() []string {
 		"digitap.prefill.client-secret", "digitap.prefill.timeout",
 		"log.level", "log.format",
 		"sentry.dsn", "sentry.environment", "sentry.release",
+		"push.credentials-file", "push.project-id", "push.token-max-age",
 		"razorpay.mode", "razorpay.base-url", "razorpay.timeout",
 		"razorpay.key-id", "razorpay.key-secret", "razorpay.webhook-secret",
 		"razorpay.checkout-name",
@@ -1130,4 +1137,20 @@ func bindEnvForKeys(v *viper.Viper, keys []string) error {
 		}
 	}
 	return nil
+}
+
+// PushConfig drives FCM notifications (internal/push).
+type PushConfig struct {
+	// CredentialsFile is the path to a Firebase service-account JSON. Org
+	// policy commonly forbids creating such keys; then leave this empty and
+	// set ProjectID to use Application Default Credentials instead. Both
+	// empty selects the log-only stub — a dev machine notifies nobody.
+	CredentialsFile string `mapstructure:"credentials-file"`
+	// ProjectID enables ADC mode (see CredentialsFile): the Firebase/GCP
+	// project to send as, authenticated by whatever ADC finds — a gcloud
+	// login locally, the metadata server on GCP.
+	ProjectID string `mapstructure:"project-id"`
+	// TokenMaxAge clears tokens the app has not re-confirmed in this long
+	// (Firebase staleness guidance); the scheduled-checks sweep runs it.
+	TokenMaxAge time.Duration `mapstructure:"token-max-age"`
 }

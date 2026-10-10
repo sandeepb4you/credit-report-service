@@ -57,6 +57,7 @@ func New(
 	adminAccounts *handler.AdminAccountHandler,
 	adminReferrals *handler.AdminReferralHandler,
 	earnings *handler.EarningsHandler,
+	pushH *handler.PushHandler,
 	tokens *service.TokenService,
 	// epochs backs the stale-token check on the permission gates (see
 	// middleware.checkEpoch) and the "View as user" liveness check.
@@ -263,6 +264,13 @@ func New(
 	a.Delete("/sessions", requireAuth, auth.RevokeOtherSessions)
 	a.Delete("/sessions/:id<int>", requireAuth, auth.RevokeSession)
 
+	// ---- Push tokens (FCM) -----------------------------------------------
+	// Registration binds the token to the caller's own session; logout revokes
+	// the session and silences the device with it.
+	pt := api.Group("/push-token", requireAuth)
+	pt.Put("/", pushH.RegisterToken)
+	pt.Delete("/", pushH.UnregisterToken)
+
 	profile := api.Group("/profile", requireAuth)
 	profile.Get("/", auth.GetProfile)
 	profile.Put("/", auth.UpdateProfile)
@@ -434,6 +442,12 @@ func New(
 	admin.Patch("/accounts/:accountId<int>/name",
 		middleware.RequirePermission(tokens, epochs, models.PermAccountEdit),
 		adminAccounts.UpdateAccountName)
+
+	// Sending to a customer's lock screen is its own authority — see the
+	// permission's comment in models/role.go.
+	admin.Post("/accounts/:accountId<int>/notify",
+		middleware.RequirePermission(tokens, epochs, models.PermNotificationSend),
+		pushH.AdminNotify)
 
 	// "View as user": a read-only, audited, 30-minute view of a customer's app.
 	// Its own permission — it shows everything the customer sees. The end call

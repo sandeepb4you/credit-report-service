@@ -171,3 +171,88 @@ func (r *SessionRepo) DeleteExpired(ctx context.Context, before time.Time) (int6
 	}
 	return tag.RowsAffected(), nil
 }
+
+// ---- push tokens ------------------------------------------------------------
+
+// SetPushToken registers the device's FCM token on the caller's session, and
+// STEALS it from any other session still holding it first. Signing out and back
+// in mints a new session on the same physical device with the same FCM token;
+// without the steal the dead row still claims it and every notification sends
+// twice (or lands attributed to the previous account on a shared device).
+// One transaction, so the token is never on two live rows or zero rows between
+// the two statements.
+func (r *SessionRepo) SetPushToken(ctx context.Context, sessionID int64, token string) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx,
+		`UPDATE sessions SET fcm_token = NULL, fcm_token_updated_at = now()
+		  WHERE fcm_token = $1 AND id <> $2`, token, sessionID); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx,
+		`UPDATE sessions SET fcm_token = $2, fcm_token_updated_at = now()
+		  WHERE id = $1 AND revoked_at IS NULL`, sessionID, token)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound // revoked or unknown session — a dead login must not re-arm pushes
+	}
+	return tx.Commit(ctx)
+}
+
+// ClearPushToken detaches the caller's token (explicit client opt-out).
+func (r *SessionRepo) ClearPushToken(ctx context.Context, sessionID int64) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE sessions SET fcm_token = NULL, fcm_token_updated_at = now()
+		  WHERE id = $1`, sessionID)
+	return err
+}
+
+// LivePushTokens returns every live token for an account — the notification
+// fan-out read. Revoked sessions are excluded by definition, which is the whole
+// design: logout silences a device with no push-specific bookkeeping.
+func (r *SessionRepo) LivePushTokens(ctx context.Context, accountID int64) ([]string, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT fcm_token FROM sessions
+		  WHERE account_id = $1 AND revoked_at IS NULL AND expires_at > now()
+		    AND fcm_token IS NOT NULL`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tokens []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		tokens = append(tokens, t)
+	}
+	return tokens, rows.Err()
+}
+
+// DropPushToken removes a token wherever it is — the reaction to FCM reporting
+// it UNREGISTERED (app uninstalled, or the token rotated away under us).
+func (r *SessionRepo) DropPushToken(ctx context.Context, token string) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE sessions SET fcm_token = NULL, fcm_token_updated_at = now()
+		  WHERE fcm_token = $1`, token)
+	return err
+}
+
+// ExpireStalePushTokens clears tokens not refreshed since cutoff, per
+// Firebase's staleness guidance — a token the app has not confirmed in months
+// belongs to a device that likely cleared data or went inactive.
+func (r *SessionRepo) ExpireStalePushTokens(ctx context.Context, cutoff time.Time) (int64, error) {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE sessions SET fcm_token = NULL, fcm_token_updated_at = now()
+		  WHERE fcm_token IS NOT NULL AND fcm_token_updated_at < $1`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}

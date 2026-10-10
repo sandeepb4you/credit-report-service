@@ -55,6 +55,11 @@ if [ "$SYNC_CONFIG" = "1" ]; then
         exit 1
     fi
     scp -q "$REPO_ROOT/deploy/docker-compose.yml" "$DEPLOY_SERVER:$REMOTE_DIR/docker-compose.yml"
+    # The FCM Workload Identity Federation config (not a secret — it only names
+    # the AWS-role → Google-token exchange; the authority is the EC2 role).
+    # compose mounts it into the api container, and a missing file fails the
+    # whole stack at `up` — so it syncs with the compose file that needs it.
+    scp -q "$REPO_ROOT/deploy/gcp-wif.json" "$DEPLOY_SERVER:$REMOTE_DIR/gcp-wif.json"
     # Back the old env up before replacing it. A rollback pins IMAGE_TAG in the
     # server's copy (see README section 6), and overwriting that silently would
     # undo the rollback while reporting a clean deploy.
