@@ -21,6 +21,7 @@ import (
 	"credit-report-service/internal/config"
 	"credit-report-service/internal/digitap"
 	"credit-report-service/internal/models"
+	"credit-report-service/internal/push"
 	"credit-report-service/internal/repository"
 )
 
@@ -106,6 +107,13 @@ type CreditAnalyticsService struct {
 	// mailer sends the report as an attachment. Optional for the same reason.
 	// Via SetReportMailer.
 	mailer ReportMailer
+	// pusher announces "your score is ready" when a PAID one-time check is
+	// spent on a delivered report — once per payment, by construction: one
+	// order funds exactly one report. It reaches the buyer in the cases no
+	// screen does (an admin running an owed report, the pull fired by a manual
+	// PAN approval); when the user is watching the processing screen it is a
+	// harmless echo. Optional, via SetPushSender.
+	pusher *push.Sender
 	// renderer prints the myScorr Advanced Report's HTML to PDF (a headless
 	// Chromium sidecar). Optional: with none configured that endpoint reports
 	// the report unavailable. Via SetAdvancedReportRenderer.
@@ -127,6 +135,9 @@ type ReportMailer interface {
 
 // SetReportMailer wires report delivery by email.
 func (s *CreditAnalyticsService) SetReportMailer(m ReportMailer) { s.mailer = m }
+
+// SetPushSender wires the score-ready notification. Optional.
+func (s *CreditAnalyticsService) SetPushSender(p *push.Sender) { s.pusher = p }
 
 func NewCreditAnalyticsService(
 	client *digitap.Client,
@@ -1238,6 +1249,16 @@ func (s *CreditAnalyticsService) spendFunding(ctx context.Context, accountID, re
 	}
 	if f.row == nil {
 		s.spendEntitlement(ctx, accountID, reportID)
+		// The paid check delivered — the per-payment "score ready". Scheduled
+		// runs are announced by the runner instead, and a manual plan-quota
+		// spend means the user is on the processing screen already.
+		if s.pusher != nil {
+			s.pusher.NotifyAccount(ctx, accountID, push.Notification{
+				Title: "Your credit score is ready",
+				Body:  "Your report has been generated. Open myScorr to see your score and insights.",
+				Data:  map[string]string{"route": "Reports"},
+			})
+		}
 		return
 	}
 	spent, err := s.scheduled.SpendNextPending(

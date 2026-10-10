@@ -17,6 +17,7 @@ import (
 	"credit-report-service/internal/config"
 	"credit-report-service/internal/models"
 	"credit-report-service/internal/payments"
+	"credit-report-service/internal/push"
 	"credit-report-service/internal/repository"
 )
 
@@ -51,6 +52,11 @@ type OrderService struct {
 	// orders API. Optional like earnings: nil means no invoicing (tests that
 	// never look at one), and every use guards it.
 	invoices invoiceIssuer
+	// pusher announces the confirmed payment to the buyer's devices. Optional
+	// (nil = silent) and best-effort like everything around it: most buyers are
+	// watching checkout, but a webhook can settle an order the user already
+	// walked away from, and this is the only channel that reaches them then.
+	pusher *push.Sender
 }
 
 // invoiceIssuer is what OrderService needs from InvoiceService.
@@ -85,6 +91,9 @@ func NewOrderService(
 
 // SetInvoices wires invoicing into fulfilment and the orders API.
 func (s *OrderService) SetInvoices(inv invoiceIssuer) { s.invoices = inv }
+
+// SetPushSender wires the payment-confirmed notification. Optional.
+func (s *OrderService) SetPushSender(p *push.Sender) { s.pusher = p }
 
 // PaymentDetails reads the successful payment on an order from the Razorpay
 // environment that took it: the invoice's payment lines. Implements the
@@ -790,6 +799,18 @@ func (s *OrderService) fulfillOrder(ctx context.Context, order *models.Order, pd
 			slog.Error("invoice issue failed at fulfilment; the deliverer's heal will retry",
 				"order_uid", order.OrderUID, "account_id", order.AccountID, "error", err)
 		}
+	}
+
+	// Tell the buyer their payment landed. Fires exactly once per order (only
+	// the first PAID transition reaches fulfilment) and is worded from the
+	// server's own snapshot — the amount the order actually charged.
+	if s.pusher != nil {
+		s.pusher.NotifyAccount(ctx, order.AccountID, push.Notification{
+			Title: "Payment received",
+			Body: fmt.Sprintf("Your payment of ₹%.0f for %s is confirmed. Thank you!",
+				order.Amount, product.Name),
+			Data: map[string]string{"route": "OrderHistory"},
+		})
 	}
 
 	if !product.IsPlan() {

@@ -304,6 +304,8 @@ func main() {
 	// Consumers: the runner announces completed refreshes (and hosts the
 	// stale-token prune), KYC announces a manual PAN approval.
 	kycSvc.SetPushSender(pushSender)
+	analyticsSvc.SetPushSender(pushSender) // "your score is ready", once per paid check
+	orderSvc.SetPushSender(pushSender)     // "payment received", once per order
 
 	scheduledRunner := service.NewScheduledCheckRunner(scheduledRepo, analyticsSvc, cfg.ScheduledChecks)
 	scheduledRunner.SetPushSender(pushSender, func(ctx context.Context) (int64, error) {
