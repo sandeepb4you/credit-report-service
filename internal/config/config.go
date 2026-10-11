@@ -38,6 +38,7 @@ type Config struct {
 	Demo            DemoConfig            `mapstructure:"demo"`
 	Sentry          SentryConfig          `mapstructure:"sentry"`
 	Push            PushConfig            `mapstructure:"push"`
+	BusinessLoans   BusinessLoansConfig   `mapstructure:"business-loans"`
 
 	// Warnings holds problems found while loading that are worth an operator's
 	// attention but not worth refusing to boot over. Load runs before the
@@ -156,6 +157,16 @@ func (c *InvoiceConfig) validate() []string {
 // hundred MB of RAM would spike inside the process serving requests. Empty URL
 // -> no renderer, and that endpoint reports the report unavailable, the same
 // unconfigured-upstream convention as S3, SMS and mail.
+// BusinessLoansConfig is the business-loan lender list (Explore → Business
+// loans). OfferURL is where "View offer" sends the user — the lender's
+// application page, with whatever tracking the referral agreement asks for.
+// Config rather than code because it is the lender's link to give and change.
+// Empty means no link yet: the app then opens its own offer screen instead of
+// a browser, rather than guessing at a URL.
+type BusinessLoansConfig struct {
+	OfferURL string `mapstructure:"offer-url"`
+}
+
 type RendererConfig struct {
 	// URL is the DevTools websocket endpoint, e.g. ws://renderer:9222.
 	URL string `mapstructure:"url"`

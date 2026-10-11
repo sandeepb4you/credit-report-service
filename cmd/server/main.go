@@ -495,7 +495,11 @@ func main() {
 	pushH := handler.NewPushHandler(sessionRepo, accountRepo, pushSender)
 
 	app := server.New(cfg, healthH, authH, analyticsH, kycH, orderH, couponH, loanH, scoreBuilderH, bankStmtH,
-		adminAccountH, adminReferralH, earningsH, pushH, tokenSvc, accountRepo)
+		adminAccountH, adminReferralH, earningsH, pushH,
+		handler.NewAdminDashboardHandler(service.NewDashboardService(repository.NewDashboardRepo(pool))),
+		handler.NewBusinessLoanHandler(service.NewBusinessLoanService(
+			repository.NewCreditAnalyticsRepo(pool), cfg.BusinessLoans.OfferURL)),
+		tokenSvc, accountRepo)
 
 	go func() {
 		addr := ":" + itoa(cfg.Server.Port)

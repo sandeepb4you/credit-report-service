@@ -75,6 +75,11 @@ const (
 	// permission because it shows everything the customer sees — reports,
 	// purchases, bank details — not the summary account:view lists.
 	PermAccountImpersonate = "account:impersonate"
+	// Build, import and export console dashboards. Only the right to have
+	// dashboards: every widget's figures are still gated on the permission
+	// that owns that data (signups on account:view, revenue on order:view…),
+	// so this never lets anyone read more than they already could.
+	PermDashboardManage = "dashboard:manage"
 )
 
 // PermNotificationSend sends a push notification to a customer's devices. Its
@@ -114,6 +119,7 @@ var rolePerms = map[string][]string{
 		PermAccountEdit,
 		PermAccountImpersonate,
 		PermNotificationSend,
+		PermDashboardManage,
 	},
 }
 

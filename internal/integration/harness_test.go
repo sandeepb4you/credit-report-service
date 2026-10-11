@@ -364,6 +364,9 @@ func buildApp(cfg *config.Config, pool *pgxpool.Pool, pay *paymentSetup) (*fiber
 		// Real handler over the stub sender: registration and revocation are
 		// what the push tests exercise; nothing leaves the process.
 		newStubPushHandler(sessionRepo, accountRepo),
+		handler.NewAdminDashboardHandler(service.NewDashboardService(repository.NewDashboardRepo(pool))),
+		handler.NewBusinessLoanHandler(service.NewBusinessLoanService(
+			repository.NewCreditAnalyticsRepo(pool), "https://lender.example/apply")),
 		tokenSvc,
 		accountRepo,
 	), inv

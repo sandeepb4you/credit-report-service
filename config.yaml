@@ -226,6 +226,13 @@ s3:
   # once, so a longer window only widens the period in which a leaked URL works.
   presign-ttl: 10m
 
+business-loans:
+  # The lender's application page behind "View offer" on the business-loan list:
+  # Muthoot FinCorp's ClickPe link, with our agentId (attributes the referral).
+  # Given by Sandeep on 2026-10-11. Empty -> no link, and the app opens its own
+  # offer screen instead. Override via env: BUSINESS_LOANS_OFFER_URL.
+  offer-url: "https://muthoot.clickpe.ai/?agentId=bad57b6e-3667-471d-8bc9-a70684b314e2&m=9711300779"
+
 renderer:
   # Headless Chromium for the myScorr Advanced Report (the eight-page PDF this
   # service writes from the bureau data — not the Experian file itself, which

@@ -2032,6 +2032,9 @@ type caisAccountDetail struct {
 	HighestCredit           string `json:"Highest_Credit_or_Original_Loan_Amount"`
 	RepaymentTenure         string `json:"Repayment_Tenure"`
 	WrittenOffSettledStatus string `json:"Written_off_Settled_Status"`
+	// AmountPastDue is what is overdue on the tradeline today, in rupees. Read
+	// only by the business-loan match (rule R3); the insights never surfaced it.
+	AmountPastDue string `json:"Amount_Past_Due"`
 }
 
 // caisAccountDetailList tolerates a real Digitap/Experian quirk: CAIS_Account_DETAILS

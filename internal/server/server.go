@@ -58,6 +58,8 @@ func New(
 	adminReferrals *handler.AdminReferralHandler,
 	earnings *handler.EarningsHandler,
 	pushH *handler.PushHandler,
+	dashboards *handler.AdminDashboardHandler,
+	businessLoans *handler.BusinessLoanHandler,
 	tokens *service.TokenService,
 	// epochs backs the stale-token check on the permission gates (see
 	// middleware.checkEpoch) and the "View as user" liveness check.
@@ -370,6 +372,8 @@ func New(
 	// The savings view is for any signed-in user; provider CRUD and the switch
 	// settings are admin-only, gated on the 'loan-provider:manage' permission.
 	api.Get("/loan-switch/opportunities", requireAuth, loans.GetOpportunities)
+	// The business-loan lender list: every signed-in account, paid or not.
+	api.Get("/loans/business", requireAuth, businessLoans.List)
 
 	lp := api.Group("/admin/loan-providers", middleware.RequirePermission(tokens, epochs, models.PermLoanProviderManage))
 	lp.Post("/", loans.CreateProvider)
@@ -506,6 +510,24 @@ func New(
 	admin.Put("/referral-settings",
 		middleware.RequirePermission(tokens, epochs, models.PermReferralManage),
 		earnings.UpdateSettings)
+
+	// Custom dashboards. dashboard:manage is the right to have dashboards at
+	// all; each metric's figures are then gated inside the service on the
+	// permission that owns that data, so a dashboard never shows anyone a
+	// number they could not already read off an existing console screen.
+	// Literal segments (metrics, import) are registered before /:id so Fiber
+	// reaches them.
+	db := admin.Group("/dashboards", middleware.RequirePermission(tokens, epochs, models.PermDashboardManage))
+	db.Get("/metrics", dashboards.Metrics)
+	db.Get("/metrics/:key", dashboards.Series)
+	db.Get("/metrics/:key/export", dashboards.ExportSeries)
+	db.Post("/import", dashboards.Import)
+	db.Get("/", dashboards.List)
+	db.Post("/", dashboards.Create)
+	db.Get("/:id<int>", dashboards.Get)
+	db.Put("/:id<int>", dashboards.Update)
+	db.Delete("/:id<int>", dashboards.Delete)
+	db.Get("/:id<int>/export", dashboards.Export)
 
 	return app
 }
