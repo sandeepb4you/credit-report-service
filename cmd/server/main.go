@@ -499,6 +499,7 @@ func main() {
 		handler.NewAdminDashboardHandler(service.NewDashboardService(repository.NewDashboardRepo(pool))),
 		handler.NewBusinessLoanHandler(service.NewBusinessLoanService(
 			repository.NewCreditAnalyticsRepo(pool), cfg.BusinessLoans.OfferURL)),
+		handler.NewAdminAudienceHandler(service.NewAudienceService(repository.NewAudienceRepo(pool))),
 		tokenSvc, accountRepo)
 
 	go func() {

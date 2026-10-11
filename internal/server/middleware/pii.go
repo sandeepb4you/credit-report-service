@@ -78,6 +78,11 @@ var sensitiveKeys = map[string]struct{}{
 	"dob":           {},
 	"dateofbirth":   {},
 	"date_of_birth": {},
+	// A retargeting export (POST /admin/audiences/{id}/export) returns the
+	// whole CSV as one string. Shape masking would catch its phones and emails
+	// but not the names beside them, so the value is masked whole: a list of
+	// customers' names is exactly what a log line must not become.
+	"csv": {},
 	// misc identifiers that should not leak
 	"providersubject":     {},
 	"authorization":       {},

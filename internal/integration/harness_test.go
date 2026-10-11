@@ -367,6 +367,7 @@ func buildApp(cfg *config.Config, pool *pgxpool.Pool, pay *paymentSetup) (*fiber
 		handler.NewAdminDashboardHandler(service.NewDashboardService(repository.NewDashboardRepo(pool))),
 		handler.NewBusinessLoanHandler(service.NewBusinessLoanService(
 			repository.NewCreditAnalyticsRepo(pool), "https://lender.example/apply")),
+		handler.NewAdminAudienceHandler(service.NewAudienceService(repository.NewAudienceRepo(pool))),
 		tokenSvc,
 		accountRepo,
 	), inv

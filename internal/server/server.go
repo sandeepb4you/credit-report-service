@@ -60,6 +60,7 @@ func New(
 	pushH *handler.PushHandler,
 	dashboards *handler.AdminDashboardHandler,
 	businessLoans *handler.BusinessLoanHandler,
+	audiences *handler.AdminAudienceHandler,
 	tokens *service.TokenService,
 	// epochs backs the stale-token check on the permission gates (see
 	// middleware.checkEpoch) and the "View as user" liveness check.
@@ -528,6 +529,15 @@ func New(
 	db.Put("/:id<int>", dashboards.Update)
 	db.Delete("/:id<int>", dashboards.Delete)
 	db.Get("/:id<int>/export", dashboards.Export)
+
+	// Retargeting lists. Reading them is already a bulk read of contact data
+	// sorted by who to message, and exporting them takes it out of the system,
+	// so both sit behind one permission of their own — not account:view, which
+	// is the customer book read one screen at a time. Every export is audited.
+	au := admin.Group("/audiences", middleware.RequirePermission(tokens, epochs, models.PermAudienceExport))
+	au.Get("/", audiences.Lists)
+	au.Get("/:id", audiences.Rows)
+	au.Post("/:id/export", audiences.Export)
 
 	return app
 }

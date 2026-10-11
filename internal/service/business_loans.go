@@ -47,6 +47,11 @@ var blNonLoanTypes = map[string]bool{
 	"18": true, "19": true, "20": true, // telco
 }
 
+// businessLoanLenderName is the one lender behind the list. Named once so the
+// retargeting list that counts business-loan matches (list I) cannot quote a
+// different provider from the screen the customer sees.
+const businessLoanLenderName = "Muthoot FinCorp"
+
 // BusinessLoanLender is the one lender the list shows. Copy and figures live
 // here rather than in the app so they change with a deploy, not a release.
 type BusinessLoanLender struct {
@@ -86,7 +91,7 @@ func (s *BusinessLoanService) List(ctx context.Context, accountID int64) (*Busin
 	out := &BusinessLoanList{
 		MatchStatus: BusinessLoanNoScore,
 		Lenders: []BusinessLoanLender{{
-			Name:         "Muthoot FinCorp",
+			Name:         businessLoanLenderName,
 			Regulator:    "RBI-registered NBFC",
 			MaxAmount:    1000000,
 			TenureMonths: 36,

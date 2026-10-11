@@ -89,6 +89,14 @@ const (
 	PermNotificationSend = "notification:send"
 )
 
+// PermAudienceExport reads the retargeting lists and downloads them as CSVs
+// for a WhatsApp, SMS, email or push campaign. Its own permission rather than
+// account:view: reading the customer book one screen at a time is a different
+// thing from taking it out of the system in bulk, sorted by who to message.
+const (
+	PermAudienceExport = "audience:export"
+)
+
 // rolePerms lists the permissions each role adds on top of the role beneath
 // it. Effective permissions are the union across every role at or below your
 // rank — see PermissionsFor — so an entry here is written once and inherited
@@ -120,6 +128,7 @@ var rolePerms = map[string][]string{
 		PermAccountImpersonate,
 		PermNotificationSend,
 		PermDashboardManage,
+		PermAudienceExport,
 	},
 }
 
