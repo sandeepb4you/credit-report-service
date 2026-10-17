@@ -165,6 +165,11 @@ func (c *InvoiceConfig) validate() []string {
 // a browser, rather than guessing at a URL.
 type BusinessLoansConfig struct {
 	OfferURL string `mapstructure:"offer-url"`
+	// OpenOfferURL is the same thing for the unscreened lender (mPokket), which
+	// has no eligibility rules and so is shown to everyone. A second key rather
+	// than a list because each link carries its own referral identifiers and is
+	// renegotiated separately.
+	OpenOfferURL string `mapstructure:"open-offer-url"`
 }
 
 type RendererConfig struct {

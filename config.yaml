@@ -232,6 +232,10 @@ business-loans:
   # Given by Sandeep on 2026-10-11. Empty -> no link, and the app opens its own
   # offer screen instead. Override via env: BUSINESS_LOANS_OFFER_URL.
   offer-url: "https://muthoot.clickpe.ai/?agentId=bad57b6e-3667-471d-8bc9-a70684b314e2&m=9711300779"
+  # The same for mPokket, the unscreened lender: no eligibility rules, so its
+  # card is shown as open to every account whatever the score. Override via
+  # env: BUSINESS_LOANS_OPEN_OFFER_URL.
+  open-offer-url: "https://web.mpokket.in/?loanJourney=business&utm_source=clickpe&utm_medium=DSA&utm_campaign=clickpe1235dc24aeeebbcSD001"
 
 renderer:
   # Headless Chromium for the myScorr Advanced Report (the eight-page PDF this

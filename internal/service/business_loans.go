@@ -16,6 +16,12 @@ const (
 	// BusinessLoanNoScore is an account with no scored report yet. The list is
 	// shown to it anyway (design rule 1) with a nudge to check the score.
 	BusinessLoanNoScore = "no_score"
+	// BusinessLoanOpen is a lender that screens nobody: it has no eligibility
+	// rules of its own, so every account can apply whatever its score, and an
+	// account with no report at all still gets a usable card. Kept distinct
+	// from excellent/good rather than folded into them, because those two say
+	// "based on your score" and this one was never computed from a score.
+	BusinessLoanOpen = "open"
 )
 
 // The match rules (design/screen-business-loans-list-final.html, "Internal
@@ -47,27 +53,49 @@ var blNonLoanTypes = map[string]bool{
 	"18": true, "19": true, "20": true, // telco
 }
 
-// businessLoanLenderName is the one lender behind the list. Named once so the
-// retargeting list that counts business-loan matches (list I) cannot quote a
-// different provider from the screen the customer sees.
-const businessLoanLenderName = "Muthoot FinCorp"
+// businessLoanLenderName is the screened lender — the one R1-R4 above decide
+// for. Named once so the retargeting list that counts business-loan matches
+// (list I) cannot quote a different provider from the screen the customer
+// sees. businessLoanOpenLenderName is screened by nothing and so is not in
+// that list: there is no match to count.
+const (
+	businessLoanLenderName     = "Muthoot FinCorp"
+	businessLoanOpenLenderName = "mPokket"
+)
 
-// BusinessLoanLender is the one lender the list shows. Copy and figures live
-// here rather than in the app so they change with a deploy, not a release.
+// businessLoanFeeDisclosure is on every card, per the RBI digital-lending
+// rules the design cites: the user is told we are paid for the handoff before
+// they take it.
+const businessLoanFeeDisclosure = "myScorr may earn a referral fee from lenders. This never changes the rate you pay."
+
+// BusinessLoanLender is one lender on the list. Copy and figures live here
+// rather than in the app so they change with a deploy, not a release.
 type BusinessLoanLender struct {
-	Name          string   `json:"name"`
-	Regulator     string   `json:"regulator"`
-	MaxAmount     int64    `json:"maxAmount"` // rupees
-	TenureMonths  int      `json:"tenureMonths"`
-	Collateral    string   `json:"collateral"`
-	Features      []string `json:"features"`
-	OfferURL      string   `json:"offerUrl,omitempty"`
-	FeeDisclosure string   `json:"feeDisclosure"`
+	Name         string `json:"name"`
+	Regulator    string `json:"regulator"`
+	MaxAmount    int64  `json:"maxAmount"` // rupees
+	TenureMonths int    `json:"tenureMonths"`
+	// TenureMinMonths is the short end of a tenure range; 0 means the lender
+	// quotes one figure and TenureMonths is it. TenureMonths stays the long
+	// end, so an app that predates the range still prints a true maximum.
+	TenureMinMonths int      `json:"tenureMinMonths,omitempty"`
+	Collateral      string   `json:"collateral"`
+	Features        []string `json:"features"`
+	OfferURL        string   `json:"offerUrl,omitempty"`
+	FeeDisclosure   string   `json:"feeDisclosure"`
+	// MatchStatus is this lender's own verdict, which is not always the
+	// profile's: an unscreened lender is "open" to an account the screened one
+	// turns away. The app draws the card from this and the strip from the
+	// list's, so the two can disagree without either being wrong.
+	MatchStatus string `json:"matchStatus"`
 }
 
 // BusinessLoanList is the response for GET /api/loans/business.
 type BusinessLoanList struct {
-	// MatchStatus is excellent, good, not_match or no_score.
+	// MatchStatus is the profile's standing — excellent, good, not_match or
+	// no_score — and is what the strip above the cards reads. It is the
+	// screened lender's verdict; it is never "open", which is a property of a
+	// lender rather than of a borrower.
 	MatchStatus string `json:"matchStatus"`
 	// Score is the score the status was computed from; null with no_score.
 	Score   *int64               `json:"score"`
@@ -75,22 +103,21 @@ type BusinessLoanList struct {
 }
 
 type BusinessLoanService struct {
-	reports  *repository.CreditAnalyticsRepo
-	offerURL string
+	reports      *repository.CreditAnalyticsRepo
+	offerURL     string
+	openOfferURL string
 }
 
-func NewBusinessLoanService(reports *repository.CreditAnalyticsRepo, offerURL string) *BusinessLoanService {
-	return &BusinessLoanService{reports: reports, offerURL: offerURL}
+func NewBusinessLoanService(reports *repository.CreditAnalyticsRepo, offerURL, openOfferURL string) *BusinessLoanService {
+	return &BusinessLoanService{reports: reports, offerURL: offerURL, openOfferURL: openOfferURL}
 }
 
-// List answers the business-loan screen. Shown to everyone, paid or not: an
-// account with no report gets no_score rather than a 404. The status is worked
-// out from the newest scored report on every call, so it moves with each
-// refresh.
-func (s *BusinessLoanService) List(ctx context.Context, accountID int64) (*BusinessLoanList, error) {
-	out := &BusinessLoanList{
-		MatchStatus: BusinessLoanNoScore,
-		Lenders: []BusinessLoanLender{{
+// lenders builds the list, given the profile's standing against the screened
+// lender. Order is deliberate: the screened lender leads, because it is the
+// larger facility and the one the status strip is about.
+func (s *BusinessLoanService) lenders(screened string) []BusinessLoanLender {
+	return []BusinessLoanLender{
+		{
 			Name:         businessLoanLenderName,
 			Regulator:    "RBI-registered NBFC",
 			MaxAmount:    1000000,
@@ -101,9 +128,35 @@ func (s *BusinessLoanService) List(ctx context.Context, accountID int64) (*Busin
 				"Quick online application",
 			},
 			OfferURL:      s.offerURL,
-			FeeDisclosure: "myScorr may earn a referral fee from lenders. This never changes the rate you pay.",
-		}},
+			FeeDisclosure: businessLoanFeeDisclosure,
+			MatchStatus:   screened,
+		},
+		{
+			Name:            businessLoanOpenLenderName,
+			Regulator:       "RBI-registered NBFC",
+			MaxAmount:       200000,
+			TenureMinMonths: 6,
+			TenureMonths:    24,
+			Collateral:      "Nil",
+			Features: []string{
+				"No minimum credit score",
+				"Fully online, no paperwork",
+			},
+			OfferURL:      s.openOfferURL,
+			FeeDisclosure: businessLoanFeeDisclosure,
+			MatchStatus:   BusinessLoanOpen,
+		},
 	}
+}
+
+// List answers the business-loan screen. Shown to everyone, paid or not: an
+// account with no report gets no_score rather than a 404. The status is worked
+// out from the newest scored report on every call, so it moves with each
+// refresh.
+func (s *BusinessLoanService) List(ctx context.Context, accountID int64) (*BusinessLoanList, error) {
+	out := &BusinessLoanList{MatchStatus: BusinessLoanNoScore}
+	out.Lenders = s.lenders(out.MatchStatus)
+
 	row, err := s.reports.FindLatestByAccount(ctx, accountID)
 	if errors.Is(err, repository.ErrNotFound) {
 		return out, nil
@@ -126,6 +179,7 @@ func (s *BusinessLoanService) List(ctx context.Context, accountID int64) (*Busin
 	}
 	out.Score = score
 	out.MatchStatus = businessLoanMatch(*score, accounts)
+	out.Lenders = s.lenders(out.MatchStatus)
 	return out, nil
 }
 

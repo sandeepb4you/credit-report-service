@@ -20,19 +20,36 @@ func TestBusinessLoanListFollowsTheLatestReport(t *testing.T) {
 		return r.Body
 	}
 
-	// No report yet: still a lender to show, and no status to show with it.
+	// No report yet: still lenders to show, and no status to show with them —
+	// except the unscreened one, which is open with or without a score.
 	before := status()
 	if before["matchStatus"] != "no_score" || before["score"] != nil {
 		t.Errorf("before any report: %v", before)
 	}
 	lenders := listOf(before["lenders"])
-	if len(lenders) != 1 || lenders[0]["name"] != "Muthoot FinCorp" || lenders[0]["offerUrl"] != "https://lender.example/apply" {
-		t.Errorf("lenders = %v", lenders)
+	if len(lenders) != 2 {
+		t.Fatalf("lenders = %v", lenders)
+	}
+	if lenders[0]["name"] != "Muthoot FinCorp" || lenders[0]["offerUrl"] != "https://lender.example/apply" ||
+		lenders[0]["matchStatus"] != "no_score" {
+		t.Errorf("screened lender = %v", lenders[0])
+	}
+	if lenders[1]["name"] != "mPokket" || lenders[1]["offerUrl"] != "https://open-lender.example/apply" ||
+		lenders[1]["matchStatus"] != "open" {
+		t.Errorf("open lender = %v", lenders[1])
 	}
 
+	// A score the screened lender turns away leaves the unscreened card open:
+	// the two verdicts are independent, which is the whole point of carrying
+	// one per lender rather than one for the list.
 	h.insertScoredReport(accountID, 628)
-	if got := status()["matchStatus"]; got != "not_match" {
+	rejected := status()
+	if got := rejected["matchStatus"]; got != "not_match" {
 		t.Errorf("628: %v", got)
+	}
+	turned := listOf(rejected["lenders"])
+	if turned[0]["matchStatus"] != "not_match" || turned[1]["matchStatus"] != "open" {
+		t.Errorf("628 per lender: %v", turned)
 	}
 	h.insertScoredReport(accountID, 702)
 	if got := status()["matchStatus"]; got != "good" {
