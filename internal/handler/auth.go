@@ -923,19 +923,19 @@ func (h *AuthHandler) UpdateProfile(c *fiber.Ctx) error {
 // ---- PUT /api/admin/accounts/:accountId/role -----------------------------
 
 type setRoleReq struct {
-	Role string `json:"role" example:"agent"`
+	Role string `json:"role" example:"partner"`
 }
 
 // SetAccountRole godoc
 //
 // @Summary      Set an account's role
-// @Description  Grants or revokes a role. 'agent' lets the account issue coupon codes; 'user' is the default. Note that the role rides in the JWT, so a change only takes effect for the target account on its next token refresh — up to one access-token lifetime later.
+// @Description  Grants or revokes a role. 'partner' lets the account issue coupon codes and work Loan Assist applications; 'user' is the default. Note that the role rides in the JWT, so a change only takes effect for the target account on its next token refresh — up to one access-token lifetime later.
 // @Tags         admin
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
 // @Param        accountId  path      int         true  "Account to modify"
-// @Param        request    body      setRoleReq  true  "Role to set (user | agent | admin)"
+// @Param        request    body      setRoleReq  true  "Role to set (user | partner | admin)"
 // @Success      200        {object}  models.Account
 // @Failure      400        {object}  apperr.ErrorBody  "Unknown role / accountId must be an integer"
 // @Failure      401        {object}  apperr.ErrorBody  "Not authenticated"

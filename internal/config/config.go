@@ -39,6 +39,7 @@ type Config struct {
 	Sentry          SentryConfig          `mapstructure:"sentry"`
 	Push            PushConfig            `mapstructure:"push"`
 	BusinessLoans   BusinessLoansConfig   `mapstructure:"business-loans"`
+	LoanAssist      LoanAssistConfig      `mapstructure:"loan-assist"`
 
 	// Warnings holds problems found while loading that are worth an operator's
 	// attention but not worth refusing to boot over. Load runs before the
@@ -170,6 +171,31 @@ type BusinessLoansConfig struct {
 	// than a list because each link carries its own referral identifiers and is
 	// renegotiated separately.
 	OpenOfferURL string `mapstructure:"open-offer-url"`
+}
+
+// LoanAssistConfig drives Loan Assist (design/myscorr-loan-assist-screens.html).
+type LoanAssistConfig struct {
+	// NotifyEmails is who is told about each paid request — the offline
+	// executive and the online support team — comma-separated. Empty means
+	// nobody is mailed, which is logged at boot and on every paid request.
+	NotifyEmails string `mapstructure:"notify-emails"`
+	// ConsoleURL is the admin console's Loan Assist page, linked from that mail.
+	ConsoleURL string `mapstructure:"console-url"`
+	// MaxFileSize caps one uploaded document. The design promises 10 MB, so
+	// multipart.max-request-size (and nginx's client_max_body_size) must sit
+	// above it to leave room for the multipart envelope.
+	MaxFileSize string `mapstructure:"max-file-size"`
+}
+
+// Recipients splits NotifyEmails into addresses.
+func (c LoanAssistConfig) Recipients() []string {
+	var out []string
+	for _, s := range strings.Split(c.NotifyEmails, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 type RendererConfig struct {
@@ -973,7 +999,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("auth.google.client-id", "")
 
 	v.SetDefault("multipart.max-file-size", "5MB")
-	v.SetDefault("multipart.max-request-size", "10MB")
+	v.SetDefault("multipart.max-request-size", "12MB")
+	v.SetDefault("loan-assist.max-file-size", "10MB")
+	v.SetDefault("loan-assist.console-url", "https://myscorr.com/app/assist/review")
 
 	v.SetDefault("registration.pan-image-dir", "./data/pan-images")
 	v.SetDefault("registration.otp.length", 4)
@@ -1139,6 +1167,7 @@ func allKeys() []string {
 		"statement.digitap.acceptance-policy", "statement.digitap.statement-months",
 		"statement.digitap.multi-account", "statement.digitap.daily-limit",
 		"demo.enabled",
+		"loan-assist.notify-emails", "loan-assist.console-url", "loan-assist.max-file-size",
 	}
 }
 

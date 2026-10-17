@@ -28,6 +28,8 @@ func NewCouponHandler(svc *service.CouponService) *CouponHandler {
 type createCouponReq struct {
 	Code            string  `json:"code"            example:"SAVE20"`
 	DiscountPercent float64 `json:"discountPercent" example:"20"`
+	// DiscountFlat is a fixed rupee amount off instead; send one or the other.
+	DiscountFlat    float64 `json:"discountFlat" example:"2000"`
 	ProductCode     *string `json:"productCode"     example:"CREDIT_ANALYSIS"`
 	MaxRedemptions  *int    `json:"maxRedemptions"  example:"100"`
 	PerAccountLimit *int    `json:"perAccountLimit" example:"1"`
@@ -38,7 +40,7 @@ type createCouponReq struct {
 // CreateCoupon godoc
 //
 // @Summary      Issue a coupon code
-// @Description  Creates a percentage-discount coupon owned by the calling account. Requires the 'coupon:create' permission, held by agents and admins. Omit productCode to have it apply to every product; omit maxRedemptions for unlimited use. The discount is applied server-side at checkout — clients never send prices.
+// @Description  Creates a discount coupon owned by the calling account: discountPercent (a percentage) or discountFlat (a fixed rupee amount), not both. A flat coupon worth more than a product's price is refused for that product. Requires the 'coupon:create' permission, held by agents and admins. Omit productCode to have it apply to every product; omit maxRedemptions for unlimited use. The discount is applied server-side at checkout — clients never send prices.
 // @Tags         coupons
 // @Accept       json
 // @Produce      json
@@ -76,6 +78,7 @@ func (h *CouponHandler) CreateCoupon(c *fiber.Ctx) error {
 	coupon, err := h.svc.Create(c.Context(), accountID, service.NewCouponInput{
 		Code:            req.Code,
 		DiscountPercent: req.DiscountPercent,
+		DiscountFlat:    req.DiscountFlat,
 		ProductCode:     req.ProductCode,
 		MaxRedemptions:  req.MaxRedemptions,
 		PerAccountLimit: req.PerAccountLimit,
@@ -158,6 +161,9 @@ func (h *CouponHandler) RevokeCoupon(c *fiber.Ctx) error {
 //	validUntil:     "" -> never expires
 type updateCouponReq struct {
 	DiscountPercent *float64 `json:"discountPercent" example:"25"`
+	// DiscountFlat switches the coupon to a flat rupee amount; DiscountPercent
+	// switches it back. Send at most one.
+	DiscountFlat    *float64 `json:"discountFlat" example:"2000"`
 	ProductCode     *string  `json:"productCode"     example:"CREDIT_ANALYSIS"`
 	MaxRedemptions  *int     `json:"maxRedemptions"  example:"100"`
 	PerAccountLimit *int     `json:"perAccountLimit" example:"1"`
@@ -195,6 +201,7 @@ func (h *CouponHandler) UpdateCoupon(c *fiber.Ctx) error {
 
 	edit := repository.CouponEdit{
 		DiscountPercent: req.DiscountPercent,
+		DiscountFlat:    req.DiscountFlat,
 		PerAccountLimit: req.PerAccountLimit,
 		Revoked:         req.Revoked,
 	}

@@ -21,7 +21,7 @@ func NewCouponRepo(pool *pgxpool.Pool) *CouponRepo { return &CouponRepo{pool: po
 // claim a coupon atomically without importing pgxpool.
 func (r *CouponRepo) BeginTx(ctx context.Context) (pgx.Tx, error) { return r.pool.Begin(ctx) }
 
-const couponCols = `id, kind, code, created_by, discount_percent, product_code,
+const couponCols = `id, kind, code, created_by, discount_percent, discount_flat, product_code,
     max_redemptions, redemption_count, per_account_limit,
     valid_from, valid_until, revoked_at, created_at, updated_at`
 
@@ -29,11 +29,11 @@ func (r *CouponRepo) Create(ctx context.Context, c *models.Coupon) error {
 	err := pgxscan.Get(ctx, r.pool, c,
 		`INSERT INTO coupons
 		     (kind, code, created_by, discount_percent, product_code,
-		      max_redemptions, per_account_limit, valid_from, valid_until)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		      max_redemptions, per_account_limit, valid_from, valid_until, discount_flat)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		 RETURNING `+couponCols,
 		c.Kind, c.Code, c.CreatedBy, c.DiscountPercent, c.ProductCode,
-		c.MaxRedemptions, c.PerAccountLimit, c.ValidFrom, c.ValidUntil)
+		c.MaxRedemptions, c.PerAccountLimit, c.ValidFrom, c.ValidUntil, c.DiscountFlat)
 	return classifyPgErr(err)
 }
 
@@ -120,6 +120,9 @@ func (r *CouponRepo) Revoke(ctx context.Context, code string, onlyCreator int64)
 // so the audit trail records when it first stopped working.
 type CouponEdit struct {
 	DiscountPercent *float64
+	// DiscountFlat switches the coupon to a flat amount (and zeroes the
+	// percentage); DiscountPercent does the reverse. Never both.
+	DiscountFlat *float64
 
 	ProductCode      *string
 	ClearProductCode bool
@@ -137,7 +140,7 @@ type CouponEdit struct {
 
 // IsEmpty reports whether the edit would change nothing.
 func (e CouponEdit) IsEmpty() bool {
-	return e.DiscountPercent == nil &&
+	return e.DiscountPercent == nil && e.DiscountFlat == nil &&
 		e.ProductCode == nil && !e.ClearProductCode &&
 		e.MaxRedemptions == nil && !e.ClearMaxRedemptions &&
 		e.PerAccountLimit == nil &&
@@ -159,7 +162,10 @@ func (r *CouponRepo) Update(
 	var c models.Coupon
 	err := pgxscan.Get(ctx, r.pool, &c,
 		`UPDATE coupons SET
-		     discount_percent  = COALESCE($2, discount_percent),
+		     discount_percent  = CASE WHEN $12::numeric IS NOT NULL THEN 0
+		                              ELSE COALESCE($2, discount_percent) END,
+		     discount_flat     = CASE WHEN $2::numeric IS NOT NULL THEN 0
+		                              ELSE COALESCE($12, discount_flat) END,
 		     product_code      = CASE WHEN $3::bool THEN NULL
 		                              ELSE COALESCE($4, product_code) END,
 		     max_redemptions   = CASE WHEN $5::bool THEN NULL
@@ -181,7 +187,7 @@ func (r *CouponRepo) Update(
 		e.PerAccountLimit,
 		e.ClearValidUntil, e.ValidUntil,
 		e.Revoked,
-		onlyCreator)
+		onlyCreator, e.DiscountFlat)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"credit-report-service/internal/push"
 	"credit-report-service/internal/service"
 )
 
@@ -17,6 +18,50 @@ type invoiceWiring struct {
 	renderer  *fakeRenderer
 	store     *memStore
 	mailer    *recordingMailer
+	// Loan Assist rides the same wiring struct: its own bucket (so its
+	// document count is not mixed with invoice PDFs) and team mailer.
+	loanStore *memStore
+	loanMail  *teamMailer
+	loanPush  *recordingPusher
+}
+
+// recordingPusher keeps every customer notification instead of sending it.
+type recordingPusher struct {
+	mu   sync.Mutex
+	sent []push.Notification
+	to   []int64
+}
+
+func (p *recordingPusher) NotifyAccount(_ context.Context, accountID int64, n push.Notification) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sent = append(p.sent, n)
+	p.to = append(p.to, accountID)
+}
+
+func (p *recordingPusher) all() []push.Notification {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]push.Notification(nil), p.sent...)
+}
+
+// teamMailer keeps every Loan Assist team mail instead of sending it.
+type teamMailer struct {
+	mu   sync.Mutex
+	sent []service.LoanAssistTeamMail
+}
+
+func (m *teamMailer) SendLoanAssistRequest(in service.LoanAssistTeamMail) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sent = append(m.sent, in)
+	return nil
+}
+
+func (m *teamMailer) all() []service.LoanAssistTeamMail {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]service.LoanAssistTeamMail(nil), m.sent...)
 }
 
 // fakeRenderer stands in for the Chromium sidecar. It keeps the HTML it was
@@ -70,6 +115,26 @@ func (s *memStore) UploadAs(_ context.Context, key, _, _ string, body []byte) (s
 	uri := "s3://test-bucket/" + key
 	s.objects[uri] = body
 	return uri, nil
+}
+
+func (s *memStore) Delete(_ context.Context, uri string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.objects, uri)
+	return nil
+}
+
+func (s *memStore) has(uri string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.objects[uri]
+	return ok
+}
+
+func (s *memStore) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.objects)
 }
 
 func (s *memStore) PresignGet(_ context.Context, uri string) (string, time.Duration, error) {

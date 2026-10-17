@@ -20,6 +20,7 @@ import (
 	"credit-report-service/internal/db"
 	"credit-report-service/internal/digitap"
 	"credit-report-service/internal/handler"
+	"credit-report-service/internal/models"
 	"credit-report-service/internal/payments"
 	"credit-report-service/internal/push"
 	"credit-report-service/internal/render"
@@ -365,6 +366,18 @@ func main() {
 		slog.Warn("invoice.gstin / invoice.sac are empty; live orders will NOT be invoiced " +
 			"(sandbox orders get SPECIMEN invoices)")
 	}
+	// Loan Assist: documents in the same private bucket as the PAN card, sold
+	// through the ordinary order flow, and handed to the team by mail when the
+	// order is paid (the fulfilment hook below).
+	loanAssistSvc := service.NewLoanAssistService(repository.NewLoanAssistRepo(pool), accountRepo,
+		orderSvc, pdfStore, mailSvc, cfg.LoanAssist.Recipients(), cfg.LoanAssist.ConsoleURL)
+	orderSvc.SetFulfilment(models.ProductLoanAssist, loanAssistSvc.OnPaid)
+	loanAssistSvc.SetPushSender(pushSender) // documents asked for again, status changes
+	if len(cfg.LoanAssist.Recipients()) == 0 {
+		slog.Warn("loan-assist.notify-emails is empty; paid Loan Assist requests will be logged, " +
+			"and nobody on the team will be mailed")
+	}
+
 	invoiceDeliverer := service.NewInvoiceDeliverer(invoiceSvc, time.Minute)
 	invoiceDeliverer.Start(rootCtx)
 
@@ -501,6 +514,7 @@ func main() {
 			repository.NewCreditAnalyticsRepo(pool), cfg.BusinessLoans.OfferURL,
 			cfg.BusinessLoans.OpenOfferURL)),
 		handler.NewAdminAudienceHandler(service.NewAudienceService(repository.NewAudienceRepo(pool))),
+		handler.NewLoanAssistHandler(loanAssistSvc, serverMaxBytes(cfg.LoanAssist.MaxFileSize)),
 		tokenSvc, accountRepo)
 
 	go func() {

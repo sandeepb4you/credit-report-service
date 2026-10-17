@@ -40,12 +40,12 @@ func TestHasPermission_InheritsUpward(t *testing.T) {
 		{RoleUser, PermCouponCreate, false},
 		{RoleUser, PermKycVerify, false},
 
-		{RoleAgent, PermCouponCreate, true},
-		{RoleAgent, PermCouponManage, true},
-		{RoleAgent, PermKycVerify, false},      // agents are not admins
-		{RoleAgent, PermAccountSetRole, false}, // an agent must not mint more agents
-		{RoleAgent, PermAccountReset, false},   // nor wipe somebody's paid reports
-		{RoleAgent, PermCouponAdmin, false},    // only their own coupons
+		{RolePartner, PermCouponCreate, true},
+		{RolePartner, PermCouponManage, true},
+		{RolePartner, PermKycVerify, false},      // agents are not admins
+		{RolePartner, PermAccountSetRole, false}, // an agent must not mint more agents
+		{RolePartner, PermAccountReset, false},   // nor wipe somebody's paid reports
+		{RolePartner, PermCouponAdmin, false},    // only their own coupons
 
 		{RoleAdmin, PermCouponCreate, true}, // inherited from agent
 		{RoleAdmin, PermCouponManage, true},
@@ -90,19 +90,19 @@ func TestHasPermission_FailsClosed(t *testing.T) {
 	}
 }
 
-func TestPermissionsFor_AdminIsSupersetOfAgent(t *testing.T) {
-	agent := PermissionsFor(RoleAgent)
+func TestPermissionsFor_AdminIsSupersetOfPartner(t *testing.T) {
+	agent := PermissionsFor(RolePartner)
 	admin := PermissionsFor(RoleAdmin)
 	if len(agent) == 0 {
-		t.Fatal("agent should have permissions")
+		t.Fatal("partner should have permissions")
 	}
 	for p := range agent {
 		if !admin[p] {
-			t.Errorf("admin is missing agent permission %q", p)
+			t.Errorf("admin is missing partner permission %q", p)
 		}
 	}
 	if len(admin) <= len(agent) {
-		t.Error("admin should carry strictly more permissions than agent")
+		t.Error("admin should carry strictly more permissions than partner")
 	}
 }
 
@@ -132,5 +132,19 @@ func TestNormalizeRole(t *testing.T) {
 	}
 	if got := NormalizeRole(RoleAdmin); got != RoleAdmin {
 		t.Errorf("NormalizeRole(%q) = %q, want unchanged", RoleAdmin, got)
+	}
+}
+
+// Tokens issued before migration 0039 say "agent"; they must keep the
+// partner's permissions until they expire, and never more.
+func TestLegacyAgentRoleReadsAsPartner(t *testing.T) {
+	if NormalizeRole("agent") != RolePartner {
+		t.Fatalf("NormalizeRole(agent) = %q, want %q", NormalizeRole("agent"), RolePartner)
+	}
+	if !HasPermission("agent", PermCouponCreate) || !HasPermission("agent", PermLoanAssistReview) {
+		t.Error("a legacy agent token should carry the partner's permissions")
+	}
+	if HasPermission(RolePartner, PermLoanAssistManage) {
+		t.Error("a partner must not manage every Loan Assist application")
 	}
 }

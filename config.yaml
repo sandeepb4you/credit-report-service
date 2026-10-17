@@ -92,7 +92,10 @@ auth:
 
 multipart:
   max-file-size: 5MB
-  max-request-size: 10MB
+  # 12MB: a Loan Assist document may be 10MB (loan-assist.max-file-size), and
+  # the multipart envelope around it needs room. nginx's client_max_body_size
+  # (deploy/nginx/api.myscorr.com.conf) must match.
+  max-request-size: 12MB
 
 razorpay:
   mode: sandbox            # sandbox | production
@@ -225,6 +228,16 @@ s3:
   # Short on purpose: the link goes straight to a browser that follows it at
   # once, so a longer window only widens the period in which a leaked URL works.
   presign-ttl: 10m
+
+loan-assist:
+  # Who hears about each paid Loan Assist request (comma-separated): the
+  # offline executive and the online support team. Empty -> nobody is mailed,
+  # logged at boot and per request. Override via env: LOAN_ASSIST_NOTIFY_EMAILS.
+  notify-emails: ""
+  # The partners' review (Assist → Review applications), linked from that mail.
+  console-url: "https://myscorr.com/app/assist/review"
+  # Per-document cap; the app's copy promises "up to 10 MB".
+  max-file-size: 10MB
 
 business-loans:
   # The lender's application page behind "View offer" on the business-loan list:

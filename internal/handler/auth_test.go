@@ -537,12 +537,12 @@ func TestRequirePermission(t *testing.T) {
 		perm string
 		want int
 	}{
-		{"agent may create coupons", models.RoleAgent, models.PermCouponCreate, 200},
+		{"partner may create coupons", models.RolePartner, models.PermCouponCreate, 200},
 		{"admin inherits coupon create", models.RoleAdmin, models.PermCouponCreate, 200},
 		{"user may not create coupons", models.RoleUser, models.PermCouponCreate, 403},
 		{"legacy empty role may not", "", models.PermCouponCreate, 403},
-		{"agent may not verify kyc", models.RoleAgent, models.PermKycVerify, 403},
-		{"agent may not grant roles", models.RoleAgent, models.PermAccountSetRole, 403},
+		{"partner may not verify kyc", models.RolePartner, models.PermKycVerify, 403},
+		{"partner may not grant roles", models.RolePartner, models.PermAccountSetRole, 403},
 		{"admin may grant roles", models.RoleAdmin, models.PermAccountSetRole, 200},
 		{"unknown role denied", "superuser", models.PermCouponCreate, 403},
 	}

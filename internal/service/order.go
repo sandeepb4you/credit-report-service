@@ -57,6 +57,21 @@ type OrderService struct {
 	// watching checkout, but a webhook can settle an order the user already
 	// walked away from, and this is the only channel that reaches them then.
 	pusher *push.Sender
+	// onPaid holds per-product fulfilment beyond what every order gets (the
+	// invoice, the referral credit, the push): Loan Assist hands the paid
+	// request to its team. Keyed by product code; see SetFulfilment.
+	onPaid map[string]func(ctx context.Context, order *models.Order)
+}
+
+// SetFulfilment registers what a paid order of one product grants beyond the
+// common fulfilment. Called once at wiring; fn runs on the first PAID
+// transition (and again on the GET /orders self-heal, so it must be
+// idempotent) and must not fail the payment it is told about.
+func (s *OrderService) SetFulfilment(productCode string, fn func(ctx context.Context, order *models.Order)) {
+	if s.onPaid == nil {
+		s.onPaid = map[string]func(context.Context, *models.Order){}
+	}
+	s.onPaid[productCode] = fn
 }
 
 // invoiceIssuer is what OrderService needs from InvoiceService.
@@ -285,16 +300,55 @@ func (s *OrderService) UpdatePlan(
 func (s *OrderService) CreateOrder(
 	ctx context.Context, accountID int64, productCode, couponCode, testKey string,
 ) (*PurchaseResult, error) {
-	gateway, err := s.gatewayForNewOrder(testKey)
-	if err != nil {
-		return nil, err
-	}
-
 	product, err := s.orders.FindProduct(ctx, productCode)
 	if errors.Is(err, repository.ErrNotFound) {
 		return nil, apperr.NewValidationWith("Validation failed",
 			map[string]string{"productCode": "unknown product"})
 	}
+	if err != nil {
+		return nil, err
+	}
+	// A service is bought through its own flow, which checks what it needs
+	// first (Loan Assist: every document and the consent). Selling it here
+	// would take money for a request with nothing in it.
+	if product.IsService() {
+		return nil, apperr.NewConflict("This product is bought from its own screen in the app")
+	}
+	return s.createOrder(ctx, accountID, product, couponCode, testKey)
+}
+
+// CreateServiceOrder opens an order for a SERVICE product on behalf of the
+// flow that sells it, after that flow has checked its own preconditions.
+func (s *OrderService) CreateServiceOrder(
+	ctx context.Context, accountID int64, productCode, couponCode, testKey string,
+) (*PurchaseResult, error) {
+	product, err := s.orders.FindProduct(ctx, productCode)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, apperr.NewServiceUnavailable("This service is not available right now")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !product.IsService() {
+		return nil, fmt.Errorf("create service order: %s is not a service product", productCode)
+	}
+	return s.createOrder(ctx, accountID, product, couponCode, testKey)
+}
+
+// FindService returns a SERVICE product's catalog row (price, name), active
+// or not; the caller decides what an inactive one means.
+func (s *OrderService) FindService(ctx context.Context, productCode string) (*models.Product, error) {
+	p, err := s.orders.FindProduct(ctx, productCode)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, apperr.NewServiceUnavailable("This service is not available right now")
+	}
+	return p, err
+}
+
+func (s *OrderService) createOrder(
+	ctx context.Context, accountID int64, product *models.Product, couponCode, testKey string,
+) (*PurchaseResult, error) {
+	gateway, err := s.gatewayForNewOrder(testKey)
 	if err != nil {
 		return nil, err
 	}
@@ -459,6 +513,11 @@ func (s *OrderService) GetOrder(ctx context.Context, accountID int64, orderUID s
 		}
 	} else if order.Status == models.OrderPaid {
 		s.ensurePlanFulfilled(ctx, order)
+		// Same self-heal for a product's own fulfilment: it is idempotent by
+		// contract, and the app polls this right after checkout.
+		if fn := s.onPaid[order.ProductCode]; fn != nil {
+			fn(ctx, order)
+		}
 	}
 	// The payment-success screen reads the invoice number off this response,
 	// so it is attached here too, not only on the list.
@@ -532,7 +591,8 @@ func (s *OrderService) ListOrders(ctx context.Context, accountID int64) ([]model
 // (a product the catalog no longer lists, or the plan-run query failed): the
 // app then draws no chip, rather than a wrong one.
 func entitlementOf(o *models.Order, p *models.Product, remaining map[int64]int) string {
-	if p == nil {
+	if p == nil || p.IsService() {
+		// A service grants no score check, so neither chip means anything.
 		return ""
 	}
 	if p.IsPlan() {
@@ -811,6 +871,10 @@ func (s *OrderService) fulfillOrder(ctx context.Context, order *models.Order, pd
 				order.Amount, product.Name),
 			Data: map[string]string{"route": "OrderHistory"},
 		})
+	}
+
+	if fn := s.onPaid[order.ProductCode]; fn != nil {
+		fn(ctx, order)
 	}
 
 	if !product.IsPlan() {

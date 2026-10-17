@@ -406,6 +406,8 @@ func (s *AuthService) UpdateProfile(
 // gated on models.PermAccountSetRole — the service only validates that the
 // role exists, so an unknown value can never be written to the column.
 func (s *AuthService) SetRole(ctx context.Context, accountID int64, role string) (*models.Account, error) {
+	// "agent" is accepted from an older console and stored as its new name.
+	role = models.NormalizeRole(strings.TrimSpace(role))
 	if _, ok := models.RoleRank(role); !ok {
 		return nil, apperr.NewValidationWith("Validation failed",
 			map[string]string{"role": "unknown role " + strconv.Quote(role)})

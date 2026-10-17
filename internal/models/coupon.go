@@ -49,6 +49,10 @@ type Coupon struct {
 	// CreatedBy is the issuing account — the agent this redemption attributes to.
 	CreatedBy       int64   `json:"createdBy"       db:"created_by"`
 	DiscountPercent float64 `json:"discountPercent" db:"discount_percent"`
+	// DiscountFlat is a fixed rupee amount off instead ("₹2,000 off"). A
+	// discount coupon has exactly one of the two (coupons_discount_shape):
+	// a percentage with DiscountFlat 0, or DiscountFlat with percentage 0.
+	DiscountFlat float64 `json:"discountFlat" db:"discount_flat"`
 	// ProductCode nil means the coupon applies to every product.
 	ProductCode *string `json:"productCode"     db:"product_code"`
 
@@ -76,6 +80,18 @@ type CouponRedemption struct {
 	ReleasedAt     *time.Time `json:"releasedAt"     db:"released_at"`
 }
 
+// IsFlat reports whether the coupon takes a fixed amount off rather than a
+// percentage.
+func (c *Coupon) IsFlat() bool { return c.DiscountFlat > 0 }
+
+// LeavesNothingToPay reports whether the coupon would take the whole of
+// amount. A flat coupon worth more than the price is refused rather than
+// clamped: a ₹2,000-off code meant for Loan Assist would otherwise make a ₹299
+// check free, and a zero-rupee order is one the gateway will not take anyway.
+func (c *Coupon) LeavesNothingToPay(amount float64) bool {
+	return c.IsFlat() && c.DiscountFlat >= amount
+}
+
 // IsReferral reports whether this is a signup-attribution code rather than a
 // checkout discount.
 func (c *Coupon) IsReferral() bool { return c.Kind == CouponReferral }
@@ -83,11 +99,18 @@ func (c *Coupon) IsReferral() bool { return c.Kind == CouponReferral }
 // AppliesTo reports whether the coupon can be used for a product. A referral
 // code is never spendable at checkout; a discount coupon with no product scope
 // applies to all of them.
-func (c *Coupon) AppliesTo(productCode string) bool {
-	if c.IsReferral() {
+//
+// "All products" means the score catalog. A service (Loan Assist) is priced
+// an order of magnitude above a score check, so a coupon written for checks
+// must not quietly discount it — a service takes only coupons scoped to it.
+func (c *Coupon) AppliesTo(p *Product) bool {
+	if c.IsReferral() || p == nil {
 		return false
 	}
-	return c.ProductCode == nil || *c.ProductCode == productCode
+	if c.ProductCode == nil {
+		return !p.IsService()
+	}
+	return *c.ProductCode == p.Code
 }
 
 // ApplyTo computes the discount and the resulting payable amount for a price.
@@ -101,6 +124,13 @@ func (c *Coupon) AppliesTo(productCode string) bool {
 func (c *Coupon) ApplyTo(amount float64) (discount, payable float64) {
 	if amount <= 0 {
 		return 0, 0
+	}
+	if c.DiscountFlat > 0 {
+		discount = math.Round(c.DiscountFlat*100) / 100
+		if discount > amount {
+			discount = amount
+		}
+		return discount, math.Round((amount-discount)*100) / 100
 	}
 	// amount*percent/100 rounded to 2dp: scale by 100 to round in paise, which
 	// is the same as rounding amount*percent to the nearest whole unit.

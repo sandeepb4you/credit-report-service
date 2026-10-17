@@ -330,6 +330,16 @@ func buildApp(cfg *config.Config, pool *pgxpool.Pool, pay *paymentSetup) (*fiber
 	orderH := handler.NewOrderHandler(orderSvc)
 	orderH.SetInvoices(inv.svc)
 
+	// Loan Assist, wired as in main.go over an in-memory bucket and a
+	// recording team mailer.
+	inv.loanStore, inv.loanMail = newMemStore(), &teamMailer{}
+	loanAssistSvc := service.NewLoanAssistService(repository.NewLoanAssistRepo(pool), accountRepo,
+		orderSvc, inv.loanStore, inv.loanMail, []string{"team@myscorr.com"},
+		"https://myscorr.com/app/assist/review")
+	orderSvc.SetFulfilment(models.ProductLoanAssist, loanAssistSvc.OnPaid)
+	inv.loanPush = &recordingPusher{}
+	loanAssistSvc.SetPushSender(inv.loanPush)
+
 	return server.New(
 		cfg,
 		handler.NewHealthHandler(),
@@ -369,6 +379,7 @@ func buildApp(cfg *config.Config, pool *pgxpool.Pool, pay *paymentSetup) (*fiber
 			repository.NewCreditAnalyticsRepo(pool), "https://lender.example/apply",
 			"https://open-lender.example/apply")),
 		handler.NewAdminAudienceHandler(service.NewAudienceService(repository.NewAudienceRepo(pool))),
+		handler.NewLoanAssistHandler(loanAssistSvc, 10_000_000),
 		tokenSvc,
 		accountRepo,
 	), inv
@@ -688,7 +699,6 @@ func (h *harness) insertReport(
 	}
 	return id
 }
-
 
 // newStubPushHandler builds the push handler over the no-credentials stub
 // sender (logs instead of calling FCM).

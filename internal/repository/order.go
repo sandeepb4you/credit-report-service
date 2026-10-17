@@ -29,20 +29,25 @@ func (r *OrderRepo) BeginTx(ctx context.Context) (pgx.Tx, error) { return r.pool
 // from it the moment a coupon was revoked or a new one issued.
 const productCols = `p.code, p.name, p.amount, p.description, p.checks_included, p.interval_months,
     p.validity_days, p.currency, p.active, p.created_at, p.updated_at,
-    p.badge, p.tagline, p.sort_order,
+    p.badge, p.tagline, p.sort_order, p.kind,
     EXISTS (
         SELECT 1 FROM coupons c
          WHERE c.kind = 'discount'
            AND c.revoked_at IS NULL
            AND (c.valid_until IS NULL OR c.valid_until > now())
            AND (c.max_redemptions IS NULL OR c.redemption_count < c.max_redemptions)
-           AND (c.product_code IS NULL OR c.product_code = p.code)
+           AND ((c.product_code IS NULL AND p.kind = 'SCORE') OR c.product_code = p.code)
     ) AS coupon_available`
 
+// ListActiveProducts is the score catalog the Plans screen draws: SERVICE
+// products (Loan Assist) are sold through their own flow and never appear
+// here — an app version that predates them would otherwise offer them as a
+// plan.
 func (r *OrderRepo) ListActiveProducts(ctx context.Context) ([]models.Product, error) {
 	ps := []models.Product{}
 	err := pgxscan.Select(ctx, r.pool, &ps,
-		`SELECT `+productCols+` FROM products p WHERE p.active ORDER BY p.sort_order, p.code`)
+		`SELECT `+productCols+` FROM products p WHERE p.active AND p.kind = 'SCORE'
+		  ORDER BY p.sort_order, p.code`)
 	return ps, err
 }
 

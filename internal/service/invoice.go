@@ -330,6 +330,11 @@ func (s *InvoiceService) planDetails(
 		}
 	}
 
+	if product.IsService() {
+		// No checks to count and no schedule: the checklist says what it is.
+		d.PriceLabel = inr(listPaise) + " one-time"
+		return d
+	}
 	if !product.IsPlan() {
 		d.PriceLabel = inr(listPaise) + " one-time"
 		checks := product.ChecksIncluded

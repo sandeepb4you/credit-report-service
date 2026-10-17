@@ -64,15 +64,28 @@ func TestCoupon_ApplyTo_SumsBackToOriginal(t *testing.T) {
 func TestCoupon_AppliesTo(t *testing.T) {
 	credit := "CREDIT_ANALYSIS"
 	scoped := &Coupon{ProductCode: &credit}
-	if !scoped.AppliesTo(credit) {
+	if !scoped.AppliesTo(&Product{Code: credit}) {
 		t.Error("scoped coupon should apply to its own product")
 	}
-	if scoped.AppliesTo("BANK_STATEMENT_ANALYSIS") {
+	if scoped.AppliesTo(&Product{Code: "BANK_STATEMENT_ANALYSIS"}) {
 		t.Error("scoped coupon must not apply to another product")
 	}
 	unscoped := &Coupon{}
-	if !unscoped.AppliesTo("ANYTHING") {
-		t.Error("unscoped coupon should apply to every product")
+	if !unscoped.AppliesTo(&Product{Code: "ANYTHING", Kind: ProductKindScore}) {
+		t.Error("unscoped coupon should apply to every score product")
+	}
+}
+
+// A coupon written for score checks must not discount a service ten times the
+// price; a service takes only coupons scoped to it.
+func TestCoupon_UnscopedCouponSkipsServices(t *testing.T) {
+	assist := &Product{Code: ProductLoanAssist, Kind: ProductKindService}
+	if (&Coupon{}).AppliesTo(assist) {
+		t.Error("an unscoped coupon must not apply to a service product")
+	}
+	code := ProductLoanAssist
+	if !(&Coupon{ProductCode: &code}).AppliesTo(assist) {
+		t.Error("a coupon scoped to the service should apply to it")
 	}
 }
 
@@ -81,7 +94,7 @@ func TestCoupon_AppliesTo(t *testing.T) {
 func TestCoupon_ReferralNeverAppliesAtCheckout(t *testing.T) {
 	ref := &Coupon{Kind: CouponReferral}
 	for _, p := range []string{"CREDIT_ANALYSIS", "BANK_STATEMENT_ANALYSIS", ""} {
-		if ref.AppliesTo(p) {
+		if ref.AppliesTo(&Product{Code: p}) {
 			t.Errorf("referral code must not apply to product %q", p)
 		}
 	}
@@ -91,7 +104,7 @@ func TestCoupon_ReferralNeverAppliesAtCheckout(t *testing.T) {
 
 	// The discount kind is unaffected.
 	disc := &Coupon{Kind: CouponDiscount}
-	if !disc.AppliesTo("CREDIT_ANALYSIS") {
+	if !disc.AppliesTo(&Product{Code: "CREDIT_ANALYSIS"}) {
 		t.Error("unscoped discount coupon should still apply")
 	}
 	if disc.IsReferral() {

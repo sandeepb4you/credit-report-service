@@ -1,17 +1,24 @@
 package models
 
 // Account roles. 'admin' is assigned via the auth.admin-emails config
-// allowlist (auto-promoted at verify/login); 'agent' is granted by an admin.
+// allowlist (auto-promoted at verify/login); 'partner' is granted by an admin.
 // The role rides in the JWT as a claim.
 const (
-	RoleUser  = "user"
-	RoleAgent = "agent" // referral partner: can issue coupon codes
-	RoleAdmin = "admin"
+	RoleUser = "user"
+	// RolePartner issues coupon codes and works Loan Assist applications (the
+	// offline executive and the online support team). It was called 'agent'
+	// until migration 0039; see NormalizeRole for tokens issued before it.
+	RolePartner = "partner"
+	RoleAdmin   = "admin"
+
+	// roleAgentLegacy is the pre-0039 name of RolePartner, still carried by
+	// access tokens issued before the rename until they expire.
+	roleAgentLegacy = "agent"
 )
 
 // roleRank orders roles from least to most privileged. A role satisfies a
 // requirement when its rank is >= the required rank, so gating a route on
-// RoleUser also admits agents and admins.
+// RoleUser also admits partners and admins.
 //
 // Ranks are spaced by 10 so an intermediate role can be slotted in without
 // renumbering the existing ones. A role that is not in this map is unknown and
@@ -23,9 +30,9 @@ const (
 // drop the rank comparison and match on permission sets alone, which is
 // already how routes are gated — see PermissionsFor.
 var roleRank = map[string]int{
-	RoleUser:  10,
-	RoleAgent: 50,
-	RoleAdmin: 100,
+	RoleUser:    10,
+	RolePartner: 50,
+	RoleAdmin:   100,
 }
 
 // Permissions are the capabilities routes gate on. Gating on a permission
@@ -97,15 +104,30 @@ const (
 	PermAudienceExport = "audience:export"
 )
 
+// Loan Assist. Applications carry Aadhaar copies, which UIDAI expects to be
+// open only to the team assigned to them, so access is two permissions:
+//
+//   - loan-assist:review (partners): see the applications assigned to you and
+//     the unassigned ones, take one, review its documents (accept, or ask the
+//     customer for one again), move it through its stages. Documents open only
+//     on applications assigned to you.
+//   - loan-assist:manage (admins): every application, every document, and
+//     assigning any application to any partner.
+const (
+	PermLoanAssistReview = "loan-assist:review"
+	PermLoanAssistManage = "loan-assist:manage"
+)
+
 // rolePerms lists the permissions each role adds on top of the role beneath
 // it. Effective permissions are the union across every role at or below your
 // rank — see PermissionsFor — so an entry here is written once and inherited
 // upward rather than repeated for admin.
 var rolePerms = map[string][]string{
 	RoleUser: {},
-	RoleAgent: {
+	RolePartner: {
 		PermCouponCreate,
 		PermCouponManage,
+		PermLoanAssistReview,
 	},
 	RoleAdmin: {
 		PermKycVerify,
@@ -115,9 +137,9 @@ var rolePerms = map[string][]string{
 		PermLoanProviderManage,
 		PermBankOfferingManage,
 		PermPlanManage,
-		// Deliberately not granted to agents: the report names every referred
-		// user, and an agent seeing their own recruits would still be reading
-		// other agents' rows out of the same query.
+		// Deliberately not granted to partners: the report names every referred
+		// user, and a partner seeing their own recruits would still be reading
+		// other partners' rows out of the same query.
 		PermReferralView,
 		PermWithdrawalReview,
 		PermReferralManage,
@@ -129,6 +151,7 @@ var rolePerms = map[string][]string{
 		PermNotificationSend,
 		PermDashboardManage,
 		PermAudienceExport,
+		PermLoanAssistManage,
 	},
 }
 
@@ -162,12 +185,16 @@ func HasPermission(role, perm string) bool {
 	return PermissionsFor(role)[perm]
 }
 
-// NormalizeRole maps the empty role to RoleUser. Tokens issued before the role
-// claim existed carry no role, and accounts default to 'user' in the DB, so
-// "" and "user" mean the same thing.
+// NormalizeRole maps the empty role to RoleUser and the legacy 'agent' to
+// RolePartner. Tokens issued before the role claim existed carry no role, and
+// accounts default to 'user' in the DB, so "" and "user" mean the same thing;
+// tokens issued before migration 0039 still say 'agent' until they expire.
 func NormalizeRole(role string) string {
-	if role == "" {
+	switch role {
+	case "":
 		return RoleUser
+	case roleAgentLegacy:
+		return RolePartner
 	}
 	return role
 }

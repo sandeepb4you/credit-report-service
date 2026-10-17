@@ -40,6 +40,8 @@ func NewCouponService(coupons *repository.CouponRepo, orders *repository.OrderRe
 type NewCouponInput struct {
 	Code            string
 	DiscountPercent float64
+	// DiscountFlat is a fixed rupee amount off instead; exactly one of the two.
+	DiscountFlat    float64
 	ProductCode     *string
 	MaxRedemptions  *int
 	PerAccountLimit *int
@@ -55,8 +57,10 @@ type Quote struct {
 	Currency        string  `json:"currency"`
 	OriginalAmount  float64 `json:"originalAmount"`
 	DiscountPercent float64 `json:"discountPercent"`
-	DiscountAmount  float64 `json:"discountAmount"`
-	PayableAmount   float64 `json:"payableAmount"`
+	// DiscountFlat is set (and DiscountPercent 0) for a flat-amount coupon.
+	DiscountFlat   float64 `json:"discountFlat"`
+	DiscountAmount float64 `json:"discountAmount"`
+	PayableAmount  float64 `json:"payableAmount"`
 }
 
 // Create issues a coupon owned by the calling account.
@@ -69,7 +73,16 @@ func (s *CouponService) Create(
 	}
 
 	details := map[string]string{}
-	if in.DiscountPercent <= 0 || in.DiscountPercent > 100 {
+	switch {
+	case in.DiscountFlat > 0 && in.DiscountPercent > 0:
+		details["discountFlat"] = "give either a percentage or a flat amount, not both"
+	case in.DiscountFlat > 0:
+		if in.DiscountFlat > maxFlatDiscount {
+			details["discountFlat"] = "a flat discount can be at most ₹1,00,000"
+		}
+	case in.DiscountFlat < 0:
+		details["discountFlat"] = "discountFlat must be positive"
+	case in.DiscountPercent <= 0 || in.DiscountPercent > 100:
 		details["discountPercent"] = "discountPercent must be greater than 0 and at most 100"
 	}
 	if in.MaxRedemptions != nil && *in.MaxRedemptions <= 0 {
@@ -114,6 +127,7 @@ func (s *CouponService) Create(
 		Code:            code,
 		CreatedBy:       creatorID,
 		DiscountPercent: in.DiscountPercent,
+		DiscountFlat:    in.DiscountFlat,
 		ProductCode:     productCode,
 		MaxRedemptions:  in.MaxRedemptions,
 		PerAccountLimit: perAccount,
@@ -127,7 +141,7 @@ func (s *CouponService) Create(
 		return nil, err
 	}
 	slog.Info("coupon created",
-		"code", c.Code, "created_by", creatorID, "percent", c.DiscountPercent)
+		"code", c.Code, "created_by", creatorID, "percent", c.DiscountPercent, "flat", c.DiscountFlat)
 	return c, nil
 }
 
@@ -218,9 +232,13 @@ func (s *CouponService) Update(
 	}
 
 	details := map[string]string{}
-	if edit.DiscountPercent != nil &&
+	if edit.DiscountPercent != nil && edit.DiscountFlat != nil {
+		details["discountFlat"] = "give either a percentage or a flat amount, not both"
+	} else if edit.DiscountPercent != nil &&
 		(*edit.DiscountPercent <= 0 || *edit.DiscountPercent > 100) {
 		details["discountPercent"] = "discountPercent must be greater than 0 and at most 100"
+	} else if edit.DiscountFlat != nil && (*edit.DiscountFlat <= 0 || *edit.DiscountFlat > maxFlatDiscount) {
+		details["discountFlat"] = "a flat discount must be more than ₹0 and at most ₹1,00,000"
 	}
 	if edit.PerAccountLimit != nil && *edit.PerAccountLimit <= 0 {
 		details["perAccountLimit"] = "perAccountLimit must be positive"
@@ -266,7 +284,7 @@ func (s *CouponService) Update(
 	}
 	slog.Info("coupon updated",
 		"code", updated.Code, "by_account", accountID,
-		"revoked", updated.RevokedAt != nil, "percent", updated.DiscountPercent)
+		"revoked", updated.RevokedAt != nil, "percent", updated.DiscountPercent, "flat", updated.DiscountFlat)
 	return updated, nil
 }
 
@@ -296,8 +314,11 @@ func (s *CouponService) Quote(ctx context.Context, code, productCode string) (*Q
 	}
 	// AppliesTo already rejects referral codes — they attribute signups, they
 	// are not spendable at checkout.
-	if !c.UsableAt(time.Now().UTC()) || c.Exhausted() || !c.AppliesTo(product.Code) {
+	if !c.UsableAt(time.Now().UTC()) || c.Exhausted() || !c.AppliesTo(product) {
 		return nil, couponRejected()
+	}
+	if c.LeavesNothingToPay(product.Amount) {
+		return nil, flatTooLarge()
 	}
 
 	discount, payable := c.ApplyTo(product.Amount)
@@ -311,6 +332,7 @@ func (s *CouponService) Quote(ctx context.Context, code, productCode string) (*Q
 		Currency:        product.Currency,
 		OriginalAmount:  product.Amount,
 		DiscountPercent: c.DiscountPercent,
+		DiscountFlat:    c.DiscountFlat,
 		DiscountAmount:  discount,
 		PayableAmount:   payable,
 	}, nil
@@ -339,9 +361,12 @@ func (s *CouponService) ClaimForOrder(
 	if err != nil {
 		return nil, 0, 0, err
 	}
-	if !c.AppliesTo(product.Code) {
+	if !c.AppliesTo(product) {
 		return nil, 0, 0, apperr.NewValidationWith("Validation failed",
 			map[string]string{"couponCode": "this coupon does not apply to that product"})
+	}
+	if c.LeavesNothingToPay(product.Amount) {
+		return nil, 0, 0, flatTooLarge()
 	}
 
 	used, err := s.coupons.CountAccountRedemptions(ctx, tx, c.ID, accountID)
@@ -503,6 +528,15 @@ func referralRejected() error {
 // couponRejected is the single answer for every reason a code cannot be used.
 // Distinguishing "no such code" from "expired" from "used up" would let a
 // stranger enumerate which codes exist and how healthy they are.
+// maxFlatDiscount bounds a flat coupon, in rupees: a typo of an extra zero on
+// ₹2,000 should be an error, not a ₹20,000 promise.
+const maxFlatDiscount = 1_00_000
+
+func flatTooLarge() error {
+	return apperr.NewValidationWith("Validation failed",
+		map[string]string{"couponCode": "this coupon is worth more than the price, so it can't be used here"})
+}
+
 func couponRejected() error {
 	return apperr.NewValidationWith("Validation failed",
 		map[string]string{"couponCode": "this coupon code is not valid"})

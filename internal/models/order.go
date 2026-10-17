@@ -24,6 +24,18 @@ const (
 	ProductUPIStatementAnalysis  = "UPI_STATEMENT_ANALYSIS"
 	ProductScorePlusQuarterly    = "SCORE_PLUS_QUARTERLY"
 	ProductScorePlusMonthly      = "SCORE_PLUS_MONTHLY"
+	// ProductLoanAssist is the paid profile check and expert connect. A
+	// SERVICE product: bought only through POST /loan-assist/submit, never
+	// listed on the Plans catalog.
+	ProductLoanAssist = "LOAN_ASSIST"
+)
+
+// Product kinds (products.kind). SCORE is the score catalog — checks and
+// plans, what GET /products lists and what an unscoped coupon discounts.
+// SERVICE is anything sold through its own flow (Loan Assist).
+const (
+	ProductKindScore   = "SCORE"
+	ProductKindService = "SERVICE"
 )
 
 // Product is the row model for the products table: the purchasable catalog.
@@ -65,6 +77,9 @@ type Product struct {
 	// experience than no box. Not a column; see repository.productCols.
 	CouponAvailable bool `json:"couponAvailable" db:"coupon_available"`
 
+	// Kind is ProductKindScore or ProductKindService (migration 0038).
+	Kind string `json:"kind" db:"kind"`
+
 	Currency  string    `json:"currency"  db:"currency"`
 	Active    bool      `json:"active"    db:"active"`
 	CreatedAt time.Time `json:"createdAt" db:"created_at"`
@@ -74,6 +89,11 @@ type Product struct {
 // IsPlan reports whether a purchase of this product is fulfilled as a batch of
 // scheduled score checks rather than a single order-as-entitlement.
 func (p *Product) IsPlan() bool { return p.IntervalMonths != nil && *p.IntervalMonths > 0 }
+
+// IsService reports whether this product is sold through its own flow rather
+// than the score catalog. Anything not explicitly SERVICE is a score product,
+// so a row read before migration 0038 keeps its meaning.
+func (p *Product) IsService() bool { return p.Kind == ProductKindService }
 
 // Order is the row model for the orders table: one purchase attempt. OrderUID
 // is our public identifier and the receipt sent to Razorpay; the serial id

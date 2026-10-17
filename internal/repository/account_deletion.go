@@ -335,6 +335,11 @@ func (r *AccountRepo) PurgeAccount(
 		`DELETE FROM prefill_lookups         WHERE account_id = $1`,
 		`DELETE FROM password_reset_tokens   WHERE account_id = $1`,
 		`DELETE FROM account_deletion_tokens WHERE account_id = $1`,
+		// Loan Assist applications carry the partners' notes about the customer; their
+		// documents (Aadhaar included) went with the documents delete above.
+		`DELETE FROM loan_assist_requests    WHERE account_id = $1`,
+		// A partner's card names them to customers.
+		`DELETE FROM assist_partner_profiles WHERE account_id = $1`,
 	} {
 		if _, err := tx.Exec(ctx, stmt, accountID); err != nil {
 			return nil, err

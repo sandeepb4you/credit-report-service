@@ -61,6 +61,7 @@ func New(
 	dashboards *handler.AdminDashboardHandler,
 	businessLoans *handler.BusinessLoanHandler,
 	audiences *handler.AdminAudienceHandler,
+	loanAssist *handler.LoanAssistHandler,
 	tokens *service.TokenService,
 	// epochs backs the stale-token check on the permission gates (see
 	// middleware.checkEpoch) and the "View as user" liveness check.
@@ -375,6 +376,39 @@ func New(
 	api.Get("/loan-switch/opportunities", requireAuth, loans.GetOpportunities)
 	// The business-loan lender list: every signed-in account, paid or not.
 	api.Get("/loans/business", requireAuth, businessLoans.List)
+
+	// Loan Assist (design/myscorr-loan-assist-customer-screens.html): the
+	// customer's applications, their documents, and the submit that opens the
+	// order.
+	la := api.Group("/loan-assist", requireAuth)
+	la.Get("/", loanAssist.State)
+	la.Put("/draft", loanAssist.UpdateDraft)
+	la.Post("/draft/reuse", loanAssist.ReuseSaved)
+	la.Post("/documents", loanAssist.UploadDocument)
+	la.Delete("/documents/:slot", loanAssist.RemoveDocument)
+	la.Post("/submit", loanAssist.Submit)
+	la.Get("/applications/:code", loanAssist.Application)
+	la.Post("/applications/:code/documents", loanAssist.Resubmit)
+
+	// The partners' side: review, ask for documents again, move applications
+	// on, assign them. Gated on loan-assist:review (partners, and admins who
+	// inherit it); the service widens what an admin (loan-assist:manage) may do
+	// and keeps a partner to their own applications and the unassigned ones.
+	//
+	// Gated per route, not with a second "/loan-assist" group: a group's
+	// middleware runs for every path under its prefix, so it would put the
+	// customers' routes above behind the partners' permission too.
+	reviewPerm := middleware.RequirePermission(tokens, epochs, models.PermLoanAssistReview)
+	la.Get("/review", reviewPerm, loanAssist.ReviewList)
+	la.Get("/review/:id<int>", reviewPerm, loanAssist.ReviewDetail)
+	la.Get("/review/:id<int>/documents/:slot/link", reviewPerm, loanAssist.ReviewDocumentLink)
+	la.Post("/review/:id<int>/documents/:slot", reviewPerm, loanAssist.ReviewDocument)
+	la.Post("/review/:id<int>/status", reviewPerm, loanAssist.ReviewStage)
+	la.Post("/review/:id<int>/assign", reviewPerm, loanAssist.ReviewAssign)
+	la.Put("/review/:id<int>/notes", reviewPerm, loanAssist.ReviewNotes)
+	la.Get("/partners", reviewPerm, loanAssist.Partners)
+	la.Get("/partner/profile", reviewPerm, loanAssist.MyProfile)
+	la.Put("/partner/profile", reviewPerm, loanAssist.SaveProfile)
 
 	lp := api.Group("/admin/loan-providers", middleware.RequirePermission(tokens, epochs, models.PermLoanProviderManage))
 	lp.Post("/", loans.CreateProvider)

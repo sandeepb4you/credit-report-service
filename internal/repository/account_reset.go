@@ -152,6 +152,10 @@ func (r *AccountRepo) ResetToSignup(
 	for _, stmt := range []string{
 		`DELETE FROM coupon_redemptions WHERE account_id = $1`,
 		`DELETE FROM scheduled_score_checks WHERE account_id = $1`,
+		// Loan Assist requests (their documents went with the documents
+		// delete above, by cascade). Before orders only for tidiness: the
+		// order_id reference is SET NULL and could not block it.
+		`DELETE FROM loan_assist_requests WHERE account_id = $1`,
 		`DELETE FROM payment_webhook_events
 		  WHERE order_uid IN (SELECT order_uid FROM orders WHERE account_id = $1)`,
 		`DELETE FROM orders WHERE account_id = $1`,

@@ -14,6 +14,7 @@ var resetClears = map[string]bool{
 	"documents":                 true,
 	"coupon_redemptions":        true,
 	"scheduled_score_checks":    true,
+	"loan_assist_requests":      true,
 	"payment_webhook_events":    true,
 	"orders":                    true,
 	"kyc_records":               true,
