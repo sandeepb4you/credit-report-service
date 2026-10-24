@@ -529,6 +529,12 @@ type AuthConfig struct {
 	JWTSecret  string        `mapstructure:"jwt-secret"`
 	AccessTTL  time.Duration `mapstructure:"access-ttl"`
 	RefreshTTL time.Duration `mapstructure:"refresh-ttl"`
+	// WebRefreshTTL is RefreshTTL for a session a browser opened (the web app,
+	// including the admin console). Longer on purpose: a desktop session is
+	// meant to last as long as it keeps being used, and every renewal slides
+	// it forward. 400 days is the ceiling Chrome puts on any cookie's
+	// lifetime, so the refresh cookie could not outlive it anyway.
+	WebRefreshTTL time.Duration `mapstructure:"web-refresh-ttl"`
 	// CookieSecure sets the Secure flag on the web refresh-token cookie. Must
 	// stay true in production; set false only for plain-http local dev, where
 	// the browser would otherwise drop the cookie.
@@ -981,6 +987,9 @@ func setDefaults(v *viper.Viper) {
 	// Refresh token: how long a device stays signed in without re-entering
 	// credentials. Rotated on every use.
 	v.SetDefault("auth.refresh-ttl", "720h") // 30 days
+	// A browser's session: the longest a cookie lives in Chrome. Idle that
+	// long and it ends; used, it slides forward on every renewal.
+	v.SetDefault("auth.web-refresh-ttl", "9600h") // 400 days
 	v.SetDefault("auth.cookie-secure", true)
 	v.SetDefault("auth.otp.length", 4)
 	v.SetDefault("auth.otp.ttl", "10m")
@@ -1124,7 +1133,7 @@ func allKeys() []string {
 		"sms.msg91.auth-key", "sms.msg91.template-id", "sms.msg91.sender-id",
 		"sms.msg91.otp-var", "sms.msg91.app-signature", "sms.msg91.app-signature-var",
 		"sms.msg91.base-url", "sms.msg91.timeout",
-		"auth.jwt-secret", "auth.access-ttl", "auth.refresh-ttl", "auth.cookie-secure",
+		"auth.jwt-secret", "auth.access-ttl", "auth.refresh-ttl", "auth.web-refresh-ttl", "auth.cookie-secure",
 		"auth.otp.length", "auth.otp.ttl", "auth.otp.resend-cooldown",
 		"auth.otp.max-attempts", "auth.otp.max-sends",
 		"auth.admin-emails",

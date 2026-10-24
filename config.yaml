@@ -64,7 +64,11 @@ auth:
   # manual testing. Override in prod via AUTH_ACCESS_TTL (e.g. 15m).
   access-ttl: 168h   # 1 week
   # Refresh token lifetime: how long a device stays signed in without re-login.
+  # Slides forward on every renewal, so it is really the idle limit.
   refresh-ttl: 720h  # 30 days
+  # The same for a browser session (web app, admin console). 400 days is
+  # Chrome's cap on a cookie's lifetime; used, the session never expires.
+  web-refresh-ttl: 9600h  # 400 days
   # Google OAuth ID-token login. Set to the "Web application" OAuth client ID
   # from Google Cloud Console; both the Android and iOS Google Sign-In SDKs
   # must use it as serverClientID so all ID tokens share one `aud`.

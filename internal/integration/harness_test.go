@@ -154,6 +154,8 @@ func testConfig(dsn string) *config.Config {
 			JWTSecret:  "integration-test-secret-not-a-real-key",
 			AccessTTL:  time.Hour,
 			RefreshTTL: 24 * time.Hour,
+			// Distinct from RefreshTTL so a test can tell which one a session got.
+			WebRefreshTTL: 48 * time.Hour,
 			OTP: config.OTPConfig{
 				Length:      4,
 				TTL:         10 * time.Minute,

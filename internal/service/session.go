@@ -31,8 +31,9 @@ const refreshTokenPrefix = "rt_"
 // TokenService and carries this session's id in its `sid` claim, which is what
 // lets a request know which device it came from.
 type SessionService struct {
-	repo *repository.SessionRepo
-	ttl  time.Duration
+	repo   *repository.SessionRepo
+	ttl    time.Duration
+	webTTL time.Duration
 }
 
 func NewSessionService(repo *repository.SessionRepo, cfg config.AuthConfig) *SessionService {
@@ -40,8 +41,31 @@ func NewSessionService(repo *repository.SessionRepo, cfg config.AuthConfig) *Ses
 	if ttl <= 0 {
 		ttl = 720 * time.Hour
 	}
-	return &SessionService{repo: repo, ttl: ttl}
+	webTTL := cfg.WebRefreshTTL
+	if webTTL <= 0 {
+		webTTL = ttl
+	}
+	return &SessionService{repo: repo, ttl: ttl, webTTL: webTTL}
 }
+
+// ttlFor is how far a session's expiry is pushed when it starts or renews.
+// Keyed on the platform the session was opened on — what the row recorded,
+// not what a later request claims — so a browser session keeps its longer
+// window whoever renews it, and a phone's cannot be stretched by a header.
+func (s *SessionService) ttlFor(platform string) time.Duration {
+	if platform == models.PlatformWeb {
+		return s.webTTL
+	}
+	return s.ttl
+}
+
+// replayGrace is how recently a token may have been rotated away and still
+// be presented without counting as theft. Two tabs of one browser share the
+// refresh cookie; when both renew at once, the second sends the cookie the
+// first has just rotated. That is a race, not a leak, and revoking on it
+// would sign the browser out. The caller still gets a 401 and retries with
+// the cookie its jar now holds.
+const replayGrace = 30 * time.Second
 
 // SessionView is the device-list projection returned to clients. It is a
 // separate type from models.Session so no future column (a token digest, an
@@ -77,7 +101,7 @@ func (s *SessionService) Start(
 	row.AccountID = accountID
 	row.DeviceID = nullable(dev.DeviceID)
 	row.DevicePlatform = nullable(dev.Platform)
-	row.ExpiresAt = time.Now().UTC().Add(s.ttl)
+	row.ExpiresAt = time.Now().UTC().Add(s.ttlFor(dev.Platform))
 	if err := s.repo.Create(ctx, row, digest); err != nil {
 		return nil, "", err
 	}
@@ -115,7 +139,7 @@ func (s *SessionService) Refresh(
 		return nil, "", err
 	}
 	rotated, err := s.repo.Rotate(ctx, row.ID, digest, nextDigest,
-		time.Now().UTC().Add(s.ttl), sessionRow(dev))
+		time.Now().UTC().Add(s.ttlFor(deref(row.DevicePlatform))), sessionRow(dev))
 	if errors.Is(err, repository.ErrNotFound) {
 		// Lost a race with a concurrent refresh on the same token. The other
 		// caller already rotated; this one must not mint a second token.
@@ -138,6 +162,11 @@ func (s *SessionService) handleUnknownToken(ctx context.Context, digest string) 
 	}
 	if err != nil {
 		return err
+	}
+	if time.Since(replayed.LastUsedAt) < replayGrace {
+		slog.Info("refresh token rotated moments ago; treating as a concurrent renewal",
+			"account_id", replayed.AccountID, "session_id", replayed.ID)
+		return apperr.NewUnauthorized("Session expired; please sign in again")
 	}
 	if _, err := s.repo.Revoke(ctx, replayed.AccountID, replayed.ID, models.RevokeTokenReuse); err != nil {
 		slog.Error("failed to revoke session after token reuse",

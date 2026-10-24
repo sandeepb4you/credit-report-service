@@ -3,6 +3,7 @@ package server
 
 import (
 	"html/template"
+	"log/slog"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -114,9 +115,14 @@ func New(
 	// AllowCredentials is required for the web refresh cookie to be sent and
 	// stored cross-origin, but the spec forbids pairing it with a wildcard
 	// origin — so it is only enabled once cors-origins names real origins.
-	// Leaving cors-origins at "*" silently disables cookie-based refresh for
-	// browsers; set it explicitly in any environment with a web frontend.
+	// The web app fetches with credentials: "include" (that is how its session
+	// renews), and a browser refuses every credentialed response that answers
+	// with a wildcard — so with cors-origins left at "*" the web app cannot
+	// talk to this server at all. Set it explicitly anywhere a browser calls.
 	allowCredentials := cfg.Server.CORSOrigins != "*"
+	if !allowCredentials {
+		slog.Warn(`server.cors-origins is "*": the web app sends credentials and browsers will block every call; name its origins (SERVER_CORS_ORIGINS)`)
+	}
 	app.Use(cors.New(cors.Config{
 		AllowOrigins:     cfg.Server.CORSOrigins,
 		AllowMethods:     "GET,POST,PUT,PATCH,DELETE,OPTIONS",
